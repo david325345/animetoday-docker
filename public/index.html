@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Anime Today + Nyaa + RealDebrid</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        .container {
+            background: white;
+            border-radius: 20px;
+            padding: 50px;
+            max-width: 500px;
+            width: 100%;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            text-align: center;
+        }
+        .icon {
+            width: 100px;
+            height: 100px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 25px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 50px;
+            margin: 0 auto 30px;
+            box-shadow: 0 10px 30px rgba(102, 126, 234, 0.3);
+        }
+        h1 {
+            color: #1a1a1a;
+            font-size: 32px;
+            font-weight: 700;
+            margin-bottom: 16px;
+        }
+        .subtitle {
+            color: #6b7280;
+            font-size: 18px;
+            margin-bottom: 40px;
+            line-height: 1.6;
+        }
+        .btn {
+            display: inline-block;
+            padding: 18px 40px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            font-size: 18px;
+            font-weight: 600;
+            border: none;
+            border-radius: 12px;
+            text-decoration: none;
+            cursor: pointer;
+            transition: all 0.3s;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+            margin-bottom: 16px;
+        }
+        .btn:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 8px 25px rgba(102, 126, 234, 0.5);
+        }
+        .url-box {
+            background: #f9fafb;
+            border: 2px solid #e5e7eb;
+            border-radius: 8px;
+            padding: 12px;
+            font-family: monospace;
+            font-size: 13px;
+            color: #374151;
+            margin-bottom: 12px;
+            word-break: break-all;
+        }
+        .note {
+            font-size: 13px;
+            color: #6b7280;
+            margin-bottom: 30px;
+        }
+        .features {
+            margin-top: 40px;
+            text-align: left;
+            background: #f9fafb;
+            padding: 24px;
+            border-radius: 12px;
+        }
+        .features h3 {
+            font-size: 16px;
+            font-weight: 600;
+            color: #374151;
+            margin-bottom: 16px;
+            text-align: center;
+        }
+        .feature {
+            display: flex;
+            align-items: start;
+            margin-bottom: 12px;
+            color: #6b7280;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+        .feature-icon {
+            margin-right: 10px;
+            font-size: 18px;
+            flex-shrink: 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="icon">📺</div>
+        <h1>Anime Today</h1>
+        <p class="subtitle">
+            Dnešní anime epizody z AniList<br>
+            s torrenty z Nyaa.si přes RealDebrid
+        </p>
+        
+        <a href="stremio://animetday.onrender.com/manifest.json" class="btn">
+            🚀 Instalovat do Stremio
+        </a>
+        
+        <p class="note">
+            Nebo zkopírujte URL a vložte do Stremio → Addons → Install from URL
+        </p>
+        
+        <div class="url-box">
+            https://animetday.onrender.com/manifest.json
+        </div>
+        
+        <div class="features">
+            <h3>✨ Funkce</h3>
+            <div class="feature">
+                <span class="feature-icon">📅</span>
+                <span>Automatická aktualizace dnešních anime každý den ve 4:00</span>
+            </div>
+            <div class="feature">
+                <span class="feature-icon">🔍</span>
+                <span>Automatické vyhledávání nejlepších torrentů na Nyaa.si</span>
+            </div>
+            <div class="feature">
+                <span class="feature-icon">⚡</span>
+                <span>Okamžité streaming přes RealDebrid bez čekání</span>
+            </div>
+            <div class="feature">
+                <span class="feature-icon">🖼️</span>
+                <span>HD wallpapery a postery z TMDB databáze</span>
+            </div>
+            <div class="feature">
+                <span class="feature-icon">⏰</span>
+                <span>Keep-alive: Server se automaticky udrží aktivní do půlnoci. Pro probuzení nastavte <a href="https://cron-job.org" target="_blank" style="color: #667eea; font-weight: 600;">Cron-job.org</a> s URL addonu.</span>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
