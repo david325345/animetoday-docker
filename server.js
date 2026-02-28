@@ -169,75 +169,176 @@ async function searchNyaa(animeName, episode) {
 }
 
 // ===== RealDebrid API =====
+const RD_HEADERS = (apiKey) => ({ 'Authorization': `Bearer ${apiKey}` });
+const RD_POST_HEADERS = (apiKey) => ({ 
+  'Authorization': `Bearer ${apiKey}`, 
+  'Content-Type': 'application/x-www-form-urlencoded' 
+});
+
+// Extrahovat info hash z magnet linku
+function getInfoHash(magnet) {
+  const match = magnet.match(/btih:([a-fA-F0-9]{40})/i) || magnet.match(/btih:([a-zA-Z0-9]{32})/i);
+  return match ? match[1].toLowerCase() : null;
+}
+
+// Najít největší video soubor
+function findBestVideoFile(files) {
+  const videoExtensions = ['.mp4', '.mkv', '.avi', '.webm', '.m4v'];
+  const videoFiles = files.filter(f => 
+    videoExtensions.some(ext => (f.path || f.filename || '').toLowerCase().endsWith(ext))
+  );
+  if (videoFiles.length > 0) {
+    return videoFiles.sort((a, b) => (b.bytes || b.filesize || 0) - (a.bytes || a.filesize || 0))[0];
+  }
+  return files.sort((a, b) => (b.bytes || b.filesize || 0) - (a.bytes || a.filesize || 0))[0];
+}
+
+// Zkontrolovat jestli je torrent v RD cache (instant available)
+async function checkRDInstantAvailability(infoHash, apiKey) {
+  try {
+    const response = await axios.get(
+      `https://api.real-debrid.com/rest/1.0/torrents/instantAvailability/${infoHash}`,
+      { headers: RD_HEADERS(apiKey), timeout: 5000 }
+    );
+    const data = response.data;
+    if (data && data[infoHash] && data[infoHash].rd && data[infoHash].rd.length > 0) {
+      console.log(`RD: ✅ Torrent ${infoHash.substring(0, 8)}... je v cache (instant)`);
+      return true;
+    }
+    console.log(`RD: ❌ Torrent ${infoHash.substring(0, 8)}... NENÍ v cache`);
+    return false;
+  } catch (err) {
+    console.error('RD instantAvailability error:', err.response?.status, err.message);
+    return false; // Při chybě to zkusíme stejně
+  }
+}
+
 async function getRealDebridStream(magnet, apiKey) {
   if (!apiKey) return null;
   
-  // Zkontrolovat cache (platnost 1 hodina)
+  // Zkontrolovat lokální cache (platnost 1 hodina)
   const cacheKey = `${magnet}_${apiKey}`;
   const cached = rdStreamCache.get(cacheKey);
   if (cached && (Date.now() - cached.timestamp < 3600000)) {
-    console.log('RD: ✅ Using cached stream');
+    console.log('RD: ✅ Using local cached stream');
     return cached.url;
   }
   
   try {
     console.log('RD: Adding magnet...');
     
+    // 1. Přidat magnet
     const add = await axios.post(
       'https://api.real-debrid.com/rest/1.0/torrents/addMagnet',
       `magnet=${encodeURIComponent(magnet)}`,
-      { headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 10000 }
+      { headers: RD_POST_HEADERS(apiKey), timeout: 15000 }
     );
     const torrentId = add.data?.id;
-    if (!torrentId) return null;
+    if (!torrentId) {
+      console.error('RD: ❌ No torrent ID returned');
+      return null;
+    }
+    console.log(`RD: Torrent ID: ${torrentId}`);
     
+    // 2. Získat info o souborech
     const torrentInfo = await axios.get(
       `https://api.real-debrid.com/rest/1.0/torrents/info/${torrentId}`,
-      { headers: { 'Authorization': `Bearer ${apiKey}` }}
+      { headers: RD_HEADERS(apiKey), timeout: 10000 }
     );
+    
+    const status = torrentInfo.data?.status;
     const files = torrentInfo.data?.files;
-    if (!files || files.length === 0) return null;
+    console.log(`RD: Status: ${status}, Files: ${files?.length || 0}`);
     
-    // Vybrat jen největší video soubor (ne všechny soubory)
-    const videoExtensions = ['.mp4', '.mkv', '.avi', '.webm'];
-    const videoFiles = files.filter(f => 
-      videoExtensions.some(ext => f.path.toLowerCase().endsWith(ext))
-    );
-    const targetFile = videoFiles.length > 0
-      ? videoFiles.sort((a, b) => b.bytes - a.bytes)[0]
-      : files.sort((a, b) => b.bytes - a.bytes)[0];
+    // Pokud už jsou linky ready (cached torrent)
+    if (torrentInfo.data?.links?.length > 0) {
+      console.log('RD: Links already available, unrestricting...');
+      const streamUrl = await unrestrictLink(torrentInfo.data.links[0], apiKey);
+      if (streamUrl) {
+        rdStreamCache.set(cacheKey, { url: streamUrl, timestamp: Date.now() });
+        return streamUrl;
+      }
+    }
+    
+    if (!files || files.length === 0) {
+      console.error('RD: ❌ No files in torrent');
+      return null;
+    }
+    
+    // 3. Vybrat největší video soubor
+    const targetFile = findBestVideoFile(files);
     const fileIds = String(targetFile.id);
+    console.log(`RD: Selected file: ${targetFile.path} (${Math.round((targetFile.bytes || 0) / 1024 / 1024)}MB)`);
     
+    // 4. Vybrat soubory
     await axios.post(
       `https://api.real-debrid.com/rest/1.0/torrents/selectFiles/${torrentId}`,
       `files=${fileIds}`,
-      { headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/x-www-form-urlencoded' }}
+      { headers: RD_POST_HEADERS(apiKey), timeout: 10000 }
     );
 
-    for (let i = 0; i < 10; i++) {
+    // 5. Čekat na linky (max 30s pro cached, jinak timeout)
+    for (let i = 0; i < 15; i++) {
       await new Promise(r => setTimeout(r, 2000));
+      
       const info = await axios.get(
         `https://api.real-debrid.com/rest/1.0/torrents/info/${torrentId}`,
-        { headers: { 'Authorization': `Bearer ${apiKey}` }}
+        { headers: RD_HEADERS(apiKey), timeout: 10000 }
       );
+      
+      const currentStatus = info.data?.status;
+      console.log(`RD: Poll ${i + 1}/15 - Status: ${currentStatus}`);
+      
+      // Pokud stahuje a nemá linky, nemá cenu čekat (není cached)
+      if (currentStatus === 'downloading' && i > 2) {
+        console.log('RD: ⚠️ Torrent is downloading (not cached), aborting...');
+        // Smazat torrent aby nezabíral slot
+        try {
+          await axios.delete(
+            `https://api.real-debrid.com/rest/1.0/torrents/delete/${torrentId}`,
+            { headers: RD_HEADERS(apiKey) }
+          );
+        } catch (e) {}
+        return null;
+      }
+      
+      if (currentStatus === 'dead' || currentStatus === 'error' || currentStatus === 'virus' || currentStatus === 'magnet_error') {
+        console.error(`RD: ❌ Torrent failed: ${currentStatus}`);
+        return null;
+      }
+      
       if (info.data?.links?.[0]) {
-        const unrestrict = await axios.post(
-          'https://api.real-debrid.com/rest/1.0/unrestrict/link',
-          `link=${encodeURIComponent(info.data.links[0])}`,
-          { headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/x-www-form-urlencoded' }}
-        );
-        if (unrestrict.data?.download) {
-          const streamUrl = unrestrict.data.download;
-          // Uložit do cache
+        console.log('RD: Links ready, unrestricting...');
+        const streamUrl = await unrestrictLink(info.data.links[0], apiKey);
+        if (streamUrl) {
           rdStreamCache.set(cacheKey, { url: streamUrl, timestamp: Date.now() });
-          console.log('RD: ✅ Success (cached)!');
           return streamUrl;
         }
       }
     }
+    
+    console.error('RD: ❌ Timeout waiting for links');
     return null;
   } catch (err) {
     console.error('RealDebrid error:', err.response?.status, err.response?.data || err.message);
+    return null;
+  }
+}
+
+async function unrestrictLink(link, apiKey) {
+  try {
+    const unrestrict = await axios.post(
+      'https://api.real-debrid.com/rest/1.0/unrestrict/link',
+      `link=${encodeURIComponent(link)}`,
+      { headers: RD_POST_HEADERS(apiKey), timeout: 10000 }
+    );
+    if (unrestrict.data?.download) {
+      console.log(`RD: ✅ Stream URL ready! (${unrestrict.data.filename || 'unknown'})`);
+      return unrestrict.data.download;
+    }
+    return null;
+  } catch (err) {
+    console.error('RD unrestrict error:', err.response?.status, err.message);
     return null;
   }
 }
@@ -364,33 +465,28 @@ builder.defineStreamHandler(async (args) => {
   const rdKey = REALDEBRID_API_KEY;
   const baseUrl = process.env.APP_URL || process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
 
-  return {
-    streams: correctEpisodeTorrents.filter(t => t.magnet).map(t => {
-      if (rdKey) {
-        const streamUrl = `${baseUrl}/rd/${encodeURIComponent(t.magnet)}?key=${encodeURIComponent(rdKey)}`;
-        return {
-          name: 'Nyaa + RD',
-          title: `🎬 ${t.name}\n👥 ${t.seeders} seeders | 📦 ${t.filesize}`,
-          url: streamUrl,
-          behaviorHints: { 
-            bingeGroup: 'nyaa-rd',
-            proxyHeaders: {
-              request: {
-                'User-Agent': 'Stremio'
-              }
-            }
-          }
-        };
-      } else {
-        return {
-          name: 'Nyaa (Magnet)',
-          title: `${t.name}\n👥 ${t.seeders} | 📦 ${t.filesize}`,
-          url: t.magnet,
-          behaviorHints: { notWebReady: true }
-        };
-      }
-    })
-  };
+  const torrentsWithMagnets = correctEpisodeTorrents.filter(t => t.magnet);
+
+  const streams = torrentsWithMagnets.map(t => {
+    if (rdKey) {
+      const streamUrl = `${baseUrl}/rd/${encodeURIComponent(t.magnet)}?key=${encodeURIComponent(rdKey)}`;
+      return {
+        name: 'Nyaa + RD',
+        title: `🎬 ${t.name}\n👥 ${t.seeders} seeders | 📦 ${t.filesize}`,
+        url: streamUrl,
+        behaviorHints: { bingeGroup: 'nyaa-rd' }
+      };
+    } else {
+      return {
+        name: 'Nyaa (Magnet)',
+        title: `🧲 ${t.name}\n👥 ${t.seeders} seeders | 📦 ${t.filesize}`,
+        url: t.magnet,
+        behaviorHints: { notWebReady: true }
+      };
+    }
+  });
+
+  return { streams };
 });
 
 // ===== Express Server =====
@@ -419,13 +515,14 @@ app.get('/rd/:magnet', async (req, res) => {
   if (!apiKey) return res.status(400).json({ error: 'API key required' });
   
   try {
+    console.log('RD endpoint: Processing request...');
     const stream = await getRealDebridStream(decodeURIComponent(req.params.magnet), apiKey);
     if (stream) {
-      // Stremio potřebuje 302 redirect na přímý stream URL
-      res.setHeader('Content-Type', 'video/mp4');
+      console.log(`RD endpoint: Redirecting to stream`);
       res.redirect(302, stream);
     } else {
-      res.status(404).json({ error: 'Stream not available yet, try again later' });
+      console.log('RD endpoint: No stream available');
+      res.status(404).json({ error: 'Stream not available - torrent may not be cached on RealDebrid' });
     }
   } catch (err) {
     console.error('RD endpoint error:', err.message);
