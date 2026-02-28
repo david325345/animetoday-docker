@@ -9,6 +9,7 @@ const PORT = process.env.PORT || 7000;
 const REALDEBRID_API_KEY = process.env.REALDEBRID_API_KEY || '';
 const TMDB_API_KEY = process.env.TMDB_API_KEY || '';
 const APP_URL = process.env.APP_URL || 'https://animetoday.duckdns.org';
+const FALLBACK_VIDEO = 'https://raw.githubusercontent.com/david325345/animetoday-docker/main/public/downloading.mp4';
 
 console.log('🔑 Environment check:');
 console.log('  PORT:', PORT);
@@ -244,8 +245,8 @@ async function getRealDebridStream(magnet, apiKey) {
       { headers: postHeaders, timeout: 10000 }
     );
 
-    // 4. Čekat na linky (max ~60s - RD potřebuje čas i pro cached torrenty)
-    for (let i = 0; i < 30; i++) {
+    // 4. Čekat na linky (max ~10s - pokud není cached, rychle vrátíme fallback)
+    for (let i = 0; i < 5; i++) {
       await new Promise(r => setTimeout(r, 2000));
       
       const info = await axios.get(
@@ -254,8 +255,7 @@ async function getRealDebridStream(magnet, apiKey) {
       );
       
       const s = info.data?.status;
-      const progress = info.data?.progress || 0;
-      console.log(`RD: Poll ${i + 1}/30 - ${s} (${progress}%)`);
+      console.log(`RD: Poll ${i + 1}/5 - ${s}`);
       
       if (['dead', 'error', 'virus', 'magnet_error'].includes(s)) {
         console.error(`RD: ❌ ${s}`);
@@ -272,7 +272,7 @@ async function getRealDebridStream(magnet, apiKey) {
       }
     }
     
-    console.error('RD: ❌ Timeout');
+    console.log('RD: ⏳ Not ready yet (downloading or queued)');
     return null;
   } catch (err) {
     console.error('RD error:', err.response?.status, err.response?.data || err.message);
@@ -478,6 +478,7 @@ const originalSearchNyaa = searchNyaa;
 
 // ===== /rd/ ENDPOINT =====
 // Stremio klikne na stream → zavolá tuto URL → server získá RD stream → přesměruje
+// Pokud RD nemá torrent cached → přehraje fallback "downloading" video
 app.get('/rd/:hash', async (req, res) => {
   const hash = req.params.hash.toLowerCase();
   console.log(`\n🔗 /rd/ request for hash: ${hash}`);
@@ -486,11 +487,13 @@ app.get('/rd/:hash', async (req, res) => {
   const magnet = magnetStore.get(hash);
   if (!magnet) {
     console.error('❌ Magnet not found for hash:', hash);
-    return res.status(404).send('Torrent not found. Try refreshing the stream list.');
+    console.log('📼 Playing fallback video');
+    return res.redirect(302, FALLBACK_VIDEO);
   }
   
   if (!REALDEBRID_API_KEY) {
-    return res.status(400).send('RealDebrid API key not configured');
+    console.log('📼 No RD key, playing fallback video');
+    return res.redirect(302, FALLBACK_VIDEO);
   }
   
   try {
@@ -498,15 +501,16 @@ app.get('/rd/:hash', async (req, res) => {
     const streamUrl = await getRealDebridStream(magnet, REALDEBRID_API_KEY);
     
     if (streamUrl) {
-      console.log(`RD: ✅ Redirecting to: ${streamUrl.substring(0, 80)}...`);
+      console.log(`RD: ✅ Redirecting to stream`);
       return res.redirect(302, streamUrl);
     } else {
-      console.log('RD: ❌ Could not get stream');
-      return res.status(502).send('RealDebrid could not resolve this torrent. It may not be cached.');
+      console.log('RD: ❌ Not cached → 📼 Playing fallback video');
+      return res.redirect(302, FALLBACK_VIDEO);
     }
   } catch (err) {
     console.error('RD endpoint error:', err.message);
-    return res.status(500).send('RealDebrid error');
+    console.log('📼 Error → Playing fallback video');
+    return res.redirect(302, FALLBACK_VIDEO);
   }
 });
 
