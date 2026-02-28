@@ -516,17 +516,53 @@ app.get('/rd/:magnet', async (req, res) => {
   
   try {
     console.log('RD endpoint: Processing request...');
-    const stream = await getRealDebridStream(decodeURIComponent(req.params.magnet), apiKey);
-    if (stream) {
-      console.log(`RD endpoint: Redirecting to stream`);
-      res.redirect(302, stream);
-    } else {
+    const streamUrl = await getRealDebridStream(decodeURIComponent(req.params.magnet), apiKey);
+    if (!streamUrl) {
       console.log('RD endpoint: No stream available');
-      res.status(404).json({ error: 'Stream not available - torrent may not be cached on RealDebrid' });
+      return res.status(404).json({ error: 'Stream not available' });
     }
+
+    console.log('RD endpoint: Proxying stream...');
+    
+    // Proxy video přes náš server místo redirect
+    const range = req.headers.range;
+    const headers = {};
+    if (range) headers['Range'] = range;
+    
+    const videoResponse = await axios({
+      method: 'get',
+      url: streamUrl,
+      responseType: 'stream',
+      headers,
+      timeout: 30000
+    });
+
+    // Přeposlat headers z RD response
+    const contentType = videoResponse.headers['content-type'] || 'video/mp4';
+    const contentLength = videoResponse.headers['content-length'];
+    const contentRange = videoResponse.headers['content-range'];
+    const acceptRanges = videoResponse.headers['accept-ranges'];
+
+    res.status(videoResponse.status); // 200 nebo 206
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    if (contentLength) res.setHeader('Content-Length', contentLength);
+    if (contentRange) res.setHeader('Content-Range', contentRange);
+    if (acceptRanges) res.setHeader('Accept-Ranges', acceptRanges);
+    
+    // Pipe video stream přímo do response
+    videoResponse.data.pipe(res);
+    
+    videoResponse.data.on('error', (err) => {
+      console.error('RD stream pipe error:', err.message);
+      if (!res.headersSent) res.status(500).end();
+    });
+
   } catch (err) {
     console.error('RD endpoint error:', err.message);
-    res.status(500).json({ error: 'RealDebrid failed' });
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'RealDebrid failed' });
+    }
   }
 });
 
