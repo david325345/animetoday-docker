@@ -6,7 +6,7 @@ const path = require('path');
 const { si } = require('nyaapi');
 const crypto = require('crypto');
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 7000;
 const REALDEBRID_API_KEY = process.env.REALDEBRID_API_KEY || '';
 const TMDB_API_KEY = process.env.TMDB_API_KEY || '';
 
@@ -197,7 +197,16 @@ async function getRealDebridStream(magnet, apiKey) {
     );
     const files = torrentInfo.data?.files;
     if (!files || files.length === 0) return null;
-    const fileIds = files.map((f, i) => i + 1).join(',');
+    
+    // Vybrat jen největší video soubor (ne všechny soubory)
+    const videoExtensions = ['.mp4', '.mkv', '.avi', '.webm'];
+    const videoFiles = files.filter(f => 
+      videoExtensions.some(ext => f.path.toLowerCase().endsWith(ext))
+    );
+    const targetFile = videoFiles.length > 0
+      ? videoFiles.sort((a, b) => b.bytes - a.bytes)[0]
+      : files.sort((a, b) => b.bytes - a.bytes)[0];
+    const fileIds = String(targetFile.id);
     
     await axios.post(
       `https://api.real-debrid.com/rest/1.0/torrents/selectFiles/${torrentId}`,
@@ -360,10 +369,17 @@ builder.defineStreamHandler(async (args) => {
       if (rdKey) {
         const streamUrl = `${baseUrl}/rd/${encodeURIComponent(t.magnet)}?key=${encodeURIComponent(rdKey)}`;
         return {
-          name: 'Nyaa + RealDebrid',
-          title: `🎬 ${t.name}\n👥 ${t.seeders} | 📦 ${t.filesize}`,
+          name: 'Nyaa + RD',
+          title: `🎬 ${t.name}\n👥 ${t.seeders} seeders | 📦 ${t.filesize}`,
           url: streamUrl,
-          behaviorHints: { bingeGroup: 'nyaa-rd' }
+          behaviorHints: { 
+            bingeGroup: 'nyaa-rd',
+            proxyHeaders: {
+              request: {
+                'User-Agent': 'Stremio'
+              }
+            }
+          }
         };
       } else {
         return {
@@ -400,9 +416,21 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 app.get('/rd/:magnet', async (req, res) => {
   const apiKey = req.query.key;
-  if (!apiKey) return res.status(400).send('API key required');
-  const stream = await getRealDebridStream(decodeURIComponent(req.params.magnet), apiKey);
-  stream ? res.redirect(stream) : res.status(500).send('Failed');
+  if (!apiKey) return res.status(400).json({ error: 'API key required' });
+  
+  try {
+    const stream = await getRealDebridStream(decodeURIComponent(req.params.magnet), apiKey);
+    if (stream) {
+      // Stremio potřebuje 302 redirect na přímý stream URL
+      res.setHeader('Content-Type', 'video/mp4');
+      res.redirect(302, stream);
+    } else {
+      res.status(404).json({ error: 'Stream not available yet, try again later' });
+    }
+  } catch (err) {
+    console.error('RD endpoint error:', err.message);
+    res.status(500).json({ error: 'RealDebrid failed' });
+  }
 });
 
 // Použít SDK router
