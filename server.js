@@ -4,7 +4,6 @@ const cron = require('node-cron');
 const express = require('express');
 const path = require('path');
 const { si } = require('nyaapi');
-const crypto = require('crypto');
 
 const PORT = process.env.PORT || 7000;
 const REALDEBRID_API_KEY = process.env.REALDEBRID_API_KEY || '';
@@ -16,11 +15,11 @@ console.log('  REALDEBRID_API_KEY:', REALDEBRID_API_KEY ? '✅ Set' : '❌ Missi
 console.log('  TMDB_API_KEY:', TMDB_API_KEY ? '✅ Set' : '❌ Missing');
 
 let todayAnimeCache = [];
-let rdStreamCache = new Map(); // Cache pro RD streamy (magnet -> URL)
+let rdStreamCache = new Map();
 
 const manifest = {
   id: 'cz.anime.nyaa.rd',
-  version: '1.3.0',
+  version: '2.0.0',
   name: 'Anime Today + Nyaa + RealDebrid',
   description: 'Dnešní anime s Nyaa torrenty přes RealDebrid',
   logo: 'https://raw.githubusercontent.com/david325345/animetoday/main/public/logo.png',
@@ -169,19 +168,6 @@ async function searchNyaa(animeName, episode) {
 }
 
 // ===== RealDebrid API =====
-const RD_HEADERS = (apiKey) => ({ 'Authorization': `Bearer ${apiKey}` });
-const RD_POST_HEADERS = (apiKey) => ({ 
-  'Authorization': `Bearer ${apiKey}`, 
-  'Content-Type': 'application/x-www-form-urlencoded' 
-});
-
-// Extrahovat info hash z magnet linku
-function getInfoHash(magnet) {
-  const match = magnet.match(/btih:([a-fA-F0-9]{40})/i) || magnet.match(/btih:([a-zA-Z0-9]{32})/i);
-  return match ? match[1].toLowerCase() : null;
-}
-
-// Najít největší video soubor
 function findBestVideoFile(files) {
   const videoExtensions = ['.mp4', '.mkv', '.avi', '.webm', '.m4v'];
   const videoFiles = files.filter(f => 
@@ -193,148 +179,121 @@ function findBestVideoFile(files) {
   return files.sort((a, b) => (b.bytes || b.filesize || 0) - (a.bytes || a.filesize || 0))[0];
 }
 
-// Zkontrolovat jestli je torrent v RD cache (instant available)
-async function checkRDInstantAvailability(infoHash, apiKey) {
-  try {
-    const response = await axios.get(
-      `https://api.real-debrid.com/rest/1.0/torrents/instantAvailability/${infoHash}`,
-      { headers: RD_HEADERS(apiKey), timeout: 5000 }
-    );
-    const data = response.data;
-    if (data && data[infoHash] && data[infoHash].rd && data[infoHash].rd.length > 0) {
-      console.log(`RD: ✅ Torrent ${infoHash.substring(0, 8)}... je v cache (instant)`);
-      return true;
-    }
-    console.log(`RD: ❌ Torrent ${infoHash.substring(0, 8)}... NENÍ v cache`);
-    return false;
-  } catch (err) {
-    console.error('RD instantAvailability error:', err.response?.status, err.message);
-    return false; // Při chybě to zkusíme stejně
-  }
-}
-
 async function getRealDebridStream(magnet, apiKey) {
   if (!apiKey) return null;
   
-  // Zkontrolovat lokální cache (platnost 1 hodina)
-  const cacheKey = `${magnet}_${apiKey}`;
-  const cached = rdStreamCache.get(cacheKey);
+  // Lokální cache (1 hodina)
+  const cached = rdStreamCache.get(magnet);
   if (cached && (Date.now() - cached.timestamp < 3600000)) {
-    console.log('RD: ✅ Using local cached stream');
+    console.log('RD: ✅ Cached URL');
     return cached.url;
   }
   
+  const headers = { 'Authorization': `Bearer ${apiKey}` };
+  const postHeaders = { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/x-www-form-urlencoded' };
+  
   try {
-    console.log('RD: Adding magnet...');
-    
     // 1. Přidat magnet
+    console.log('RD: Adding magnet...');
     const add = await axios.post(
       'https://api.real-debrid.com/rest/1.0/torrents/addMagnet',
       `magnet=${encodeURIComponent(magnet)}`,
-      { headers: RD_POST_HEADERS(apiKey), timeout: 15000 }
+      { headers: postHeaders, timeout: 15000 }
     );
     const torrentId = add.data?.id;
     if (!torrentId) {
-      console.error('RD: ❌ No torrent ID returned');
+      console.error('RD: ❌ No torrent ID');
       return null;
     }
     console.log(`RD: Torrent ID: ${torrentId}`);
     
-    // 2. Získat info o souborech
+    // 2. Info
     const torrentInfo = await axios.get(
       `https://api.real-debrid.com/rest/1.0/torrents/info/${torrentId}`,
-      { headers: RD_HEADERS(apiKey), timeout: 10000 }
+      { headers, timeout: 10000 }
     );
     
     const status = torrentInfo.data?.status;
     const files = torrentInfo.data?.files;
     console.log(`RD: Status: ${status}, Files: ${files?.length || 0}`);
     
-    // Pokud už jsou linky ready (cached torrent)
+    // Pokud linky hned ready
     if (torrentInfo.data?.links?.length > 0) {
-      console.log('RD: Links already available, unrestricting...');
-      const streamUrl = await unrestrictLink(torrentInfo.data.links[0], apiKey);
-      if (streamUrl) {
-        rdStreamCache.set(cacheKey, { url: streamUrl, timestamp: Date.now() });
-        return streamUrl;
+      console.log('RD: Links already available!');
+      const url = await unrestrictLink(torrentInfo.data.links[0], postHeaders);
+      if (url) {
+        rdStreamCache.set(magnet, { url, timestamp: Date.now() });
+        return url;
       }
     }
     
     if (!files || files.length === 0) {
-      console.error('RD: ❌ No files in torrent');
+      console.error('RD: ❌ No files');
       return null;
     }
     
-    // 3. Vybrat největší video soubor
+    // 3. Vybrat video
     const targetFile = findBestVideoFile(files);
-    const fileIds = String(targetFile.id);
-    console.log(`RD: Selected file: ${targetFile.path} (${Math.round((targetFile.bytes || 0) / 1024 / 1024)}MB)`);
+    console.log(`RD: Selected: ${targetFile.path} (${Math.round((targetFile.bytes || 0) / 1024 / 1024)}MB)`);
     
-    // 4. Vybrat soubory
     await axios.post(
       `https://api.real-debrid.com/rest/1.0/torrents/selectFiles/${torrentId}`,
-      `files=${fileIds}`,
-      { headers: RD_POST_HEADERS(apiKey), timeout: 10000 }
+      `files=${targetFile.id}`,
+      { headers: postHeaders, timeout: 10000 }
     );
 
-    // 5. Čekat na linky (max 30s pro cached, jinak timeout)
+    // 4. Čekat na linky (max ~30s)
     for (let i = 0; i < 15; i++) {
       await new Promise(r => setTimeout(r, 2000));
       
       const info = await axios.get(
         `https://api.real-debrid.com/rest/1.0/torrents/info/${torrentId}`,
-        { headers: RD_HEADERS(apiKey), timeout: 10000 }
+        { headers, timeout: 10000 }
       );
       
-      const currentStatus = info.data?.status;
-      console.log(`RD: Poll ${i + 1}/15 - Status: ${currentStatus}`);
+      const s = info.data?.status;
+      console.log(`RD: Poll ${i + 1}/15 - ${s}`);
       
-      // Pokud stahuje a nemá linky, nemá cenu čekat (není cached)
-      if (currentStatus === 'downloading' && i > 2) {
-        console.log('RD: ⚠️ Torrent is downloading (not cached), aborting...');
-        // Smazat torrent aby nezabíral slot
-        try {
-          await axios.delete(
-            `https://api.real-debrid.com/rest/1.0/torrents/delete/${torrentId}`,
-            { headers: RD_HEADERS(apiKey) }
-          );
-        } catch (e) {}
+      // Pokud stahuje (není cached), abort po 3 pokusech
+      if (s === 'downloading' && i > 2) {
+        console.log('RD: ⚠️ Not cached, skipping');
+        try { await axios.delete(`https://api.real-debrid.com/rest/1.0/torrents/delete/${torrentId}`, { headers }); } catch(e) {}
         return null;
       }
       
-      if (currentStatus === 'dead' || currentStatus === 'error' || currentStatus === 'virus' || currentStatus === 'magnet_error') {
-        console.error(`RD: ❌ Torrent failed: ${currentStatus}`);
+      if (['dead', 'error', 'virus', 'magnet_error'].includes(s)) {
+        console.error(`RD: ❌ ${s}`);
         return null;
       }
       
       if (info.data?.links?.[0]) {
-        console.log('RD: Links ready, unrestricting...');
-        const streamUrl = await unrestrictLink(info.data.links[0], apiKey);
-        if (streamUrl) {
-          rdStreamCache.set(cacheKey, { url: streamUrl, timestamp: Date.now() });
-          return streamUrl;
+        console.log('RD: Links ready!');
+        const url = await unrestrictLink(info.data.links[0], postHeaders);
+        if (url) {
+          rdStreamCache.set(magnet, { url, timestamp: Date.now() });
+          return url;
         }
       }
     }
     
-    console.error('RD: ❌ Timeout waiting for links');
+    console.error('RD: ❌ Timeout');
     return null;
   } catch (err) {
-    console.error('RealDebrid error:', err.response?.status, err.response?.data || err.message);
+    console.error('RD error:', err.response?.status, err.response?.data || err.message);
     return null;
   }
 }
 
-async function unrestrictLink(link, apiKey) {
+async function unrestrictLink(link, postHeaders) {
   try {
-    const unrestrict = await axios.post(
+    const resp = await axios.post(
       'https://api.real-debrid.com/rest/1.0/unrestrict/link',
       `link=${encodeURIComponent(link)}`,
-      { headers: RD_POST_HEADERS(apiKey), timeout: 10000 }
+      { headers: postHeaders, timeout: 10000 }
     );
-    if (unrestrict.data?.download) {
-      console.log(`RD: ✅ Stream URL ready! (${unrestrict.data.filename || 'unknown'})`);
-      return unrestrict.data.download;
+    if (resp.data?.download) {
+      console.log(`RD: ✅ URL ready (${resp.data.filename || '?'})`);
+      return resp.data.download;
     }
     return null;
   } catch (err) {
@@ -348,17 +307,13 @@ async function updateCache() {
   console.log('🔄 Updating cache...');
   const schedules = await getTodayAnime();
   todayAnimeCache = schedules;
-  
-  // Vymazat RealDebrid cache při aktualizaci
   rdStreamCache.clear();
-  console.log('🗑️ RealDebrid cache cleared');
-  
+  console.log('🗑️ RD cache cleared');
   console.log(`✅ Cache: ${todayAnimeCache.length} anime`);
 }
 
 cron.schedule('0 4 * * *', updateCache);
 updateCache();
-
 console.log('⏰ Cache update: každý den ve 4:00');
 
 // ===== Stremio Handlers =====
@@ -366,7 +321,6 @@ builder.defineCatalogHandler(async (args) => {
   if (args.type !== 'series' || args.id !== 'anime-today') return { metas: [] };
   if (parseInt(args.extra?.skip) > 0) return { metas: [] };
 
-  // Seřadit podle času vysílání (nejdřív = nahoře)
   const sortedCache = [...todayAnimeCache].sort((a, b) => a.airingAt - b.airingAt);
 
   return {
@@ -381,7 +335,7 @@ builder.defineCatalogHandler(async (args) => {
         id: `nyaa:${s.media.id}:${s.episode}`,
         type: 'series',
         name: s.media.title.romaji || s.media.title.english || s.media.title.native,
-        poster: poster,
+        poster,
         background: background || poster,
         logo: s.media.bannerImage || undefined,
         description: `Epizoda ${s.episode}\n\n${(s.media.description || '').replace(/<[^>]*>/g, '')}`,
@@ -397,7 +351,7 @@ builder.defineMetaHandler(async (args) => {
   const [prefix, anilistId, episode] = args.id.split(':');
   if (prefix !== 'nyaa') return { meta: null };
   const schedule = todayAnimeCache.find(s => s.media.id === parseInt(anilistId) && s.episode === parseInt(episode));
-  if (!schedule) return { meta: null};
+  if (!schedule) return { meta: null };
   
   const m = schedule.media;
   let poster = schedule.tmdbImages?.poster || m.coverImage.extraLarge || m.coverImage.large;
@@ -411,7 +365,7 @@ builder.defineMetaHandler(async (args) => {
       id: args.id,
       type: 'series',
       name: m.title.romaji || m.title.english || m.title.native,
-      poster: poster,
+      poster,
       background: background || poster,
       logo: m.bannerImage || undefined,
       description: (m.description || '').replace(/<[^>]*>/g, ''),
@@ -430,6 +384,9 @@ builder.defineMetaHandler(async (args) => {
   };
 });
 
+// ===== STREAM HANDLER =====
+// Vrací přímo RealDebrid download URL do Stremio
+// Žádný proxy, žádný redirect - Stremio dostane přímo přehratelný link
 builder.defineStreamHandler(async (args) => {
   const [prefix, anilistId, episode] = args.id.split(':');
   if (prefix !== 'nyaa') return { streams: [] };
@@ -439,12 +396,13 @@ builder.defineStreamHandler(async (args) => {
   const m = schedule.media;
   const targetEpisode = parseInt(episode);
   
+  console.log(`\n🎯 Stream: ${m.title.romaji} Ep ${targetEpisode}`);
+  
   let torrents = await searchNyaa(m.title.romaji || m.title.english, targetEpisode);
   if (!torrents.length && m.title.english !== m.title.romaji) {
     torrents = await searchNyaa(m.title.english || m.title.romaji, targetEpisode);
   }
   
-  // Zkontrolovat jestli torrenty obsahují správný díl
   const correctEpisodeTorrents = torrents.filter(t => {
     const name = t.name.toLowerCase();
     const episodePattern = new RegExp(`(?:[-_\\s]|e(?:p(?:isode)?)?\\s*)0*${targetEpisode}(?:[\\s\\-_]|$|\\D)`, 'i');
@@ -452,6 +410,7 @@ builder.defineStreamHandler(async (args) => {
   });
   
   if (!correctEpisodeTorrents.length) {
+    console.log('❌ No matching torrents');
     return {
       streams: [{
         name: '⏳ Ještě není dostupné',
@@ -462,111 +421,67 @@ builder.defineStreamHandler(async (args) => {
     };
   }
 
-  const rdKey = REALDEBRID_API_KEY;
-  const baseUrl = process.env.APP_URL || process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
-
+  console.log(`✅ ${correctEpisodeTorrents.length} matching torrents`);
   const torrentsWithMagnets = correctEpisodeTorrents.filter(t => t.magnet);
+  const streams = [];
 
-  const streams = torrentsWithMagnets.map(t => {
-    if (rdKey) {
-      const streamUrl = `${baseUrl}/rd/${encodeURIComponent(t.magnet)}?key=${encodeURIComponent(rdKey)}`;
-      return {
-        name: 'Nyaa + RD',
-        title: `🎬 ${t.name}\n👥 ${t.seeders} seeders | 📦 ${t.filesize}`,
-        url: streamUrl,
-        behaviorHints: { bingeGroup: 'nyaa-rd' }
-      };
-    } else {
-      return {
-        name: 'Nyaa (Magnet)',
-        title: `🧲 ${t.name}\n👥 ${t.seeders} seeders | 📦 ${t.filesize}`,
-        url: t.magnet,
-        behaviorHints: { notWebReady: true }
-      };
+  // RealDebrid - zkusit top 3 torrenty, vrátit přímo RD URL
+  if (REALDEBRID_API_KEY) {
+    const topTorrents = torrentsWithMagnets.slice(0, 3);
+    
+    for (const t of topTorrents) {
+      try {
+        console.log(`RD: Trying "${t.name}"...`);
+        const rdUrl = await getRealDebridStream(t.magnet, REALDEBRID_API_KEY);
+        if (rdUrl) {
+          streams.push({
+            name: '⚡ RealDebrid',
+            title: `🎬 ${t.name}\n👥 ${t.seeders} seeders | 📦 ${t.filesize}`,
+            url: rdUrl
+          });
+          console.log(`RD: ✅ Direct URL for "${t.name}"`);
+          // Jeden RD stream stačí, nemusíme čekat na všechny
+          break;
+        } else {
+          console.log(`RD: ❌ Not available for "${t.name}"`);
+        }
+      } catch (err) {
+        console.error(`RD error:`, err.message);
+      }
     }
-  });
+  }
 
+  // Magnet fallbacky
+  for (const t of torrentsWithMagnets.slice(0, 10)) {
+    streams.push({
+      name: 'Nyaa (Magnet)',
+      title: `🧲 ${t.name}\n👥 ${t.seeders} seeders | 📦 ${t.filesize}`,
+      url: t.magnet,
+      behaviorHints: { notWebReady: true }
+    });
+  }
+
+  console.log(`📺 ${streams.length} streams total`);
   return { streams };
 });
 
 // ===== Express Server =====
 const app = express();
 
-// CORS middleware
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-  if (req.method === 'OPTIONS') {
-    return res.sendStatus(200);
-  }
+  if (req.method === 'OPTIONS') return res.sendStatus(200);
   next();
 });
 
-// ROOT route - naše landing page (PŘED static middleware)
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 app.use(express.static(path.join(__dirname, 'public')));
 
-app.get('/rd/:magnet', async (req, res) => {
-  const apiKey = req.query.key;
-  if (!apiKey) return res.status(400).json({ error: 'API key required' });
-  
-  try {
-    console.log('RD endpoint: Processing request...');
-    const streamUrl = await getRealDebridStream(decodeURIComponent(req.params.magnet), apiKey);
-    if (!streamUrl) {
-      console.log('RD endpoint: No stream available');
-      return res.status(404).json({ error: 'Stream not available' });
-    }
-
-    console.log('RD endpoint: Proxying stream...');
-    
-    // Proxy video přes náš server místo redirect
-    const range = req.headers.range;
-    const headers = {};
-    if (range) headers['Range'] = range;
-    
-    const videoResponse = await axios({
-      method: 'get',
-      url: streamUrl,
-      responseType: 'stream',
-      headers,
-      timeout: 30000
-    });
-
-    // Přeposlat headers z RD response
-    const contentType = videoResponse.headers['content-type'] || 'video/mp4';
-    const contentLength = videoResponse.headers['content-length'];
-    const contentRange = videoResponse.headers['content-range'];
-    const acceptRanges = videoResponse.headers['accept-ranges'];
-
-    res.status(videoResponse.status); // 200 nebo 206
-    res.setHeader('Content-Type', contentType);
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    if (contentLength) res.setHeader('Content-Length', contentLength);
-    if (contentRange) res.setHeader('Content-Range', contentRange);
-    if (acceptRanges) res.setHeader('Accept-Ranges', acceptRanges);
-    
-    // Pipe video stream přímo do response
-    videoResponse.data.pipe(res);
-    
-    videoResponse.data.on('error', (err) => {
-      console.error('RD stream pipe error:', err.message);
-      if (!res.headersSent) res.status(500).end();
-    });
-
-  } catch (err) {
-    console.error('RD endpoint error:', err.message);
-    if (!res.headersSent) {
-      res.status(500).json({ error: 'RealDebrid failed' });
-    }
-  }
-});
-
-// Použít SDK router
 const addonRouter = getRouter(builder.getInterface());
 app.use(addonRouter);
 
