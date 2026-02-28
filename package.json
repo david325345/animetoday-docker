@@ -1,0 +1,19 @@
+{
+  "name": "stremio-anime-nyaa",
+  "version": "3.0.0",
+  "description": "Dnešní anime z AniList se streamy z Nyaa",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "stremio-addon-sdk": "^1.6.10",
+    "axios": "^1.6.0",
+    "node-cron": "^3.0.3",
+    "express": "^4.18.2",
+    "nyaapi": "^2.4.4"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  }
+}
