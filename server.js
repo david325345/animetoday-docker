@@ -513,39 +513,33 @@ async function generatePoster(schedule) {
     });
 
     const imgBuffer = Buffer.from(resp.data);
-
-    // Get image dimensions
-    const metadata = await sharp(imgBuffer).metadata();
-    const width = metadata.width || 500;
-    const height = metadata.height || 750;
-
-    // Create overlay: black bar at bottom with time text
-    const barHeight = Math.round(height * 0.1);
-    const fontSize = Math.round(barHeight * 0.55);
-    const clockSize = Math.round(fontSize * 0.8);
+    const W = 500;
+    const H = 750;
+    const barH = 70;
+    const fontSize = 38;
 
     const svgOverlay = `
-      <svg width="${width}" height="${height}">
+      <svg width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg">
         <defs>
-          <linearGradient id="grad" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" style="stop-color:rgba(0,0,0,0)"/>
-            <stop offset="40%" style="stop-color:rgba(0,0,0,0.7)"/>
-            <stop offset="100%" style="stop-color:rgba(0,0,0,0.92)"/>
+          <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="rgba(0,0,0,0)"/>
+            <stop offset="30%" stop-color="rgba(0,0,0,0.6)"/>
+            <stop offset="100%" stop-color="rgba(0,0,0,0.95)"/>
           </linearGradient>
         </defs>
-        <rect x="0" y="${height - barHeight * 1.8}" width="${width}" height="${barHeight * 1.8}" fill="url(#grad)"/>
-        <text x="${width / 2}" y="${height - barHeight * 0.35}"
-              font-family="Arial, Helvetica, sans-serif"
-              font-size="${fontSize}" font-weight="bold"
+        <rect x="0" y="${H - barH * 2}" width="${W}" height="${barH * 2}" fill="url(#bg)"/>
+        <text x="${W / 2}" y="${H - 22}"
+              font-family="Arial,Helvetica,sans-serif"
+              font-size="${fontSize}" font-weight="700"
               fill="white" text-anchor="middle"
-              style="text-shadow: 0 2px 8px rgba(0,0,0,0.8)">
-          🕐 ${timeStr}
+              stroke="black" stroke-width="2" paint-order="stroke">
+          ${timeStr}
         </text>
       </svg>
     `;
 
     await sharp(imgBuffer)
-      .resize(500, 750, { fit: 'cover' })
+      .resize(W, H, { fit: 'cover' })
       .composite([{
         input: Buffer.from(svgOverlay),
         top: 0,
