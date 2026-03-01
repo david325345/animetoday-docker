@@ -19,540 +19,107 @@
             --border: rgba(255, 255, 255, 0.06);
             --radius: 12px;
         }
-
         * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Outfit', sans-serif; background: var(--bg-deep); color: var(--text); min-height: 100vh; overflow-x: hidden; }
+        .bg-grid { position: fixed; inset: 0; background-image: linear-gradient(rgba(255,77,106,0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(255,77,106,0.03) 1px, transparent 1px); background-size: 60px 60px; pointer-events: none; z-index: 0; }
+        .bg-glow { position: fixed; width: 600px; height: 600px; border-radius: 50%; filter: blur(150px); opacity: 0.15; pointer-events: none; z-index: 0; }
+        .bg-glow-1 { top: -200px; right: -100px; background: var(--accent); }
+        .bg-glow-2 { bottom: -200px; left: -100px; background: var(--accent-secondary); }
+        .container { position: relative; z-index: 1; max-width: 960px; margin: 0 auto; padding: 40px 24px; }
 
-        body {
-            font-family: 'Outfit', sans-serif;
-            background: var(--bg-deep);
-            color: var(--text);
-            min-height: 100vh;
-            overflow-x: hidden;
-        }
-
-        /* Animated background */
-        .bg-grid {
-            position: fixed;
-            inset: 0;
-            background-image:
-                linear-gradient(rgba(255,77,106,0.03) 1px, transparent 1px),
-                linear-gradient(90deg, rgba(255,77,106,0.03) 1px, transparent 1px);
-            background-size: 60px 60px;
-            pointer-events: none;
-            z-index: 0;
-        }
-
-        .bg-glow {
-            position: fixed;
-            width: 600px;
-            height: 600px;
-            border-radius: 50%;
-            filter: blur(150px);
-            opacity: 0.15;
-            pointer-events: none;
-            z-index: 0;
-        }
-
-        .bg-glow-1 {
-            top: -200px;
-            right: -100px;
-            background: var(--accent);
-        }
-
-        .bg-glow-2 {
-            bottom: -200px;
-            left: -100px;
-            background: var(--accent-secondary);
-        }
-
-        .container {
-            position: relative;
-            z-index: 1;
-            max-width: 960px;
-            margin: 0 auto;
-            padding: 40px 24px;
-        }
-
-        /* Header */
-        .header {
-            text-align: center;
-            margin-bottom: 60px;
-        }
-
-        .logo-badge {
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            background: var(--bg-surface);
-            border: 1px solid var(--border);
-            border-radius: 100px;
-            padding: 8px 20px;
-            font-size: 13px;
-            font-weight: 500;
-            color: var(--accent);
-            margin-bottom: 24px;
-            letter-spacing: 0.5px;
-            text-transform: uppercase;
-        }
-
-        .logo-badge .dot {
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            background: var(--accent-secondary);
-            animation: pulse 2s ease-in-out infinite;
-        }
-
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.3; }
-        }
-
-        h1 {
-            font-size: clamp(48px, 8vw, 72px);
-            font-weight: 800;
-            line-height: 1;
-            margin-bottom: 16px;
-            letter-spacing: -2px;
-        }
-
+        .header { text-align: center; margin-bottom: 60px; }
+        .logo-badge { display: inline-flex; align-items: center; gap: 8px; background: var(--bg-surface); border: 1px solid var(--border); border-radius: 100px; padding: 8px 20px; font-size: 13px; font-weight: 500; color: var(--accent); margin-bottom: 24px; letter-spacing: 0.5px; text-transform: uppercase; }
+        .logo-badge .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent-secondary); animation: pulse 2s ease-in-out infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+        h1 { font-size: clamp(48px, 8vw, 72px); font-weight: 800; line-height: 1; margin-bottom: 16px; letter-spacing: -2px; }
         h1 .accent { color: var(--accent); }
         h1 .green { color: var(--accent-secondary); }
+        .tagline { font-size: 18px; color: var(--text-dim); font-weight: 300; max-width: 500px; margin: 0 auto 40px; line-height: 1.6; }
+        .install-row { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; margin-bottom: 16px; }
 
-        .tagline {
-            font-size: 18px;
-            color: var(--text-dim);
-            font-weight: 300;
-            max-width: 500px;
-            margin: 0 auto 40px;
-            line-height: 1.6;
-        }
+        .btn { display: inline-flex; align-items: center; gap: 8px; padding: 14px 28px; font-family: 'Outfit', sans-serif; font-size: 15px; font-weight: 600; border: none; border-radius: var(--radius); cursor: pointer; transition: all 0.2s; text-decoration: none; }
+        .btn-primary { background: var(--accent); color: white; box-shadow: 0 0 30px var(--accent-glow); }
+        .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 0 50px var(--accent-glow); }
+        .btn-secondary { background: var(--bg-surface); color: var(--text); border: 1px solid var(--border); }
+        .btn-secondary:hover { border-color: var(--accent); }
+        .btn-small { padding: 10px 18px; font-size: 13px; }
+        .btn-danger { background: rgba(255,77,106,0.15); color: var(--accent); border: 1px solid rgba(255,77,106,0.2); }
 
-        /* Install section */
-        .install-row {
-            display: flex;
-            gap: 12px;
-            justify-content: center;
-            flex-wrap: wrap;
-            margin-bottom: 16px;
-        }
+        .manifest-url { font-family: 'Space Mono', monospace; font-size: 13px; color: var(--text-dim); background: var(--bg-surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px 18px; display: inline-flex; align-items: center; gap: 10px; cursor: pointer; transition: border-color 0.2s; }
+        .manifest-url:hover { border-color: var(--accent); }
 
-        .btn {
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            padding: 14px 28px;
-            font-family: 'Outfit', sans-serif;
-            font-size: 15px;
-            font-weight: 600;
-            border: none;
-            border-radius: var(--radius);
-            cursor: pointer;
-            transition: all 0.2s;
-            text-decoration: none;
-        }
+        .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin: 60px 0; }
+        .card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 28px; transition: border-color 0.3s; }
+        .card:hover { border-color: rgba(255, 77, 106, 0.2); }
+        .card-icon { font-size: 28px; margin-bottom: 16px; }
+        .card h3 { font-size: 16px; font-weight: 600; margin-bottom: 8px; }
+        .card p { font-size: 14px; color: var(--text-dim); line-height: 1.6; }
 
-        .btn-primary {
-            background: var(--accent);
-            color: white;
-            box-shadow: 0 0 30px var(--accent-glow);
-        }
+        .settings-section { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 32px; margin: 40px 0; }
+        .settings-section h2 { font-size: 22px; font-weight: 700; margin-bottom: 8px; display: flex; align-items: center; gap: 10px; }
+        .settings-section .desc { color: var(--text-dim); font-size: 14px; margin-bottom: 28px; }
+        .setting-group { margin-bottom: 24px; }
+        .setting-group:last-child { margin-bottom: 0; }
+        .setting-label { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-dim); margin-bottom: 8px; }
+        .input-row { display: flex; gap: 10px; }
+        .input-field { flex: 1; background: var(--bg-surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; font-family: 'Space Mono', monospace; font-size: 13px; color: var(--text); outline: none; transition: border-color 0.2s; }
+        .input-field:focus { border-color: var(--accent); }
+        .input-field::placeholder { color: var(--text-dim); opacity: 0.5; }
 
-        .btn-primary:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 0 50px var(--accent-glow);
-        }
+        .status-badge { display: inline-flex; align-items: center; gap: 6px; padding: 6px 14px; border-radius: 100px; font-size: 12px; font-weight: 600; }
+        .status-badge.connected { background: rgba(0, 229, 160, 0.1); color: var(--accent-secondary); border: 1px solid rgba(0, 229, 160, 0.2); }
+        .status-badge.disconnected { background: rgba(255, 77, 106, 0.1); color: var(--accent); border: 1px solid rgba(255, 77, 106, 0.2); }
 
-        .btn-secondary {
-            background: var(--bg-surface);
-            color: var(--text);
-            border: 1px solid var(--border);
-        }
+        .rd-auth-box { background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; text-align: center; display: none; }
+        .rd-auth-box.visible { display: block; }
+        .rd-user-code { font-family: 'Space Mono', monospace; font-size: 32px; font-weight: 700; letter-spacing: 6px; color: var(--accent); margin: 16px 0; }
+        .rd-auth-box p { font-size: 14px; color: var(--text-dim); line-height: 1.6; }
+        .rd-auth-box a { color: var(--accent-secondary); text-decoration: none; }
+        .rd-auth-box a:hover { text-decoration: underline; }
+        .spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
 
-        .btn-secondary:hover {
-            border-color: var(--accent);
-            background: rgba(255, 77, 106, 0.05);
-        }
+        .rd-user-info { display: none; align-items: center; gap: 16px; background: var(--bg-surface); border: 1px solid rgba(0, 229, 160, 0.15); border-radius: var(--radius); padding: 16px 20px; }
+        .rd-user-info.visible { display: flex; }
+        .rd-user-info .user-details { flex: 1; }
+        .rd-user-info .user-name { font-weight: 600; font-size: 15px; }
+        .rd-user-info .user-meta { font-size: 12px; color: var(--text-dim); }
 
-        .btn-success {
-            background: var(--accent-secondary);
-            color: var(--bg-deep);
-        }
+        /* Anime list */
+        .anime-section { margin: 40px 0; }
+        .anime-section h2 { font-size: 22px; font-weight: 700; margin-bottom: 20px; display: flex; align-items: center; gap: 10px; }
+        .anime-list { display: flex; flex-direction: column; gap: 8px; }
+        .anime-item { display: flex; align-items: center; gap: 14px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px; transition: all 0.2s; }
+        .anime-item.hidden-anime { opacity: 0.4; }
+        .anime-item:hover { border-color: rgba(255,255,255,0.1); }
+        .anime-poster { width: 45px; height: 65px; border-radius: 6px; object-fit: cover; flex-shrink: 0; background: var(--bg-surface); }
+        .anime-info { flex: 1; min-width: 0; }
+        .anime-title { font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .anime-meta { font-size: 12px; color: var(--text-dim); margin-top: 2px; }
+        .anime-ep { color: var(--accent); font-weight: 600; }
+        .toggle-btn { width: 44px; height: 26px; border-radius: 13px; border: none; cursor: pointer; position: relative; transition: background 0.2s; flex-shrink: 0; }
+        .toggle-btn.on { background: var(--accent-secondary); }
+        .toggle-btn.off { background: #333; }
+        .toggle-btn::after { content: ''; position: absolute; width: 20px; height: 20px; border-radius: 50%; background: white; top: 3px; transition: left 0.2s; }
+        .toggle-btn.on::after { left: 21px; }
+        .toggle-btn.off::after { left: 3px; }
 
-        .btn-success:hover {
-            transform: translateY(-2px);
-        }
+        .anime-empty { text-align: center; padding: 40px; color: var(--text-dim); font-size: 14px; }
 
-        .btn-small {
-            padding: 10px 18px;
-            font-size: 13px;
-        }
+        .footer { text-align: center; padding: 40px 0; color: var(--text-dim); font-size: 13px; border-top: 1px solid var(--border); margin-top: 60px; }
+        .footer a { color: var(--accent); text-decoration: none; }
 
-        .manifest-url {
-            font-family: 'Space Mono', monospace;
-            font-size: 13px;
-            color: var(--text-dim);
-            background: var(--bg-surface);
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            padding: 12px 18px;
-            display: inline-flex;
-            align-items: center;
-            gap: 10px;
-            cursor: pointer;
-            transition: border-color 0.2s;
-            max-width: 100%;
-            overflow: hidden;
-        }
+        .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(100px); background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 24px; font-size: 14px; z-index: 100; transition: transform 0.3s ease; pointer-events: none; }
+        .toast.show { transform: translateX(-50%) translateY(0); }
 
-        .manifest-url:hover {
-            border-color: var(--accent);
-        }
+        .hint { font-size: 12px; color: var(--text-dim); margin-top: 6px; font-style: italic; }
 
-        .manifest-url .copy-icon {
-            flex-shrink: 0;
-            opacity: 0.5;
-        }
-
-        /* Cards grid */
-        .cards {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-            gap: 16px;
-            margin: 60px 0;
-        }
-
-        .card {
-            background: var(--bg-card);
-            border: 1px solid var(--border);
-            border-radius: var(--radius);
-            padding: 28px;
-            transition: border-color 0.3s;
-        }
-
-        .card:hover {
-            border-color: rgba(255, 77, 106, 0.2);
-        }
-
-        .card-icon {
-            font-size: 28px;
-            margin-bottom: 16px;
-        }
-
-        .card h3 {
-            font-size: 16px;
-            font-weight: 600;
-            margin-bottom: 8px;
-        }
-
-        .card p {
-            font-size: 14px;
-            color: var(--text-dim);
-            line-height: 1.6;
-        }
-
-        /* Settings Section */
-        .settings-section {
-            background: var(--bg-card);
-            border: 1px solid var(--border);
-            border-radius: var(--radius);
-            padding: 32px;
-            margin: 40px 0;
-        }
-
-        .settings-section h2 {
-            font-size: 22px;
-            font-weight: 700;
-            margin-bottom: 8px;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-
-        .settings-section .desc {
-            color: var(--text-dim);
-            font-size: 14px;
-            margin-bottom: 28px;
-        }
-
-        .setting-group {
-            margin-bottom: 24px;
-        }
-
-        .setting-group:last-child {
-            margin-bottom: 0;
-        }
-
-        .setting-label {
-            font-size: 13px;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            color: var(--text-dim);
-            margin-bottom: 8px;
-        }
-
-        .input-row {
-            display: flex;
-            gap: 10px;
-        }
-
-        .input-field {
-            flex: 1;
-            background: var(--bg-surface);
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            padding: 12px 16px;
-            font-family: 'Space Mono', monospace;
-            font-size: 13px;
-            color: var(--text);
-            outline: none;
-            transition: border-color 0.2s;
-        }
-
-        .input-field:focus {
-            border-color: var(--accent);
-        }
-
-        .input-field::placeholder {
-            color: var(--text-dim);
-            opacity: 0.5;
-        }
-
-        .status-badge {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            padding: 6px 14px;
-            border-radius: 100px;
-            font-size: 12px;
-            font-weight: 600;
-        }
-
-        .status-badge.connected {
-            background: rgba(0, 229, 160, 0.1);
-            color: var(--accent-secondary);
-            border: 1px solid rgba(0, 229, 160, 0.2);
-        }
-
-        .status-badge.disconnected {
-            background: rgba(255, 77, 106, 0.1);
-            color: var(--accent);
-            border: 1px solid rgba(255, 77, 106, 0.2);
-        }
-
-        .status-badge.pending {
-            background: rgba(255, 200, 50, 0.1);
-            color: #ffc832;
-            border: 1px solid rgba(255, 200, 50, 0.2);
-        }
-
-        /* RD Auth Flow */
-        .rd-auth-box {
-            background: var(--bg-surface);
-            border: 1px solid var(--border);
-            border-radius: var(--radius);
-            padding: 24px;
-            text-align: center;
-            display: none;
-        }
-
-        .rd-auth-box.visible {
-            display: block;
-        }
-
-        .rd-user-code {
-            font-family: 'Space Mono', monospace;
-            font-size: 32px;
-            font-weight: 700;
-            letter-spacing: 6px;
-            color: var(--accent);
-            margin: 16px 0;
-        }
-
-        .rd-auth-box p {
-            font-size: 14px;
-            color: var(--text-dim);
-            line-height: 1.6;
-        }
-
-        .rd-auth-box a {
-            color: var(--accent-secondary);
-            text-decoration: none;
-        }
-
-        .rd-auth-box a:hover {
-            text-decoration: underline;
-        }
-
-        .spinner {
-            display: inline-block;
-            width: 16px;
-            height: 16px;
-            border: 2px solid var(--border);
-            border-top-color: var(--accent);
-            border-radius: 50%;
-            animation: spin 0.8s linear infinite;
-        }
-
-        @keyframes spin {
-            to { transform: rotate(360deg); }
-        }
-
-        /* User info display */
-        .rd-user-info {
-            display: none;
-            align-items: center;
-            gap: 16px;
-            background: var(--bg-surface);
-            border: 1px solid rgba(0, 229, 160, 0.15);
-            border-radius: var(--radius);
-            padding: 16px 20px;
-        }
-
-        .rd-user-info.visible {
-            display: flex;
-        }
-
-        .rd-user-info .user-details {
-            flex: 1;
-        }
-
-        .rd-user-info .user-name {
-            font-weight: 600;
-            font-size: 15px;
-        }
-
-        .rd-user-info .user-meta {
-            font-size: 12px;
-            color: var(--text-dim);
-        }
-
-        /* Anime list preview */
-        .anime-preview {
-            margin: 40px 0;
-        }
-
-        .anime-preview h2 {
-            font-size: 22px;
-            font-weight: 700;
-            margin-bottom: 20px;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-
-        .anime-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-            gap: 12px;
-        }
-
-        .anime-card {
-            position: relative;
-            border-radius: 10px;
-            overflow: hidden;
-            background: var(--bg-surface);
-            aspect-ratio: 2/3;
-            cursor: default;
-            transition: transform 0.2s;
-        }
-
-        .anime-card:hover {
-            transform: scale(1.03);
-        }
-
-        .anime-card img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-        }
-
-        .anime-card .overlay {
-            position: absolute;
-            bottom: 0;
-            left: 0;
-            right: 0;
-            padding: 40px 10px 10px;
-            background: linear-gradient(transparent, rgba(0,0,0,0.9));
-        }
-
-        .anime-card .overlay .title {
-            font-size: 12px;
-            font-weight: 600;
-            line-height: 1.3;
-            display: -webkit-box;
-            -webkit-line-clamp: 2;
-            -webkit-box-orient: vertical;
-            overflow: hidden;
-        }
-
-        .anime-card .overlay .ep {
-            font-size: 10px;
-            color: var(--accent);
-            font-weight: 600;
-            margin-top: 2px;
-        }
-
-        .anime-empty {
-            text-align: center;
-            padding: 40px;
-            color: var(--text-dim);
-            font-size: 14px;
-        }
-
-        /* Footer */
-        .footer {
-            text-align: center;
-            padding: 40px 0;
-            color: var(--text-dim);
-            font-size: 13px;
-            border-top: 1px solid var(--border);
-            margin-top: 60px;
-        }
-
-        .footer a {
-            color: var(--accent);
-            text-decoration: none;
-        }
-
-        /* Notification toast */
-        .toast {
-            position: fixed;
-            bottom: 24px;
-            left: 50%;
-            transform: translateX(-50%) translateY(100px);
-            background: var(--bg-surface);
-            border: 1px solid var(--border);
-            border-radius: var(--radius);
-            padding: 14px 24px;
-            font-size: 14px;
-            z-index: 100;
-            transition: transform 0.3s ease;
-            pointer-events: none;
-        }
-
-        .toast.show {
-            transform: translateX(-50%) translateY(0);
-        }
-
-        /* Divider */
-        .divider {
-            width: 60px;
-            height: 2px;
-            background: var(--accent);
-            margin: 0 auto 24px;
-            opacity: 0.5;
-        }
-
-        /* Responsive */
         @media (max-width: 640px) {
             .container { padding: 24px 16px; }
             .cards { grid-template-columns: 1fr; }
             .install-row { flex-direction: column; align-items: center; }
             .input-row { flex-direction: column; }
             .rd-user-info { flex-direction: column; text-align: center; }
-            .anime-grid { grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); }
         }
     </style>
 </head>
@@ -562,259 +129,128 @@
     <div class="bg-glow bg-glow-2"></div>
 
     <div class="container">
-        <!-- Header -->
         <header class="header">
-            <div class="logo-badge">
-                <span class="dot"></span>
-                Stremio Addon v4.0
-            </div>
-            <h1>
-                <span class="accent">Anime</span> Today<span class="green">.</span>
-            </h1>
-            <p class="tagline">
-                Dnešní anime epizody z AniList. Torrenty z Nyaa.si + Sukebei. 
-                Streaming přes RealDebrid. Vše automaticky.
-            </p>
-
+            <div class="logo-badge"><span class="dot"></span> Stremio Addon v4.0</div>
+            <h1><span class="accent">Anime</span> Today<span class="green">.</span></h1>
+            <p class="tagline">Dnešní anime epizody z AniList. Torrenty z Nyaa.si + Sukebei. Streaming přes RealDebrid.</p>
             <div class="install-row">
-                <a href="stremio://animetoday.duckdns.org/manifest.json" class="btn btn-primary">
-                    🚀 Instalovat do Stremio
-                </a>
-                <button class="btn btn-secondary" onclick="copyManifest()">
-                    📋 Kopírovat URL
-                </button>
+                <a href="stremio://animetoday.duckdns.org/manifest.json" class="btn btn-primary">🚀 Instalovat do Stremio</a>
+                <button class="btn btn-secondary" onclick="copyManifest()">📋 Kopírovat URL</button>
             </div>
-
             <div class="manifest-url" onclick="copyManifest()" title="Klikněte pro zkopírování">
-                <span>https://animetoday.duckdns.org/manifest.json</span>
-                <span class="copy-icon">📋</span>
+                <span>https://animetoday.duckdns.org/manifest.json</span> 📋
             </div>
         </header>
 
-        <!-- Features -->
         <div class="cards">
-            <div class="card">
-                <div class="card-icon">📡</div>
-                <h3>AniList denní program</h3>
-                <p>Automaticky stahuje dnešní anime z AniList API. Aktualizace každý den ve 4:00 + co 6 hodin.</p>
-            </div>
-            <div class="card">
-                <div class="card-icon">🔍</div>
-                <h3>Nyaa.si + Sukebei</h3>
-                <p>Hledá torrenty na Nyaa.si. Pokud nic nenajde, zkusí Sukebei jako fallback. Chytrý matching epizod.</p>
-            </div>
-            <div class="card">
-                <div class="card-icon">⚡</div>
-                <h3>RealDebrid streaming</h3>
-                <p>Přihlaste se přes RealDebrid přímo zde. Okamžité streamování bez čekání, cache na 1 hodinu.</p>
-            </div>
+            <div class="card"><div class="card-icon">📡</div><h3>AniList denní program</h3><p>Automaticky stahuje dnešní anime. Aktualizace každý den ve 4:00 + co 6 hodin.</p></div>
+            <div class="card"><div class="card-icon">🔍</div><h3>Nyaa.si + Sukebei</h3><p>Hledá torrenty na Nyaa.si, fallback na Sukebei. Chytrý matching epizod.</p></div>
+            <div class="card"><div class="card-icon">⚡</div><h3>RealDebrid</h3><p>Přihlaste se zde — klíč se uloží na server. Stremio streamuje automaticky.</p></div>
         </div>
 
-        <!-- RealDebrid Settings -->
+        <!-- RealDebrid -->
         <section class="settings-section">
             <h2>⚡ RealDebrid</h2>
-            <p class="desc">
-                Přihlaste se ke svému RealDebrid účtu pro streamování. Můžete použít OAuth přihlášení nebo zadat API klíč přímo.
-            </p>
+            <p class="desc">Přihlaste se ke svému RD účtu. Klíč se uloží na server — Stremio ho použije automaticky.</p>
 
-            <!-- RD Status -->
             <div class="setting-group">
                 <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 16px;">
-                    <span class="setting-label" style="margin: 0;">Stav</span>
+                    <span class="setting-label" style="margin:0">Stav</span>
                     <span id="rd-status" class="status-badge disconnected">⬤ Nepřipojen</span>
                 </div>
-
-                <!-- Connected user info -->
                 <div id="rd-user-info" class="rd-user-info">
                     <div class="user-details">
                         <div class="user-name" id="rd-username">—</div>
                         <div class="user-meta" id="rd-user-meta">—</div>
                     </div>
-                    <button class="btn btn-small btn-secondary" onclick="disconnectRD()">Odpojit</button>
+                    <button class="btn btn-small btn-danger" onclick="disconnectRD()">Odpojit</button>
                 </div>
             </div>
 
-            <!-- Login options (hidden when connected) -->
             <div id="rd-login-options">
                 <div class="setting-group">
-                    <div class="setting-label">Možnost 1: OAuth přihlášení (doporučeno)</div>
-                    <button id="rd-oauth-btn" class="btn btn-primary btn-small" onclick="startRDAuth()">
-                        🔐 Přihlásit přes RealDebrid
-                    </button>
+                    <div class="setting-label">OAuth přihlášení (doporučeno)</div>
+                    <button id="rd-oauth-btn" class="btn btn-primary btn-small" onclick="startRDAuth()">🔐 Přihlásit přes RealDebrid</button>
                 </div>
-
-                <!-- OAuth flow box -->
                 <div id="rd-auth-box" class="rd-auth-box">
-                    <p>Přejděte na tuto stránku a zadejte kód:</p>
-                    <div>
-                        <a id="rd-verify-url" href="https://real-debrid.com/device" target="_blank">
-                            real-debrid.com/device
-                        </a>
-                    </div>
+                    <p>Přejděte na:</p>
+                    <div><a id="rd-verify-url" href="https://real-debrid.com/device" target="_blank">real-debrid.com/device</a></div>
                     <div class="rd-user-code" id="rd-user-code">------</div>
-                    <p>
-                        <span class="spinner"></span>
-                        Čekám na ověření...
-                    </p>
+                    <p><span class="spinner"></span> Čekám na ověření...</p>
                 </div>
-
-                <div class="setting-group" style="margin-top: 20px;">
-                    <div class="setting-label">Možnost 2: API klíč (manuální)</div>
+                <div class="setting-group" style="margin-top:20px">
+                    <div class="setting-label">Nebo: API klíč manuálně</div>
                     <div class="input-row">
-                        <input type="password" id="rd-api-key" class="input-field"
-                               placeholder="Vložte RealDebrid API klíč z real-debrid.com/apitoken"
-                               autocomplete="off">
+                        <input type="password" id="rd-api-key" class="input-field" placeholder="API klíč z real-debrid.com/apitoken" autocomplete="off">
                         <button class="btn btn-small btn-secondary" onclick="saveRDKey()">Uložit</button>
                     </div>
+                    <p class="hint">Klíč získáte na <a href="https://real-debrid.com/apitoken" target="_blank" style="color:var(--accent-secondary)">real-debrid.com/apitoken</a></p>
                 </div>
             </div>
         </section>
 
-        <!-- TMDB Settings -->
+        <!-- TMDB -->
         <section class="settings-section">
             <h2>🖼️ TMDB</h2>
-            <p class="desc">
-                Volitelné. TMDB API klíč pro lepší obrázky (postery, pozadí). Klíč se uloží na server a přežije restart.
-            </p>
+            <p class="desc">Volitelné. Pro lepší postery a pozadí. Klíč se uloží na server.</p>
             <div class="setting-group">
                 <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
-                    <span class="setting-label" style="margin: 0;">Stav</span>
+                    <span class="setting-label" style="margin:0">Stav</span>
                     <span id="tmdb-status" class="status-badge disconnected">⬤ Nenastaveno</span>
                 </div>
                 <div class="input-row">
-                    <input type="text" id="tmdb-api-key" class="input-field"
-                           placeholder="Váš TMDB API klíč (v3 auth)"
-                           autocomplete="off">
+                    <input type="text" id="tmdb-api-key" class="input-field" placeholder="TMDB API klíč (v3 auth)" autocomplete="off">
                     <button class="btn btn-small btn-secondary" onclick="saveTMDBKey()">Uložit</button>
                 </div>
             </div>
         </section>
 
-        <!-- Anime Preview -->
-        <section class="anime-preview">
-            <h2>📺 Dnešní anime <span style="font-size: 14px; color: var(--text-dim); font-weight: 400;" id="anime-count"></span></h2>
-            <div id="anime-grid" class="anime-grid">
+        <!-- Anime filter -->
+        <section class="anime-section">
+            <h2>📺 Dnešní anime <span style="font-size:14px;color:var(--text-dim);font-weight:400" id="anime-count"></span></h2>
+            <p style="color:var(--text-dim);font-size:14px;margin-bottom:16px">
+                Vypněte anime které nechcete ve Stremio. Volba se pamatuje — příští týden bude stejné anime automaticky skryté.
+            </p>
+            <div id="anime-list" class="anime-list">
                 <div class="anime-empty">Načítám...</div>
             </div>
         </section>
 
-        <!-- Footer -->
         <footer class="footer">
-            <p>
-                Anime Today v4.0 · 
-                <a href="https://github.com/david325345/animetoday" target="_blank">GitHub</a> ·
-                Data z <a href="https://anilist.co" target="_blank">AniList</a>,
-                <a href="https://nyaa.si" target="_blank">Nyaa.si</a>,
-                <a href="https://www.themoviedb.org" target="_blank">TMDB</a>
-            </p>
+            <p>Anime Today v4.0 · <a href="https://github.com/david325345/animetoday" target="_blank">GitHub</a> · Data z <a href="https://anilist.co" target="_blank">AniList</a>, <a href="https://nyaa.si" target="_blank">Nyaa.si</a>, <a href="https://www.themoviedb.org" target="_blank">TMDB</a></p>
         </footer>
     </div>
 
-    <!-- Toast notification -->
     <div id="toast" class="toast"></div>
 
     <script>
-        // ===== Storage helpers =====
-        const STORAGE_KEYS = {
-            RD_TOKEN: 'anime_rd_token',
-            RD_REFRESH: 'anime_rd_refresh',
-            RD_CLIENT_ID: 'anime_rd_client_id',
-            RD_CLIENT_SECRET: 'anime_rd_client_secret',
-            RD_API_KEY: 'anime_rd_api_key'
-        };
-
-        function getStored(key) {
-            try { return localStorage.getItem(key); } catch { return null; }
-        }
-
-        function setStored(key, value) {
-            try { localStorage.setItem(key, value); } catch {}
-        }
-
-        function removeStored(key) {
-            try { localStorage.removeItem(key); } catch {}
-        }
-
-        // ===== Toast =====
         function showToast(msg, duration = 3000) {
-            const toast = document.getElementById('toast');
-            toast.textContent = msg;
-            toast.classList.add('show');
-            setTimeout(() => toast.classList.remove('show'), duration);
+            const t = document.getElementById('toast');
+            t.textContent = msg;
+            t.classList.add('show');
+            setTimeout(() => t.classList.remove('show'), duration);
         }
 
-        // ===== Copy manifest =====
         function copyManifest() {
-            const url = 'https://animetoday.duckdns.org/manifest.json';
-            navigator.clipboard.writeText(url).then(() => {
-                showToast('✅ URL zkopírována!');
-            }).catch(() => {
-                showToast('❌ Kopírování selhalo');
-            });
+            navigator.clipboard.writeText('https://animetoday.duckdns.org/manifest.json')
+                .then(() => showToast('✅ URL zkopírována!'))
+                .catch(() => showToast('❌ Kopírování selhalo'));
         }
 
         // ===== RealDebrid =====
-        function getRDKey() {
-            return getStored(STORAGE_KEYS.RD_TOKEN) || getStored(STORAGE_KEYS.RD_API_KEY);
-        }
-
         async function checkRDStatus() {
-            const key = getRDKey();
-            if (!key) {
-                updateRDUI('disconnected');
-                return;
-            }
-
             try {
-                const resp = await fetch(`/api/rd/validate?key=${encodeURIComponent(key)}`);
+                const resp = await fetch('/api/rd/status');
                 const data = await resp.json();
-
-                if (data.valid) {
+                if (data.connected) {
                     updateRDUI('connected', data);
                 } else {
-                    // Try refreshing token
-                    const refreshed = await tryRefreshRDToken();
-                    if (!refreshed) {
-                        updateRDUI('disconnected');
-                    }
+                    updateRDUI('disconnected');
                 }
-            } catch {
-                updateRDUI('disconnected');
-            }
+            } catch { updateRDUI('disconnected'); }
         }
 
-        async function tryRefreshRDToken() {
-            const clientId = getStored(STORAGE_KEYS.RD_CLIENT_ID);
-            const clientSecret = getStored(STORAGE_KEYS.RD_CLIENT_SECRET);
-            const refreshToken = getStored(STORAGE_KEYS.RD_REFRESH);
-
-            if (!clientId || !clientSecret || !refreshToken) return false;
-
-            try {
-                const resp = await fetch('/api/rd/refresh-token', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        client_id: clientId,
-                        client_secret: clientSecret,
-                        refresh_token: refreshToken
-                    })
-                });
-
-                const data = await resp.json();
-                if (data.access_token) {
-                    setStored(STORAGE_KEYS.RD_TOKEN, data.access_token);
-                    if (data.refresh_token) {
-                        setStored(STORAGE_KEYS.RD_REFRESH, data.refresh_token);
-                    }
-                    await checkRDStatus();
-                    return true;
-                }
-            } catch {}
-            return false;
-        }
-
-        function updateRDUI(status, userData) {
+        function updateRDUI(status, data) {
             const statusEl = document.getElementById('rd-status');
             const userInfo = document.getElementById('rd-user-info');
             const loginOpts = document.getElementById('rd-login-options');
@@ -824,10 +260,9 @@
                 statusEl.textContent = '⬤ Připojeno';
                 userInfo.classList.add('visible');
                 loginOpts.style.display = 'none';
-
-                document.getElementById('rd-username').textContent = userData?.username || 'RealDebrid User';
-                const premium = userData?.premium ? '⭐ Premium' : 'Free';
-                const expiry = userData?.expiration ? ` · Platnost do ${new Date(userData.expiration).toLocaleDateString('cs')}` : '';
+                document.getElementById('rd-username').textContent = data?.username || 'RealDebrid User';
+                const premium = data?.premium ? '⭐ Premium' : 'Free';
+                const expiry = data?.expiration ? ` · do ${new Date(data.expiration).toLocaleDateString('cs')}` : '';
                 document.getElementById('rd-user-meta').textContent = `${premium}${expiry}`;
             } else {
                 statusEl.className = 'status-badge disconnected';
@@ -840,191 +275,167 @@
         async function startRDAuth() {
             const btn = document.getElementById('rd-oauth-btn');
             const authBox = document.getElementById('rd-auth-box');
-
-            btn.disabled = true;
-            btn.textContent = '⏳ Připravuji...';
+            btn.disabled = true; btn.textContent = '⏳ Připravuji...';
 
             try {
                 const resp = await fetch('/api/rd/device-code');
                 const data = await resp.json();
+                if (data.error) { showToast('❌ ' + data.error); btn.disabled = false; btn.textContent = '🔐 Přihlásit přes RealDebrid'; return; }
 
-                if (data.error) {
-                    showToast('❌ ' + data.error);
-                    btn.disabled = false;
-                    btn.textContent = '🔐 Přihlásit přes RealDebrid';
-                    return;
-                }
-
-                // Show auth box
                 document.getElementById('rd-user-code').textContent = data.user_code;
                 document.getElementById('rd-verify-url').href = data.verification_url;
-                document.getElementById('rd-verify-url').textContent = data.verification_url.replace('https://', '');
                 authBox.classList.add('visible');
                 btn.style.display = 'none';
 
-                // Poll for authorization
                 const interval = (data.interval || 5) * 1000;
                 const maxAttempts = Math.floor((data.expires_in || 600) / (data.interval || 5));
                 let attempts = 0;
 
-                const pollTimer = setInterval(async () => {
+                const timer = setInterval(async () => {
                     attempts++;
                     if (attempts > maxAttempts) {
-                        clearInterval(pollTimer);
+                        clearInterval(timer);
                         authBox.classList.remove('visible');
-                        btn.style.display = '';
-                        btn.disabled = false;
-                        btn.textContent = '🔐 Přihlásit přes RealDebrid';
-                        showToast('⏰ Čas vypršel, zkuste to znovu');
+                        btn.style.display = ''; btn.disabled = false; btn.textContent = '🔐 Přihlásit přes RealDebrid';
+                        showToast('⏰ Čas vypršel');
                         return;
                     }
-
                     try {
                         const pollResp = await fetch(`/api/rd/poll-auth?device_code=${data.device_code}`);
                         const pollData = await pollResp.json();
-
                         if (pollData.status === 'authorized') {
-                            clearInterval(pollTimer);
-
-                            // Store tokens
-                            setStored(STORAGE_KEYS.RD_TOKEN, pollData.access_token);
-                            setStored(STORAGE_KEYS.RD_REFRESH, pollData.refresh_token);
-                            setStored(STORAGE_KEYS.RD_CLIENT_ID, pollData.client_id);
-                            setStored(STORAGE_KEYS.RD_CLIENT_SECRET, pollData.client_secret);
-
+                            clearInterval(timer);
                             authBox.classList.remove('visible');
-                            btn.style.display = '';
-                            btn.disabled = false;
-                            btn.textContent = '🔐 Přihlásit přes RealDebrid';
-
+                            btn.style.display = ''; btn.disabled = false; btn.textContent = '🔐 Přihlásit přes RealDebrid';
                             showToast('✅ RealDebrid připojeno!');
                             checkRDStatus();
                         }
                     } catch {}
                 }, interval);
-
             } catch (err) {
-                showToast('❌ Chyba: ' + err.message);
-                btn.disabled = false;
-                btn.textContent = '🔐 Přihlásit přes RealDebrid';
+                showToast('❌ ' + err.message);
+                btn.disabled = false; btn.textContent = '🔐 Přihlásit přes RealDebrid';
             }
         }
 
         async function saveRDKey() {
             const key = document.getElementById('rd-api-key').value.trim();
-            if (!key) {
-                showToast('❌ Zadejte API klíč');
-                return;
-            }
-
+            if (!key) { showToast('❌ Zadejte API klíč'); return; }
             try {
-                const resp = await fetch(`/api/rd/validate?key=${encodeURIComponent(key)}`);
+                const resp = await fetch('/api/rd/save-key', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ key })
+                });
                 const data = await resp.json();
-
-                if (data.valid) {
-                    setStored(STORAGE_KEYS.RD_API_KEY, key);
+                if (data.success) {
                     document.getElementById('rd-api-key').value = '';
                     showToast('✅ RealDebrid klíč uložen!');
                     checkRDStatus();
                 } else {
-                    showToast('❌ Neplatný API klíč');
+                    showToast('❌ Neplatný klíč: ' + (data.error || ''));
                 }
-            } catch {
-                showToast('❌ Nepodařilo se ověřit klíč');
-            }
+            } catch { showToast('❌ Chyba'); }
         }
 
-        function disconnectRD() {
-            Object.values(STORAGE_KEYS).forEach(key => {
-                if (key.startsWith('anime_rd_')) removeStored(key);
-            });
+        async function disconnectRD() {
+            await fetch('/api/rd/disconnect', { method: 'POST' });
             updateRDUI('disconnected');
             showToast('🔌 RealDebrid odpojen');
         }
 
         // ===== TMDB =====
-        async function saveTMDBKey() {
-            const key = document.getElementById('tmdb-api-key').value.trim();
-            if (!key) {
-                showToast('❌ Zadejte TMDB API klíč');
-                return;
-            }
-
-            try {
-                const resp = await fetch('/api/tmdb/save', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ key })
-                });
-                const data = await resp.json();
-
-                if (data.valid && data.saved) {
-                    document.getElementById('tmdb-api-key').value = '';
-                    document.getElementById('tmdb-status').className = 'status-badge connected';
-                    document.getElementById('tmdb-status').textContent = '⬤ Nastaveno';
-                    showToast('✅ TMDB klíč uložen na server!');
-                } else {
-                    showToast('❌ Neplatný TMDB API klíč');
-                }
-            } catch {
-                showToast('❌ Nepodařilo se ověřit klíč');
-            }
-        }
-
         async function checkTMDBStatus() {
             try {
                 const resp = await fetch('/api/tmdb/status');
                 const data = await resp.json();
-                const statusEl = document.getElementById('tmdb-status');
-                if (data.configured) {
-                    statusEl.className = 'status-badge connected';
-                    statusEl.textContent = '⬤ Nastaveno';
-                }
+                const el = document.getElementById('tmdb-status');
+                if (data.configured) { el.className = 'status-badge connected'; el.textContent = '⬤ Nastaveno'; }
             } catch {}
         }
 
-        // ===== Anime Preview =====
-        async function loadAnimePreview() {
-            const grid = document.getElementById('anime-grid');
-            const count = document.getElementById('anime-count');
+        async function saveTMDBKey() {
+            const key = document.getElementById('tmdb-api-key').value.trim();
+            if (!key) { showToast('❌ Zadejte klíč'); return; }
+            try {
+                const resp = await fetch('/api/tmdb/save', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ key })
+                });
+                const data = await resp.json();
+                if (data.valid && data.saved) {
+                    document.getElementById('tmdb-api-key').value = '';
+                    document.getElementById('tmdb-status').className = 'status-badge connected';
+                    document.getElementById('tmdb-status').textContent = '⬤ Nastaveno';
+                    showToast('✅ TMDB klíč uložen!');
+                } else { showToast('❌ Neplatný TMDB klíč'); }
+            } catch { showToast('❌ Chyba'); }
+        }
 
+        // ===== Anime list with hide/show =====
+        async function loadAnime() {
+            const list = document.getElementById('anime-list');
+            const count = document.getElementById('anime-count');
             try {
                 const resp = await fetch('/api/anime');
                 const data = await resp.json();
 
-                count.textContent = `(${data.count} anime)`;
+                const visibleCount = data.anime.filter(a => !a.hidden).length;
+                count.textContent = `(${visibleCount}/${data.count} zobrazeno)`;
 
                 if (!data.anime?.length) {
-                    grid.innerHTML = '<div class="anime-empty">Žádné anime pro dnešek nebo se ještě načítá cache...</div>';
+                    list.innerHTML = '<div class="anime-empty">Žádné anime pro dnešek...</div>';
                     return;
                 }
 
-                grid.innerHTML = data.anime.map(a => {
+                list.innerHTML = data.anime.map(a => {
                     const title = a.title.romaji || a.title.english || a.title.native;
-                    const poster = a.poster || 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="230" height="345"><rect fill="%2313132a" width="230" height="345"/><text x="115" y="172" text-anchor="middle" fill="%237a7a9e" font-size="14">No Image</text></svg>';
+                    const poster = a.poster || '';
+                    const isHidden = a.hidden;
+                    const genres = (a.genres || []).slice(0, 3).join(', ');
+                    const score = a.score ? `⭐ ${(a.score / 10).toFixed(1)}` : '';
+
                     return `
-                        <div class="anime-card">
-                            <img src="${poster}" alt="${title}" loading="lazy" onerror="this.style.display='none'">
-                            <div class="overlay">
-                                <div class="title">${title}</div>
-                                <div class="ep">EP ${a.episode}</div>
+                        <div class="anime-item ${isHidden ? 'hidden-anime' : ''}" data-id="${a.id}">
+                            ${poster ? `<img src="${poster}" class="anime-poster" loading="lazy" onerror="this.style.display='none'">` : '<div class="anime-poster"></div>'}
+                            <div class="anime-info">
+                                <div class="anime-title">${title}</div>
+                                <div class="anime-meta">
+                                    <span class="anime-ep">EP ${a.episode}</span>
+                                    ${genres ? ` · ${genres}` : ''}
+                                    ${score ? ` · ${score}` : ''}
+                                </div>
                             </div>
+                            <button class="toggle-btn ${isHidden ? 'off' : 'on'}"
+                                    onclick="toggleAnime(${a.id}, ${isHidden})"
+                                    title="${isHidden ? 'Zobrazit ve Stremio' : 'Skrýt ze Stremio'}">
+                            </button>
                         </div>
                     `;
                 }).join('');
             } catch {
-                grid.innerHTML = '<div class="anime-empty">Nepodařilo se načíst anime</div>';
+                list.innerHTML = '<div class="anime-empty">Nepodařilo se načíst</div>';
             }
+        }
+
+        async function toggleAnime(mediaId, currentlyHidden) {
+            const endpoint = currentlyHidden ? '/api/anime/show' : '/api/anime/hide';
+            try {
+                await fetch(endpoint, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ mediaId })
+                });
+                loadAnime();
+                showToast(currentlyHidden ? '👁️ Anime zobrazeno' : '🙈 Anime skryto');
+            } catch { showToast('❌ Chyba'); }
         }
 
         // ===== Init =====
         document.addEventListener('DOMContentLoaded', () => {
             checkRDStatus();
             checkTMDBStatus();
-            loadAnimePreview();
-
-            // Refresh anime list every 5 minutes
-            setInterval(loadAnimePreview, 300000);
+            loadAnime();
+            setInterval(loadAnime, 300000);
         });
     </script>
 </body>
