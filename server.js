@@ -7,6 +7,15 @@ const { si } = require('nyaapi');
 const crypto = require('crypto');
 const fs = require('fs');
 
+// Prevent crashes from killing the server
+process.on('uncaughtException', (err) => {
+  console.error('⚠️ Uncaught Exception:', err.message);
+  console.error(err.stack);
+});
+process.on('unhandledRejection', (err) => {
+  console.error('⚠️ Unhandled Rejection:', err?.message || err);
+});
+
 // ===== Configuration =====
 const PORT = process.env.PORT || 3002;
 const RD_OPEN_SOURCE_CLIENT_ID = 'X245A4XAIBGVM'; // RealDebrid opensource client ID
@@ -477,8 +486,7 @@ cron.schedule('0 */6 * * *', () => {
   updateCache();
 });
 
-// Initial load
-updateCache();
+// Initial load is triggered AFTER server starts (see bottom of file)
 
 // ===== Stremio Handlers =====
 builder.defineCatalogHandler(async (args) => {
@@ -859,9 +867,14 @@ app.get('/health', (req, res) => {
 const addonRouter = getRouter(builder.getInterface());
 app.use(addonRouter);
 
-// Start server
+// Start server FIRST, then load cache
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Server running: http://localhost:${PORT}/`);
   console.log(`📺 Stremio manifest: http://localhost:${PORT}/manifest.json`);
   console.log(`🌐 Landing page: http://localhost:${PORT}/`);
+
+  // Load cache after server is up
+  updateCache().catch(err => {
+    console.error('❌ Initial cache load failed (server still running):', err.message);
+  });
 });
