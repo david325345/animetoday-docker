@@ -504,6 +504,8 @@ async function generatePoster(schedule) {
 
   const outputPath = path.join(POSTERS_DIR, `${m.id}.jpg`);
   const timeStr = formatTimeCET(schedule.airingAt);
+  const score = m.averageScore ? (m.averageScore / 10).toFixed(1) : null;
+  const label = score ? `${timeStr} | ${score}/10` : timeStr;
 
   try {
     // Download original poster
@@ -516,7 +518,7 @@ async function generatePoster(schedule) {
     const W = 500;
     const H = 750;
     const barH = 70;
-    const fontSize = 38;
+    const fontSize = 34;
 
     const svgOverlay = `
       <svg width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg">
@@ -525,7 +527,7 @@ async function generatePoster(schedule) {
               font-family="DejaVu Sans,Noto Sans,sans-serif"
               font-size="${fontSize}" font-weight="700"
               fill="white" text-anchor="middle">
-          ${timeStr}
+          ${label}
         </text>
       </svg>
     `;
