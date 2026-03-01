@@ -300,6 +300,8 @@ function filterByEpisode(torrents, targetEpisode) {
 }
 
 // ===== RealDebrid API =====
+const DOWNLOADING_VIDEO_URL = 'https://raw.githubusercontent.com/david325345/animetoday-docker/main/public/downloading.mp4';
+
 async function getRealDebridStream(magnet) {
   const apiKey = config.rd_api_key;
   if (!apiKey) return null;
@@ -308,70 +310,130 @@ async function getRealDebridStream(magnet) {
   const cached = rdStreamCache.get(cacheKey);
   if (cached && (Date.now() - cached.timestamp < 3600000)) {
     console.log('  RD: ✅ Cache hit');
-    return cached.url;
+    return { status: 'ready', url: cached.url };
   }
 
-  try {
-    console.log('  RD: Adding magnet...');
-    const addResp = await axios.post(
-      'https://api.real-debrid.com/rest/1.0/torrents/addMagnet',
-      `magnet=${encodeURIComponent(magnet)}`,
-      { headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 15000 }
-    );
-    const torrentId = addResp.data?.id;
-    if (!torrentId) { console.error('  RD: No torrent ID'); return null; }
+  // Extract hash from magnet
+  const magnetHash = magnet.match(/btih:([a-fA-F0-9]+)/i)?.[1]?.toLowerCase();
 
+  try {
+    let torrentId = null;
+
+    // Step 1: Check if torrent already exists in RD
+    if (magnetHash) {
+      try {
+        const existing = await axios.get(
+          'https://api.real-debrid.com/rest/1.0/torrents',
+          { headers: { 'Authorization': `Bearer ${apiKey}` }, timeout: 10000 }
+        );
+        const found = (existing.data || []).find(t =>
+          t.hash?.toLowerCase() === magnetHash
+        );
+        if (found) {
+          torrentId = found.id;
+          console.log(`  RD: ♻️ Reusing existing torrent ${torrentId}`);
+        }
+      } catch {}
+    }
+
+    // Step 2: Add magnet only if not found
+    if (!torrentId) {
+      console.log('  RD: Adding magnet...');
+      const addResp = await axios.post(
+        'https://api.real-debrid.com/rest/1.0/torrents/addMagnet',
+        `magnet=${encodeURIComponent(magnet)}`,
+        { headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 15000 }
+      );
+      torrentId = addResp.data?.id;
+      if (!torrentId) { console.error('  RD: No torrent ID'); return null; }
+    }
+
+    // Step 3: Get info
     const infoResp = await axios.get(
       `https://api.real-debrid.com/rest/1.0/torrents/info/${torrentId}`,
       { headers: { 'Authorization': `Bearer ${apiKey}` }, timeout: 10000 }
     );
-    const files = infoResp.data?.files;
-    if (!files?.length) { console.error('  RD: No files'); return null; }
 
-    const videoExts = ['.mkv', '.mp4', '.avi', '.webm', '.flv', '.mov', '.wmv'];
-    const videoFiles = files.filter(f => videoExts.some(ext => f.path.toLowerCase().endsWith(ext)));
-    const selected = videoFiles.length > 0 ? videoFiles : files;
-    const fileIds = selected.map(f => f.id).join(',');
+    // If already has links, unrestrict immediately
+    if (infoResp.data?.links?.length) {
+      const url = await unrestrictLink(apiKey, infoResp.data.links[0]);
+      if (url) {
+        rdStreamCache.set(cacheKey, { url, timestamp: Date.now() });
+        console.log('  RD: ✅ Stream ready (instant)');
+        return { status: 'ready', url };
+      }
+    }
 
-    await axios.post(
-      `https://api.real-debrid.com/rest/1.0/torrents/selectFiles/${torrentId}`,
-      `files=${fileIds}`,
-      { headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 10000 }
-    );
+    // Need to select files if status is waiting_files_selection
+    if (infoResp.data?.status === 'waiting_files_selection') {
+      const files = infoResp.data?.files;
+      if (!files?.length) { console.error('  RD: No files'); return null; }
 
-    for (let attempt = 0; attempt < 15; attempt++) {
+      const videoExts = ['.mkv', '.mp4', '.avi', '.webm', '.flv', '.mov', '.wmv'];
+      const videoFiles = files.filter(f => videoExts.some(ext => f.path.toLowerCase().endsWith(ext)));
+      const selected = videoFiles.length > 0 ? videoFiles : files;
+      const fileIds = selected.map(f => f.id).join(',');
+
+      await axios.post(
+        `https://api.real-debrid.com/rest/1.0/torrents/selectFiles/${torrentId}`,
+        `files=${fileIds}`,
+        { headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 10000 }
+      );
+    }
+
+    // Step 4: Poll for download link (max ~20s for quick response)
+    for (let attempt = 0; attempt < 10; attempt++) {
       await new Promise(r => setTimeout(r, 2000));
       const pollResp = await axios.get(
         `https://api.real-debrid.com/rest/1.0/torrents/info/${torrentId}`,
         { headers: { 'Authorization': `Bearer ${apiKey}` }, timeout: 10000 }
       );
+
+      const status = pollResp.data?.status;
       const links = pollResp.data?.links;
+
       if (links?.length) {
-        const unResp = await axios.post(
-          'https://api.real-debrid.com/rest/1.0/unrestrict/link',
-          `link=${encodeURIComponent(links[0])}`,
-          { headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 10000 }
-        );
-        const downloadUrl = unResp.data?.download;
-        if (downloadUrl) {
-          rdStreamCache.set(cacheKey, { url: downloadUrl, timestamp: Date.now() });
+        const url = await unrestrictLink(apiKey, links[0]);
+        if (url) {
+          rdStreamCache.set(cacheKey, { url, timestamp: Date.now() });
           console.log('  RD: ✅ Stream ready');
-          return downloadUrl;
+          return { status: 'ready', url };
         }
       }
-      const status = pollResp.data?.status;
-      console.log(`  RD: Waiting... (${status}, ${attempt + 1}/15)`);
-      if (['error', 'dead', 'magnet_error'].includes(status)) {
+
+      console.log(`  RD: Waiting... (${status}, ${attempt + 1}/10)`);
+
+      if (['error', 'dead', 'magnet_error', 'virus'].includes(status)) {
         console.error(`  RD: Failed: ${status}`);
         return null;
       }
+
+      // If still downloading, return downloading status after a few attempts
+      if (status === 'downloading' && attempt >= 2) {
+        const progress = pollResp.data?.progress || 0;
+        console.log(`  RD: 📥 Downloading (${progress}%) — showing download video`);
+        return { status: 'downloading', progress };
+      }
     }
-    console.error('  RD: Timed out');
-    return null;
+
+    // Timed out but torrent is working — show downloading video
+    console.log('  RD: ⏳ Still processing — showing download video');
+    return { status: 'downloading', progress: 0 };
   } catch (err) {
     console.error(`  RD: Error - ${err.response?.status || '?'}: ${err.response?.data?.error || err.message}`);
     return null;
   }
+}
+
+async function unrestrictLink(apiKey, link) {
+  try {
+    const resp = await axios.post(
+      'https://api.real-debrid.com/rest/1.0/unrestrict/link',
+      `link=${encodeURIComponent(link)}`,
+      { headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 10000 }
+    );
+    return resp.data?.download || null;
+  } catch { return null; }
 }
 
 // ===== Cache =====
@@ -550,22 +612,31 @@ function storeMagnet(magnet) {
 app.get('/rd-stream/:hash', async (req, res) => {
   const magnet = magnetStore.get(req.params.hash);
   if (!magnet) {
-    return res.status(404).json({ error: 'Magnet not found. Try refreshing the stream list.' });
+    return res.redirect(DOWNLOADING_VIDEO_URL);
   }
   if (!config.rd_api_key) {
     return res.status(401).json({ error: 'RealDebrid není nastaven. Přihlaste se na webové stránce addonu.' });
   }
-  const streamUrl = await getRealDebridStream(magnet);
-  if (streamUrl) {
-    res.redirect(streamUrl);
-  } else {
-    res.status(500).json({ error: 'Nepodařilo se získat stream z RealDebrid' });
-  }
-});
 
-// Fix: also store magnets when stream handler runs
-// Override the stream URL generation to use storeMagnet
-// (already done in defineStreamHandler above)
+  const result = await getRealDebridStream(magnet);
+
+  if (!result) {
+    // Total failure — show downloading video as fallback
+    return res.redirect(DOWNLOADING_VIDEO_URL);
+  }
+
+  if (result.status === 'ready') {
+    return res.redirect(result.url);
+  }
+
+  if (result.status === 'downloading') {
+    // Torrent is still downloading — play the "downloading" video
+    return res.redirect(DOWNLOADING_VIDEO_URL);
+  }
+
+  // Unknown status
+  return res.redirect(DOWNLOADING_VIDEO_URL);
+});
 
 // ===== RealDebrid OAuth Device Flow =====
 app.get('/api/rd/device-code', async (req, res) => {
