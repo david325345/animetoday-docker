@@ -6,6 +6,7 @@ const path = require('path');
 const { si } = require('nyaapi');
 const crypto = require('crypto');
 const fs = require('fs');
+const sharp = require('sharp');
 
 // Prevent crashes from killing the server
 process.on('uncaughtException', (err) => {
@@ -480,12 +481,120 @@ async function unrestrictLink(apiKey, link) {
   } catch { return null; }
 }
 
+// ===== Poster Generation =====
+const POSTERS_DIR = path.join(__dirname, 'public', 'posters');
+
+// Ensure posters directory exists
+try { fs.mkdirSync(POSTERS_DIR, { recursive: true }); } catch {}
+
+function formatTimeCET(unixTimestamp) {
+  const date = new Date(unixTimestamp * 1000);
+  return date.toLocaleTimeString('cs-CZ', {
+    timeZone: 'Europe/Prague',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false
+  });
+}
+
+async function generatePoster(schedule) {
+  const m = schedule.media;
+  const posterUrl = schedule.tmdbImages?.poster || m.coverImage?.extraLarge || m.coverImage?.large;
+  if (!posterUrl || posterUrl === 'null') return null;
+
+  const outputPath = path.join(POSTERS_DIR, `${m.id}.jpg`);
+  const timeStr = formatTimeCET(schedule.airingAt);
+
+  try {
+    // Download original poster
+    const resp = await axios.get(posterUrl, {
+      responseType: 'arraybuffer',
+      timeout: 10000
+    });
+
+    const imgBuffer = Buffer.from(resp.data);
+
+    // Get image dimensions
+    const metadata = await sharp(imgBuffer).metadata();
+    const width = metadata.width || 500;
+    const height = metadata.height || 750;
+
+    // Create overlay: black bar at bottom with time text
+    const barHeight = Math.round(height * 0.1);
+    const fontSize = Math.round(barHeight * 0.55);
+    const clockSize = Math.round(fontSize * 0.8);
+
+    const svgOverlay = `
+      <svg width="${width}" height="${height}">
+        <defs>
+          <linearGradient id="grad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" style="stop-color:rgba(0,0,0,0)"/>
+            <stop offset="40%" style="stop-color:rgba(0,0,0,0.7)"/>
+            <stop offset="100%" style="stop-color:rgba(0,0,0,0.92)"/>
+          </linearGradient>
+        </defs>
+        <rect x="0" y="${height - barHeight * 1.8}" width="${width}" height="${barHeight * 1.8}" fill="url(#grad)"/>
+        <text x="${width / 2}" y="${height - barHeight * 0.35}"
+              font-family="Arial, Helvetica, sans-serif"
+              font-size="${fontSize}" font-weight="bold"
+              fill="white" text-anchor="middle"
+              style="text-shadow: 0 2px 8px rgba(0,0,0,0.8)">
+          🕐 ${timeStr}
+        </text>
+      </svg>
+    `;
+
+    await sharp(imgBuffer)
+      .resize(500, 750, { fit: 'cover' })
+      .composite([{
+        input: Buffer.from(svgOverlay),
+        top: 0,
+        left: 0
+      }])
+      .jpeg({ quality: 85 })
+      .toFile(outputPath);
+
+    return `/posters/${m.id}.jpg`;
+  } catch (err) {
+    console.error(`  🖼️ Poster error for ${m.id}: ${err.message}`);
+    return null;
+  }
+}
+
+async function generateAllPosters(schedules) {
+  console.log(`🖼️ Generating ${schedules.length} posters...`);
+  const t0 = Date.now();
+  let success = 0;
+
+  // Clean old posters
+  try {
+    const files = fs.readdirSync(POSTERS_DIR);
+    for (const f of files) {
+      try { fs.unlinkSync(path.join(POSTERS_DIR, f)); } catch {}
+    }
+  } catch {}
+
+  for (const s of schedules) {
+    const localPath = await generatePoster(s);
+    if (localPath) {
+      s.generatedPoster = localPath;
+      success++;
+    }
+  }
+
+  console.log(`🖼️ Generated ${success}/${schedules.length} posters (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
+}
+
 // ===== Cache =====
 async function updateCache() {
   console.log('🔄 Updating anime cache...');
   const t0 = Date.now();
   try {
     const schedules = await getTodayAnime();
+
+    // Generate posters with time overlay
+    await generateAllPosters(schedules);
+
     todayAnimeCache = schedules;
     rdStreamCache.clear();
     console.log(`✅ Cache updated: ${todayAnimeCache.length} anime (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
@@ -507,6 +616,7 @@ builder.defineCatalogHandler(async (args) => {
   if (args.type !== 'series' || args.id !== 'anime-today') return { metas: [] };
   if (parseInt(args.extra?.skip) > 0) return { metas: [] };
 
+  const baseUrl = process.env.APP_URL || `http://localhost:${PORT}`;
   const sorted = [...todayAnimeCache]
     .filter(s => !isHidden(s.media.id))
     .sort((a, b) => a.airingAt - b.airingAt);
@@ -514,17 +624,28 @@ builder.defineCatalogHandler(async (args) => {
   return {
     metas: sorted.map(s => {
       const m = s.media;
-      let poster = s.tmdbImages?.poster || m.coverImage?.extraLarge || m.coverImage?.large;
+
+      // Use generated poster (with time overlay) if available
+      let poster;
+      if (s.generatedPoster) {
+        poster = `${baseUrl}${s.generatedPoster}`;
+      } else {
+        poster = s.tmdbImages?.poster || m.coverImage?.extraLarge || m.coverImage?.large;
+      }
       if (!poster || poster === 'null') poster = 'https://via.placeholder.com/230x345/1a1a2e/ffffff?text=No+Image';
+
       const background = m.bannerImage || s.tmdbImages?.backdrop || poster;
+      const timeStr = formatTimeCET(s.airingAt);
+      const descText = (m.description || '').replace(/<[^>]*>/g, '');
+
       return {
         id: `nyaa:${m.id}:${s.episode}`,
         type: 'series',
         name: m.title.romaji || m.title.english || m.title.native,
         poster, background: background || poster,
-        description: `Epizoda ${s.episode}\n\n${(m.description || '').replace(/<[^>]*>/g, '')}`,
+        description: `🕐 ${timeStr} · Epizoda ${s.episode}\n\n${descText}`,
         genres: m.genres || [],
-        releaseInfo: `${m.season || ''} ${m.seasonYear || ''} · Ep ${s.episode}`.trim(),
+        releaseInfo: `${timeStr} · ${m.season || ''} ${m.seasonYear || ''} · Ep ${s.episode}`.trim(),
         imdbRating: m.averageScore ? (m.averageScore / 10).toFixed(1) : undefined
       };
     })
@@ -537,19 +658,29 @@ builder.defineMetaHandler(async (args) => {
   const schedule = todayAnimeCache.find(s => s.media.id === parseInt(anilistId) && s.episode === parseInt(episode));
   if (!schedule) return { meta: null };
 
+  const baseUrl = process.env.APP_URL || `http://localhost:${PORT}`;
   const m = schedule.media;
-  let poster = schedule.tmdbImages?.poster || m.coverImage?.extraLarge || m.coverImage?.large;
+  const timeStr = formatTimeCET(schedule.airingAt);
+
+  let poster;
+  if (schedule.generatedPoster) {
+    poster = `${baseUrl}${schedule.generatedPoster}`;
+  } else {
+    poster = schedule.tmdbImages?.poster || m.coverImage?.extraLarge || m.coverImage?.large;
+  }
   if (!poster || poster === 'null') poster = 'https://via.placeholder.com/230x345/1a1a2e/ffffff?text=No+Image';
+
   const background = m.bannerImage || schedule.tmdbImages?.backdrop || poster;
+  const descText = (m.description || '').replace(/<[^>]*>/g, '');
 
   return {
     meta: {
       id: args.id, type: 'series',
       name: m.title.romaji || m.title.english || m.title.native,
       poster, background: background || poster,
-      description: (m.description || '').replace(/<[^>]*>/g, ''),
+      description: `🕐 Vysílání: ${timeStr} (CET)\n📺 Epizoda ${schedule.episode}\n\n${descText}`,
       genres: m.genres || [],
-      releaseInfo: `${m.season || ''} ${m.seasonYear || ''} · Epizoda ${schedule.episode}`.trim(),
+      releaseInfo: `${timeStr} · ${m.season || ''} ${m.seasonYear || ''} · Ep ${schedule.episode}`.trim(),
       imdbRating: m.averageScore ? (m.averageScore / 10).toFixed(1).toString() : undefined,
       videos: [{
         id: args.id, title: `Epizoda ${schedule.episode}`,

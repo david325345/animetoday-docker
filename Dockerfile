@@ -1,7 +1,7 @@
 FROM node:20-alpine
 
-# Build tools for native dependencies
-RUN apk add --no-cache python3 make g++
+# Build tools + vips for sharp (image processing)
+RUN apk add --no-cache python3 make g++ vips-dev
 
 WORKDIR /app
 
@@ -9,8 +9,12 @@ COPY package*.json ./
 
 RUN npm install --omit=dev
 
-# Remove build tools to keep image small
-RUN apk del python3 make g++
+# Remove build tools but keep vips runtime
+RUN apk del python3 make g++ && \
+    apk add --no-cache vips
+
+# Create posters directory
+RUN mkdir -p /app/public/posters
 
 COPY . .
 
