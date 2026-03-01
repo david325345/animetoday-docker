@@ -520,19 +520,11 @@ async function generatePoster(schedule) {
 
     const svgOverlay = `
       <svg width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg">
-        <defs>
-          <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stop-color="rgba(0,0,0,0)"/>
-            <stop offset="30%" stop-color="rgba(0,0,0,0.6)"/>
-            <stop offset="100%" stop-color="rgba(0,0,0,0.95)"/>
-          </linearGradient>
-        </defs>
-        <rect x="0" y="${H - barH * 2}" width="${W}" height="${barH * 2}" fill="url(#bg)"/>
-        <text x="${W / 2}" y="${H - 22}"
+        <rect x="0" y="${H - barH}" width="${W}" height="${barH}" fill="rgba(0,0,0,0.85)"/>
+        <text x="${W / 2}" y="${H - 20}"
               font-family="Arial,Helvetica,sans-serif"
               font-size="${fontSize}" font-weight="700"
-              fill="white" text-anchor="middle"
-              stroke="black" stroke-width="2" paint-order="stroke">
+              fill="white" text-anchor="middle">
           ${timeStr}
         </text>
       </svg>
