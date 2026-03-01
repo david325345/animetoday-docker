@@ -1,5 +1,5 @@
 {
   "buildPack": "dockerfile",
   "dockerfilePath": "./Dockerfile",
-  "port": 7000
+  "port": 3002
 }

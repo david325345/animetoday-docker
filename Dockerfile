@@ -1,23 +1,22 @@
 FROM node:20-alpine
-# Force rebuild - version 2
 
 WORKDIR /app
 
-# Kopírovat package files
+# Copy package files first for better layer caching
 COPY package*.json ./
 
-# Instalovat dependencies s verbose logging
-RUN npm install --omit=dev --verbose
+# Install production dependencies
+RUN npm install --omit=dev
 
-# Kopírovat zbytek aplikace
+# Copy application code
 COPY . .
 
-# Expose port
+# Expose port (must match PORT env)
 EXPOSE 3002
 
-# Healthcheck - používá wget místo node (jednodušší)
-HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
-  CMD wget --no-verbose --tries=1 --spider http://localhost:3002/manifest.json || exit 1
+# Healthcheck
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider http://localhost:3002/health || exit 1
 
-# Spustit aplikaci
+# Run
 CMD ["node", "server.js"]
