@@ -19,32 +19,76 @@ process.on('unhandledRejection', (err) => {
 // ===== Configuration =====
 const PORT = process.env.PORT || 3002;
 const RD_OPEN_SOURCE_CLIENT_ID = 'X245A4XAIBGVM';
-const CONFIG_PATH = path.join(__dirname, 'config.json');
 
-// Load persisted config
+// R2 Storage for persistent config
+const { S3Client, GetObjectCommand, PutObjectCommand } = require('@aws-sdk/client-s3');
+const R2_CONFIG_KEY = 'anime-today/config.json'; // prefix so it doesn't clash with other addons
+
+const s3 = new S3Client({
+  region: 'auto',
+  endpoint: `https://${process.env.CLOUDFLARE_ACCOUNT_ID || '3b9379b61dd9b19bc04ec39ac50352e8'}.r2.cloudflarestorage.com`,
+  credentials: {
+    accessKeyId: process.env.R2_ACCESS_KEY_ID || 'cb62c68d2e4147ff9ff94ce2bddd1038',
+    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY || 'be3d739c6be4924c3f20700fd17321d193627b91557d3a14dc0bce915f1fa14b',
+  },
+});
+const R2_BUCKET = process.env.R2_BUCKET_NAME || 'titulky-cache';
+
+// Load config from R2
 let config = { tmdb_api_key: '', rd_api_key: '', hidden_anime: [] };
-try {
-  const saved = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
-  config = { ...config, ...saved };
-} catch { /* first run */ }
+let configLoaded = false;
 
-function saveConfig() {
+async function loadConfig() {
   try {
-    fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), 'utf8');
+    const resp = await s3.send(new GetObjectCommand({ Bucket: R2_BUCKET, Key: R2_CONFIG_KEY }));
+    const body = await resp.Body.transformToString();
+    const saved = JSON.parse(body);
+    config = { ...config, ...saved };
+    configLoaded = true;
+    console.log('☁️ Config loaded from R2');
   } catch (err) {
-    console.error('Config save error:', err.message);
+    if (err.name === 'NoSuchKey' || err.$metadata?.httpStatusCode === 404) {
+      console.log('☁️ No config in R2 yet (first run)');
+      configLoaded = true;
+    } else {
+      console.error('☁️ R2 load error:', err.message);
+      // Fall back to local config if R2 fails
+      try {
+        const local = JSON.parse(fs.readFileSync(path.join(__dirname, 'data', 'config.json'), 'utf8'));
+        config = { ...config, ...local };
+        console.log('📁 Fallback: loaded local config');
+      } catch {}
+      configLoaded = true;
+    }
   }
 }
 
-let TMDB_API_KEY = config.tmdb_api_key || '';
+async function saveConfig() {
+  try {
+    await s3.send(new PutObjectCommand({
+      Bucket: R2_BUCKET,
+      Key: R2_CONFIG_KEY,
+      Body: JSON.stringify(config, null, 2),
+      ContentType: 'application/json',
+    }));
+  } catch (err) {
+    console.error('☁️ R2 save error:', err.message);
+    // Also save locally as backup
+    try {
+      const dir = path.join(__dirname, 'data');
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify(config, null, 2), 'utf8');
+    } catch {}
+  }
+}
+
+let TMDB_API_KEY = '';
 
 console.log('═══════════════════════════════════════════');
 console.log('  🎬 Anime Today + Nyaa + RealDebrid v4.0');
 console.log('═══════════════════════════════════════════');
 console.log(`  PORT: ${PORT}`);
-console.log(`  TMDB: ${TMDB_API_KEY ? '✅' : '❌ (web)'}`);
-console.log(`  RD:   ${config.rd_api_key ? '✅' : '❌ (web)'}`);
-console.log(`  Hidden: ${config.hidden_anime.length} anime`);
+console.log(`  Config: Cloudflare R2 (${R2_BUCKET}/${R2_CONFIG_KEY})`);
 
 // ===== State =====
 let todayAnimeCache = [];
@@ -324,7 +368,7 @@ async function getRealDebridStream(magnet) {
       try {
         const existing = await axios.get(
           'https://api.real-debrid.com/rest/1.0/torrents',
-          { headers: { 'Authorization': `Bearer ${apiKey}` }, timeout: 10000 }
+          { headers: { 'Authorization': `Bearer ${apiKey}` }, timeout: 5000 }
         );
         const found = (existing.data || []).find(t =>
           t.hash?.toLowerCase() === magnetHash
@@ -342,7 +386,7 @@ async function getRealDebridStream(magnet) {
       const addResp = await axios.post(
         'https://api.real-debrid.com/rest/1.0/torrents/addMagnet',
         `magnet=${encodeURIComponent(magnet)}`,
-        { headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 15000 }
+        { headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 8000 }
       );
       torrentId = addResp.data?.id;
       if (!torrentId) { console.error('  RD: No torrent ID'); return null; }
@@ -351,7 +395,7 @@ async function getRealDebridStream(magnet) {
     // Step 3: Get info
     const infoResp = await axios.get(
       `https://api.real-debrid.com/rest/1.0/torrents/info/${torrentId}`,
-      { headers: { 'Authorization': `Bearer ${apiKey}` }, timeout: 10000 }
+      { headers: { 'Authorization': `Bearer ${apiKey}` }, timeout: 5000 }
     );
 
     // If already has links, unrestrict immediately
@@ -381,12 +425,12 @@ async function getRealDebridStream(magnet) {
       );
     }
 
-    // Step 4: Poll for download link (max ~20s for quick response)
-    for (let attempt = 0; attempt < 10; attempt++) {
-      await new Promise(r => setTimeout(r, 2000));
+    // Step 4: Poll for download link — be FAST, return downloading video quickly
+    for (let attempt = 0; attempt < 5; attempt++) {
+      await new Promise(r => setTimeout(r, 1000));
       const pollResp = await axios.get(
         `https://api.real-debrid.com/rest/1.0/torrents/info/${torrentId}`,
-        { headers: { 'Authorization': `Bearer ${apiKey}` }, timeout: 10000 }
+        { headers: { 'Authorization': `Bearer ${apiKey}` }, timeout: 5000 }
       );
 
       const status = pollResp.data?.status;
@@ -401,17 +445,17 @@ async function getRealDebridStream(magnet) {
         }
       }
 
-      console.log(`  RD: Waiting... (${status}, ${attempt + 1}/10)`);
+      console.log(`  RD: Waiting... (${status}, ${attempt + 1}/5)`);
 
       if (['error', 'dead', 'magnet_error', 'virus'].includes(status)) {
         console.error(`  RD: Failed: ${status}`);
         return null;
       }
 
-      // If still downloading, return downloading status after a few attempts
-      if (status === 'downloading' && attempt >= 2) {
+      // After first poll, if downloading/queued → immediately return downloading video
+      if (['downloading', 'queued', 'compressing', 'uploading'].includes(status)) {
         const progress = pollResp.data?.progress || 0;
-        console.log(`  RD: 📥 Downloading (${progress}%) — showing download video`);
+        console.log(`  RD: 📥 ${status} (${progress}%) — showing download video`);
         return { status: 'downloading', progress };
       }
     }
@@ -853,10 +897,18 @@ app.get('/health', (req, res) => {
 const addonRouter = getRouter(builder.getInterface());
 app.use(addonRouter);
 
-// Start server FIRST, then load cache
-app.listen(PORT, '0.0.0.0', () => {
+// Start server FIRST, then load config from R2 and cache
+app.listen(PORT, '0.0.0.0', async () => {
   console.log(`🚀 Server running: http://localhost:${PORT}/`);
   console.log(`📺 Stremio manifest: http://localhost:${PORT}/manifest.json`);
+
+  // Load config from R2
+  await loadConfig();
+  TMDB_API_KEY = config.tmdb_api_key || '';
+  console.log(`  TMDB: ${TMDB_API_KEY ? '✅' : '❌ (web)'}`);
+  console.log(`  RD:   ${config.rd_api_key ? '✅' : '❌ (web)'}`);
+  console.log(`  Hidden: ${config.hidden_anime.length} anime`);
+
   updateCache().catch(err => {
     console.error('❌ Initial cache failed:', err.message);
   });
