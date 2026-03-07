@@ -228,14 +228,15 @@ app.post('/api/refresh', async (req, res) => {
 });
 
 // ===== RD PLAY PROXY (shared by both addons) =====
-app.get('/:token/play/:hash/video.mp4', async (req, res) => {
+app.get('/:token/play/:hash/:episode/video.mp4', async (req, res) => {
   const user = config.getUser(req.params.token);
   if (!user?.rd_api_key) return serveLoadingVideo(res);
 
   const magnet = magnetStore.get(req.params.hash);
   if (!magnet) return serveLoadingVideo(res);
 
-  const cacheKey = getCacheKey(magnet, user.rd_api_key);
+  const episode = parseInt(req.params.episode) || 0;
+  const cacheKey = getCacheKey(magnet, user.rd_api_key) + (episode ? `_ep${episode}` : '');
 
   // Already in progress
   if (rdInProgress.has(cacheKey)) return serveLoadingVideo(res);
@@ -243,7 +244,7 @@ app.get('/:token/play/:hash/video.mp4', async (req, res) => {
   rdInProgress.add(cacheKey);
 
   const timeoutP = new Promise(r => setTimeout(() => r(null), 8000));
-  const rdP = getRDStream(magnet, user.rd_api_key);
+  const rdP = getRDStream(magnet, user.rd_api_key, episode);
   const url = await Promise.race([rdP, timeoutP]);
 
   if (url) {
@@ -344,22 +345,22 @@ app.get('/:token/today/stream/:type/:id.json', async (req, res) => {
   const torrents = await searchNyaa(names, ep);
 
   if (!torrents.length) {
-    return res.json({ streams: [{ name: '⏳', title: `Ep ${ep} zatím nedostupné`, externalUrl: 'https://nyaa.si', behaviorHints: { notWebReady: true } }] });
+    return res.json({ streams: [{ name: '❌ Torrent nenalezen', title: `Epizoda ${ep} nebyla nalezena na Nyaa.si ani AnimeTosho`, externalUrl: 'https://nyaa.si', behaviorHints: { notWebReady: true } }] });
   }
 
   const hasRD = !!user?.rd_api_key;
   res.json({
     streams: torrents.filter(t => t.magnet).slice(0, 15).map(t => {
-      const source = t.source === 'sukebei' ? ' [Sukebei]' : '';
+      const src = t.source === 'animetosho' ? 'AT' : 'Nyaa';
       const quality = detectQuality(t.name);
       const title = `${quality ? quality + ' · ' : ''}${t.name}\n👥 ${parseInt(t.seeders) || 0} seeders · 📦 ${t.filesize || 'N/A'}`;
 
       if (hasRD) {
-        return { name: `Nyaa+RD${source}`, title,
-          url: `${BASE_URL}/${req.params.token}/play/${storeMagnet(t.magnet)}/video.mp4`,
-          behaviorHints: { bingeGroup: `today-rd${source}`, notWebReady: true } };
+        return { name: `${src}+RD`, title,
+          url: `${BASE_URL}/${req.params.token}/play/${storeMagnet(t.magnet)}/${ep}/video.mp4`,
+          behaviorHints: { bingeGroup: `today-rd-${src}`, notWebReady: true } };
       }
-      return { name: `Nyaa${source}`, title, url: t.magnet, behaviorHints: { notWebReady: true } };
+      return { name: `${src} 🧲`, title, url: t.magnet, behaviorHints: { notWebReady: true } };
     })
   });
 });
@@ -399,7 +400,7 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
   const torrents = await searchNyaa(names, isMovie ? null : episode, isMovie ? null : season);
 
   if (!torrents.length) {
-    return res.json({ streams: [{ name: '⏳', title: `Ep ${episode} není na Nyaa.si\n${names[0]}`, url: 'https://nyaa.si', behaviorHints: { notWebReady: true } }] });
+    return res.json({ streams: [{ name: '❌ Torrent nenalezen', title: `${names[0]} nenalezeno na Nyaa.si ani AnimeTosho`, url: 'https://nyaa.si', behaviorHints: { notWebReady: true } }] });
   }
 
   const hasRD = !!user?.rd_api_key;
@@ -408,16 +409,18 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
   res.json({
     streams: sorted.slice(0, 25).map(t => {
       const name = t.name || '';
+      const src = t.source === 'animetosho' ? 'AT' : 'Nyaa';
       const hasSeasonTag = /S\d{2}|Season\s*\d/i.test(name);
       const seasonHint = !hasSeasonTag ? ' [S1]' : '';
       const title = `${name}${seasonHint}\n👥 ${parseInt(t.seeders) || 0} seeders | 📦 ${t.filesize || '?'}`;
 
+      const epNum = isMovie ? 0 : episode;
       if (hasRD) {
-        return { name: '🎌 RealDebrid', title,
-          url: `${BASE_URL}/${token}/play/${storeMagnet(t.magnet)}/video.mp4`,
-          behaviorHints: { bingeGroup: 'nyaa-rd', notWebReady: true } };
+        return { name: `🎌 ${src}+RD`, title,
+          url: `${BASE_URL}/${token}/play/${storeMagnet(t.magnet)}/${epNum}/video.mp4`,
+          behaviorHints: { bingeGroup: `nyaa-rd-${src}`, notWebReady: true } };
       }
-      return { name: '🧲 Nyaa Magnet', title, url: t.magnet, behaviorHints: { notWebReady: true } };
+      return { name: `🧲 ${src}`, title, url: t.magnet, behaviorHints: { notWebReady: true } };
     })
   });
 });
