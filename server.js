@@ -371,7 +371,7 @@ app.get('/:token/nyaa/manifest.json', (req, res) => {
     version: '5.0.0',
     name: 'Nyaa Search',
     description: 'Anime z Nyaa.si + RealDebrid. Funguje s Cinemeta/Kitsu.',
-    logo: `${BASE_URL}/logo.png`,
+    logo: `${BASE_URL}/logo-nyaa.png`,
     resources: ['stream'],
     types: ['series', 'movie'],
     catalogs: [],
