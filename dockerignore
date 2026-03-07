@@ -1,7 +1,5 @@
 node_modules
 .env
 .git
-.gitignore
+data
 *.md
-docker-compose.yml
-coolify
