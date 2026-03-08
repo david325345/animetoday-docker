@@ -349,8 +349,10 @@ app.get('/:token/today/stream/:type/:id.json', async (req, res) => {
   }
 
   const hasRD = !!user?.rd_api_key;
+  const withMagnet = torrents.filter(t => t.magnet);
+  console.log(`  📤 Streams: ${withMagnet.length}/${torrents.length} have magnet`);
   res.json({
-    streams: torrents.filter(t => t.magnet).slice(0, 15).map(t => {
+    streams: withMagnet.slice(0, 15).map(t => {
       const src = t.source === 'animetosho' ? 'AT' : 'Nyaa';
       const quality = detectQuality(t.name);
       const title = `${quality ? quality + ' · ' : ''}${t.name}\n👥 ${parseInt(t.seeders) || 0} seeders · 📦 ${t.filesize || 'N/A'}`;
@@ -405,9 +407,11 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
 
   const hasRD = !!user?.rd_api_key;
   const sorted = sortByGroupPriority(torrents);
+  const withMagnet = sorted.filter(t => t.magnet);
+  console.log(`  📤 Streams: ${withMagnet.length}/${sorted.length} have magnet`);
 
   res.json({
-    streams: sorted.slice(0, 25).map(t => {
+    streams: withMagnet.slice(0, 25).map(t => {
       const name = t.name || '';
       const src = t.source === 'animetosho' ? 'AT' : 'Nyaa';
       const hasSeasonTag = /S\d{2}|Season\s*\d/i.test(name);
