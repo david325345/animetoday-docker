@@ -411,7 +411,7 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
   console.log(`  📤 Streams: ${withMagnet.length}/${sorted.length} have magnet`);
 
   res.json({
-    streams: withMagnet.slice(0, 25).map(t => {
+    streams: withMagnet.slice(0, 20).map(t => {
       const name = t.name || '';
       const src = t.source === 'animetosho' ? 'AT' : 'Nyaa';
       const hasSeasonTag = /S\d{2}|Season\s*\d/i.test(name);
