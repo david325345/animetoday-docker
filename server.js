@@ -441,15 +441,23 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
   if (!torrents.length) {
     let names = [];
     try {
-      const resolved = await resolveToAniDB(type, fullId);
-      if (resolved?.title) names.push(resolved.title);
+      const resolved2 = await resolveToAniDB(type, fullId);
+      if (resolved2?.title) names.push(resolved2.title);
     } catch {}
 
     if (fullId.startsWith('tt')) {
       try {
         const cine = await axios.get(`https://v3-cinemeta.strem.io/meta/${type}/${fullId.split(':')[0]}.json`, { timeout: 5000 });
-        const cineName = cine.data?.meta?.name;
-        if (cineName && !names.includes(cineName)) names.push(cineName);
+        const meta = cine.data?.meta;
+        if (meta?.name) {
+          const name = meta.name;
+          if (!names.includes(name)) names.push(name);
+          // Strip diacritics version
+          const stripped = name.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+          if (stripped !== name && !names.includes(stripped)) names.push(stripped);
+        }
+        // English aliases
+        if (meta?.aliases) for (const a of meta.aliases) { if (!names.includes(a)) names.push(a); }
       } catch {}
     }
 
