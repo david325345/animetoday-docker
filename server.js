@@ -10,6 +10,7 @@ const { loadOfflineDB, loadAnimeLists, loadMappingCache, resolveToAniDB, resolve
 const { searchByAniDBId, searchByText, detectQuality, sortByGroupPriority, loadEidCache } = require('./lib/search');
 const { getRDStream, rdInProgress, getCacheKey, serveLoadingVideo, DOWNLOADING_VIDEO_URL, checkInstantAvailability } = require('./lib/realdebrid');
 const { generateAllPosters, formatTimeCET } = require('./lib/posters');
+const { startRssFetcher, clearRssIndex, searchRssIndex, getRssStats } = require('./lib/rss');
 
 process.on('uncaughtException', (err) => { console.error('⚠️ Uncaught:', err.message); console.error(err.stack); });
 process.on('unhandledRejection', (err) => { console.error('⚠️ Unhandled:', err?.message || err); });
@@ -29,6 +30,7 @@ let todayAnimeCache = [];
 // ===== Cache update =====
 async function updateCache() {
   console.log('🔄 Updating anime cache...');
+  clearRssIndex(); // Clear RSS index for fresh day
   const t0 = Date.now();
   try {
     const schedules = await getTodayAnime();
@@ -360,6 +362,22 @@ app.get('/:token/today/stream/:type/:id.json', async (req, res) => {
     torrents = await searchByText(names, ep);
   }
 
+  // Search RSS index for additional results
+  const rssNames = [m.title.romaji, m.title.english].filter(Boolean);
+  const rssResults = searchRssIndex(rssNames, ep);
+  if (rssResults.length) {
+    // Deduplicate: don't add RSS torrents that already exist in AnimeTosho results
+    const existingHashes = new Set(torrents.map(t => t.magnet?.match(/btih:([a-zA-Z0-9]+)/i)?.[1]?.toLowerCase()).filter(Boolean));
+    const newRss = rssResults.filter(r => {
+      const hash = r.magnet?.match(/btih:([a-zA-Z0-9]+)/i)?.[1]?.toLowerCase();
+      return hash && !existingHashes.has(hash);
+    });
+    if (newRss.length) {
+      torrents = [...torrents, ...newRss];
+      console.log(`  📡 +${newRss.length} from Nyaa RSS`);
+    }
+  }
+
   if (!torrents.length) {
     return res.json({ streams: [{ name: '❌ Torrent nenalezen', title: `Epizoda ${ep} nebyla nalezena`, externalUrl: 'https://animetosho.org', behaviorHints: { notWebReady: true } }] });
   }
@@ -496,11 +514,13 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
 
 // ===== Health =====
 app.get('/health', (req, res) => {
+  const rss = getRssStats();
   res.json({
     status: 'ok', uptime: process.uptime(),
     animeCount: todayAnimeCache.length,
     users: config.listUsers().length,
-    offlineDB: offlineDB.loaded ? offlineDB.byAniDB.size : 0
+    offlineDB: offlineDB.loaded ? offlineDB.byAniDB.size : 0,
+    rss: { indexed: rss.count, fetches: rss.fetches }
   });
 });
 
@@ -520,6 +540,7 @@ app.listen(PORT, '0.0.0.0', async () => {
   console.log(`  TMDB: ${config.getTMDBKey() ? '✅' : '❌ (web)'}`);
   console.log(`  Users: ${users.length}`);
   updateCache().catch(err => console.error('❌ Initial cache:', err.message));
+  startRssFetcher();
 });
 
 // Weekly update of anime-offline-database (Sundays at 5:00)
