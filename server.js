@@ -352,7 +352,7 @@ app.get('/:token/today/stream/:type/:id.json', async (req, res) => {
 
   if (record?.anidb) {
     console.log(`  🆔 AniList ${anilistNum} → AniDB ${record.anidb} "${record.title}"`);
-    torrents = await searchByAniDBId(record.anidb, ep, false, true);
+    torrents = await searchByAniDBId(record.anidb, ep, false, true, true);
   }
 
   // Fallback: text search
