@@ -370,7 +370,7 @@ app.get('/:token/today/stream/:type/:id.json', async (req, res) => {
   // Check RD instant availability
   let cachedHashes = {};
   if (hasRD && withMagnet.length) {
-    const hashes = withMagnet.map(t => t.magnet.match(/btih:([a-fA-F0-9]+)/i)?.[1]?.toLowerCase()).filter(Boolean);
+    const hashes = withMagnet.map(t => t.magnet.match(/btih:([a-zA-Z0-9]+)/i)?.[1]?.toLowerCase()).filter(Boolean);
     if (hashes.length) {
       cachedHashes = await checkInstantAvailability(user.rd_api_key, hashes);
       const cachedCount = Object.values(cachedHashes).filter(Boolean).length;
@@ -379,7 +379,7 @@ app.get('/:token/today/stream/:type/:id.json', async (req, res) => {
   }
 
   const torrentsWithCache = withMagnet.map(t => {
-    const hash = t.magnet.match(/btih:([a-fA-F0-9]+)/i)?.[1]?.toLowerCase();
+    const hash = t.magnet.match(/btih:([a-zA-Z0-9]+)/i)?.[1]?.toLowerCase();
     return { ...t, cached: hash ? !!cachedHashes[hash] : false };
   });
   torrentsWithCache.sort((a, b) => (b.cached ? 1 : 0) - (a.cached ? 1 : 0));
@@ -498,7 +498,7 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
   // Check RD instant availability
   let cachedHashes = {};
   if (hasRD && withMagnet.length) {
-    const hashes = withMagnet.map(t => t.magnet.match(/btih:([a-fA-F0-9]+)/i)?.[1]?.toLowerCase()).filter(Boolean);
+    const hashes = withMagnet.map(t => t.magnet.match(/btih:([a-zA-Z0-9]+)/i)?.[1]?.toLowerCase()).filter(Boolean);
     if (hashes.length) {
       cachedHashes = await checkInstantAvailability(user.rd_api_key, hashes);
       const cachedCount = Object.values(cachedHashes).filter(Boolean).length;
@@ -508,7 +508,7 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
 
   // Sort: cached first, then uncached
   const torrentsWithCache = withMagnet.map(t => {
-    const hash = t.magnet.match(/btih:([a-fA-F0-9]+)/i)?.[1]?.toLowerCase();
+    const hash = t.magnet.match(/btih:([a-zA-Z0-9]+)/i)?.[1]?.toLowerCase();
     return { ...t, cached: hash ? !!cachedHashes[hash] : false };
   });
   torrentsWithCache.sort((a, b) => (b.cached ? 1 : 0) - (a.cached ? 1 : 0));
