@@ -389,9 +389,10 @@ app.get('/:token/today/stream/:type/:id.json', async (req, res) => {
   res.json({
     streams: withMagnet.map(t => {
       const quality = detectQuality(t.name);
+      const src = t.source === 'nyaa-rss' ? 'RSS' : 'AT';
       const title = `${quality ? quality + ' · ' : ''}${t.name}\n👥 ${parseInt(t.seeders) || 0} seeders · 📦 ${t.filesize || 'N/A'}`;
       if (hasRD) {
-        return { name: `AT+RD`, title,
+        return { name: `${src}+RD`, title,
           url: `${BASE_URL}/${req.params.token}/play/${storeMagnet(t.magnet)}/${ep}/video.mp4`,
           behaviorHints: { bingeGroup: 'today-rd', notWebReady: true } };
       }
