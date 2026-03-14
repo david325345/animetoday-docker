@@ -6,7 +6,7 @@ const axios = require('axios');
 
 const config = require('./lib/config');
 const { getTodayAnime } = require('./lib/anilist');
-const { loadOfflineDB, loadMappingCache, resolveToAniDB, parseEpisodeAndSeason, resolveEpisode, weeklyUpdate, offlineDB } = require('./lib/idmap');
+const { loadOfflineDB, loadAnimeLists, loadMappingCache, resolveToAniDB, resolveEpisode, parseEpisodeAndSeason, weeklyUpdate, offlineDB } = require('./lib/idmap');
 const { searchByAniDBId, searchByText, detectQuality, sortByGroupPriority } = require('./lib/search');
 const { getRDStream, rdInProgress, getCacheKey, serveLoadingVideo, DOWNLOADING_VIDEO_URL } = require('./lib/realdebrid');
 const { generateAllPosters, formatTimeCET } = require('./lib/posters');
@@ -409,37 +409,42 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
   const { season, episode } = parseEpisodeAndSeason(fullId);
   let torrents = [];
 
-  // 1. Try AniDB ID lookup → AnimeTosho by ID
-  const resolved = await resolveToAniDB(type, fullId);
-  if (resolved?.anidb) {
-    // Resolve episode number (S02E03 → absolute)
-    const { absoluteEpisode } = await resolveEpisode(fullId, season, episode);
-    const searchEp = isMovie ? null : absoluteEpisode;
-    torrents = await searchByAniDBId(resolved.anidb, searchEp, isMovie, season, episode);
-
-    // If absolute didn't find results and it differs from season ep, try season ep
-    if (!torrents.length && absoluteEpisode !== episode && !isMovie) {
-      console.log(`  🔄 Absolute ep ${absoluteEpisode} found nothing, trying ep ${episode}`);
-      torrents = await searchByAniDBId(resolved.anidb, episode, isMovie, season, episode);
-    }
-
-    // If still nothing and season > 1, try without episode filter (get all, filter later)
-    if (!torrents.length && season > 1 && !isMovie) {
-      console.log(`  🔄 Trying full search with S${String(season).padStart(2,'0')}E${String(episode).padStart(2,'0')} in name`);
-      const allTorrents = await searchByAniDBId(resolved.anidb, null, false, season);
-      const sEp = `S${String(season).padStart(2,'0')}E${String(episode).padStart(2,'0')}`;
-      torrents = allTorrents.filter(t => (t.name || '').toUpperCase().includes(sEp));
-      if (torrents.length) console.log(`  ✅ Found ${torrents.length} with ${sEp} in name`);
+  // 1. For multi-season: try anime-lists to get per-season AniDB ID + correct episode
+  if (season > 1 && !isMovie) {
+    const epResult = await resolveEpisode(type, fullId, season, episode);
+    if (epResult.anidbId) {
+      // anime-lists gave us a season-specific AniDB ID
+      console.log(`  🎯 Season-specific AniDB: ${epResult.anidbId} ep${epResult.episode}`);
+      torrents = await searchByAniDBId(epResult.anidbId, epResult.episode, false);
     }
   }
 
-  // 2. Fallback: text search
+  // 2. Base AniDB ID lookup (for S01, movies, or if season-specific failed)
   if (!torrents.length) {
-    // Get names from resolved data or Cinemeta
-    let names = [];
-    if (resolved?.title) names.push(resolved.title);
+    const resolved = await resolveToAniDB(type, fullId);
+    if (resolved?.anidb) {
+      const searchEp = isMovie ? null : episode;
+      torrents = await searchByAniDBId(resolved.anidb, searchEp, isMovie);
 
-    // Also try Cinemeta for English name
+      // If S01 episode search found nothing and season > 1, try absolute episode via Cinemeta offset
+      if (!torrents.length && season > 1 && !isMovie) {
+        const epResult = await resolveEpisode(type, fullId, season, episode);
+        if (epResult.episode !== episode) {
+          console.log(`  🔄 Trying absolute ep ${epResult.episode}`);
+          torrents = await searchByAniDBId(resolved.anidb, epResult.episode, false);
+        }
+      }
+    }
+  }
+
+  // 3. Fallback: text search
+  if (!torrents.length) {
+    let names = [];
+    try {
+      const resolved = await resolveToAniDB(type, fullId);
+      if (resolved?.title) names.push(resolved.title);
+    } catch {}
+
     if (fullId.startsWith('tt')) {
       try {
         const cine = await axios.get(`https://v3-cinemeta.strem.io/meta/${type}/${fullId.split(':')[0]}.json`, { timeout: 5000 });
@@ -455,7 +460,7 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
   }
 
   if (!torrents.length) {
-    return res.json({ streams: [{ name: '❌ Torrent nenalezen', title: `Nenalezeno na AnimeTosho`, url: 'https://animetosho.org', behaviorHints: { notWebReady: true } }] });
+    return res.json({ streams: [{ name: '❌ Nenalezeno', title: `Nenalezeno na AnimeTosho`, url: 'https://animetosho.org', behaviorHints: { notWebReady: true } }] });
   }
 
   const hasRD = !!user?.rd_api_key;
@@ -468,7 +473,6 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
       const name = t.name || '';
       const quality = detectQuality(name);
       const title = `${quality ? quality + ' · ' : ''}${name}\n👥 ${parseInt(t.seeders) || 0} seeders | 📦 ${t.filesize || '?'}`;
-
       const epNum = isMovie ? 0 : episode;
       if (hasRD) {
         return { name: `🎌 AT+RD`, title,
@@ -498,6 +502,7 @@ app.listen(PORT, '0.0.0.0', async () => {
 
   // Load ID mapping databases
   await loadOfflineDB();
+  await loadAnimeLists();
   await loadMappingCache();
 
   const users = config.listUsers();
