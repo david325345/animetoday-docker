@@ -464,6 +464,7 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
   }
 
   const hasRD = !!user?.rd_api_key;
+  console.log(`  📊 Before sort: ${torrents.length} (with magnet: ${torrents.filter(t=>t.magnet).length})`);
   const sorted = sortByGroupPriority(torrents);
   const withMagnet = sorted.filter(t => t.magnet);
   console.log(`  📤 Streams: ${withMagnet.length}`);
