@@ -5,8 +5,9 @@ const crypto = require('crypto');
 const axios = require('axios');
 
 const config = require('./lib/config');
-const { getTodayAnime, resolveAnimeNames, parseEpisodeAndSeason } = require('./lib/anilist');
-const { searchNyaa, detectQuality, sortByGroupPriority } = require('./lib/nyaa');
+const { getTodayAnime } = require('./lib/anilist');
+const { loadOfflineDB, loadMappingCache, resolveToAniDB, parseEpisodeAndSeason, weeklyUpdate, offlineDB } = require('./lib/idmap');
+const { searchByAniDBId, searchByText, detectQuality, sortByGroupPriority } = require('./lib/search');
 const { getRDStream, rdInProgress, getCacheKey, serveLoadingVideo, DOWNLOADING_VIDEO_URL } = require('./lib/realdebrid');
 const { generateAllPosters, formatTimeCET } = require('./lib/posters');
 
@@ -341,28 +342,41 @@ app.get('/:token/today/stream/:type/:id.json', async (req, res) => {
 
   const m = schedule.media;
   const ep = parseInt(episode);
-  const names = [m.title.romaji, m.title.english].filter(Boolean);
-  const torrents = await searchNyaa(names, ep);
+
+  // Try AniDB ID lookup → AnimeTosho by ID
+  let torrents = [];
+  const anilistNum = parseInt(anilistId);
+  const record = offlineDB.byAniList.get(anilistNum);
+
+  if (record?.anidb) {
+    console.log(`  🆔 AniList ${anilistNum} → AniDB ${record.anidb} "${record.title}"`);
+    torrents = await searchByAniDBId(record.anidb, ep);
+  }
+
+  // Fallback: text search
+  if (!torrents.length) {
+    const names = [m.title.romaji, m.title.english].filter(Boolean);
+    console.log(`  🔄 Fallback text search: [${names.join(', ')}] ep${ep}`);
+    torrents = await searchByText(names, ep);
+  }
 
   if (!torrents.length) {
-    return res.json({ streams: [{ name: '❌ Torrent nenalezen', title: `Epizoda ${ep} nebyla nalezena na Nyaa.si ani AnimeTosho`, externalUrl: 'https://nyaa.si', behaviorHints: { notWebReady: true } }] });
+    return res.json({ streams: [{ name: '❌ Torrent nenalezen', title: `Epizoda ${ep} nebyla nalezena`, externalUrl: 'https://animetosho.org', behaviorHints: { notWebReady: true } }] });
   }
 
   const hasRD = !!user?.rd_api_key;
   const withMagnet = torrents.filter(t => t.magnet);
-  console.log(`  📤 Streams: ${withMagnet.length}/${torrents.length} have magnet`);
+  console.log(`  📤 Streams: ${withMagnet.length}`);
   res.json({
     streams: withMagnet.slice(0, 15).map(t => {
-      const src = t.source === 'animetosho' ? 'AT' : 'Nyaa';
       const quality = detectQuality(t.name);
       const title = `${quality ? quality + ' · ' : ''}${t.name}\n👥 ${parseInt(t.seeders) || 0} seeders · 📦 ${t.filesize || 'N/A'}`;
-
       if (hasRD) {
-        return { name: `${src}+RD`, title,
+        return { name: `AT+RD`, title,
           url: `${BASE_URL}/${req.params.token}/play/${storeMagnet(t.magnet)}/${ep}/video.mp4`,
-          behaviorHints: { bingeGroup: `today-rd-${src}`, notWebReady: true } };
+          behaviorHints: { bingeGroup: 'today-rd', notWebReady: true } };
       }
-      return { name: `${src} 🧲`, title, url: t.magnet, behaviorHints: { notWebReady: true } };
+      return { name: `AT 🧲`, title, url: t.magnet, behaviorHints: { notWebReady: true } };
     })
   });
 });
@@ -388,50 +402,74 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
   const type = req.params.type;
   const fullId = req.params.id;
   const user = config.getUser(token);
+  const isMovie = type === 'movie';
 
-  console.log(`=== NYAA STREAM === type=${type} id=${fullId}`);
+  console.log(`=== STREAM === type=${type} id=${fullId}`);
 
   const { season, episode } = parseEpisodeAndSeason(fullId);
-  const { names, year, notAnime } = await resolveAnimeNames(type, fullId);
+  let torrents = [];
 
-  if (notAnime || !names.length) {
-    return res.json({ streams: [] });
+  // 1. Try AniDB ID lookup → AnimeTosho by ID
+  const resolved = await resolveToAniDB(type, fullId);
+  if (resolved?.anidb) {
+    torrents = await searchByAniDBId(resolved.anidb, isMovie ? null : episode, isMovie);
   }
 
-  const isMovie = type === 'movie';
-  const torrents = await searchNyaa(names, isMovie ? null : episode, isMovie ? null : season);
+  // 2. Fallback: text search
+  if (!torrents.length) {
+    // Get names from resolved data or Cinemeta
+    let names = [];
+    if (resolved?.title) names.push(resolved.title);
+
+    // Also try Cinemeta for English name
+    if (fullId.startsWith('tt')) {
+      try {
+        const cine = await axios.get(`https://v3-cinemeta.strem.io/meta/${type}/${fullId.split(':')[0]}.json`, { timeout: 5000 });
+        const cineName = cine.data?.meta?.name;
+        if (cineName && !names.includes(cineName)) names.push(cineName);
+      } catch {}
+    }
+
+    if (names.length) {
+      console.log(`  🔄 Fallback text search: [${names.join(', ')}]`);
+      torrents = await searchByText(names, isMovie ? null : episode, isMovie);
+    }
+  }
 
   if (!torrents.length) {
-    return res.json({ streams: [{ name: '❌ Torrent nenalezen', title: `${names[0]} nenalezeno na Nyaa.si ani AnimeTosho`, url: 'https://nyaa.si', behaviorHints: { notWebReady: true } }] });
+    return res.json({ streams: [{ name: '❌ Torrent nenalezen', title: `Nenalezeno na AnimeTosho`, url: 'https://animetosho.org', behaviorHints: { notWebReady: true } }] });
   }
 
   const hasRD = !!user?.rd_api_key;
   const sorted = sortByGroupPriority(torrents);
   const withMagnet = sorted.filter(t => t.magnet);
-  console.log(`  📤 Streams: ${withMagnet.length}/${sorted.length} have magnet`);
+  console.log(`  📤 Streams: ${withMagnet.length}`);
 
   res.json({
     streams: withMagnet.slice(0, 20).map(t => {
       const name = t.name || '';
-      const src = t.source === 'animetosho' ? 'AT' : 'Nyaa';
-      const hasSeasonTag = /S\d{2}|Season\s*\d/i.test(name);
-      const seasonHint = !hasSeasonTag ? ' [S1]' : '';
-      const title = `${name}${seasonHint}\n👥 ${parseInt(t.seeders) || 0} seeders | 📦 ${t.filesize || '?'}`;
+      const quality = detectQuality(name);
+      const title = `${quality ? quality + ' · ' : ''}${name}\n👥 ${parseInt(t.seeders) || 0} seeders | 📦 ${t.filesize || '?'}`;
 
       const epNum = isMovie ? 0 : episode;
       if (hasRD) {
-        return { name: `🎌 ${src}+RD`, title,
+        return { name: `🎌 AT+RD`, title,
           url: `${BASE_URL}/${token}/play/${storeMagnet(t.magnet)}/${epNum}/video.mp4`,
-          behaviorHints: { bingeGroup: `nyaa-rd-${src}`, notWebReady: true } };
+          behaviorHints: { bingeGroup: 'nyaa-rd', notWebReady: true } };
       }
-      return { name: `🧲 ${src}`, title, url: t.magnet, behaviorHints: { notWebReady: true } };
+      return { name: `🧲 AT`, title, url: t.magnet, behaviorHints: { notWebReady: true } };
     })
   });
 });
 
 // ===== Health =====
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', uptime: process.uptime(), animeCount: todayAnimeCache.length, users: config.listUsers().length });
+  res.json({
+    status: 'ok', uptime: process.uptime(),
+    animeCount: todayAnimeCache.length,
+    users: config.listUsers().length,
+    offlineDB: offlineDB.loaded ? offlineDB.byAniDB.size : 0
+  });
 });
 
 // ===== Start =====
@@ -439,8 +477,16 @@ app.listen(PORT, '0.0.0.0', async () => {
   console.log(`🚀 Server: ${BASE_URL}`);
   config.loadServerConfig();
   await config.restoreFromR2();
+
+  // Load ID mapping databases
+  await loadOfflineDB();
+  await loadMappingCache();
+
   const users = config.listUsers();
   console.log(`  TMDB: ${config.getTMDBKey() ? '✅' : '❌ (web)'}`);
   console.log(`  Users: ${users.length}`);
   updateCache().catch(err => console.error('❌ Initial cache:', err.message));
 });
+
+// Weekly update of anime-offline-database (Sundays at 5:00)
+cron.schedule('0 5 * * 0', () => { weeklyUpdate().catch(e => console.error('Weekly update error:', e.message)); });
