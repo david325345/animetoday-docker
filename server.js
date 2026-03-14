@@ -417,10 +417,19 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
     const searchEp = isMovie ? null : absoluteEpisode;
     torrents = await searchByAniDBId(resolved.anidb, searchEp, isMovie);
 
-    // If absolute didn't find results, try season episode as-is
-    if (!torrents.length && absoluteEpisode !== episode) {
-      console.log(`  🔄 Absolute ep ${absoluteEpisode} found nothing, trying S${season}E${episode}`);
+    // If absolute didn't find results and it differs from season ep, try season ep
+    if (!torrents.length && absoluteEpisode !== episode && !isMovie) {
+      console.log(`  🔄 Absolute ep ${absoluteEpisode} found nothing, trying ep ${episode}`);
       torrents = await searchByAniDBId(resolved.anidb, episode, isMovie);
+    }
+
+    // If still nothing and season > 1, try without episode filter (get all, filter later)
+    if (!torrents.length && season > 1 && !isMovie) {
+      console.log(`  🔄 Trying full search with S${String(season).padStart(2,'0')}E${String(episode).padStart(2,'0')} in name`);
+      const allTorrents = await searchByAniDBId(resolved.anidb, null, false);
+      const sEp = `S${String(season).padStart(2,'0')}E${String(episode).padStart(2,'0')}`;
+      torrents = allTorrents.filter(t => (t.name || '').toUpperCase().includes(sEp));
+      if (torrents.length) console.log(`  ✅ Found ${torrents.length} with ${sEp} in name`);
     }
   }
 
