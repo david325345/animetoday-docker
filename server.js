@@ -6,7 +6,7 @@ const axios = require('axios');
 
 const config = require('./lib/config');
 const { getTodayAnime } = require('./lib/anilist');
-const { loadOfflineDB, loadMappingCache, resolveToAniDB, parseEpisodeAndSeason, weeklyUpdate, offlineDB } = require('./lib/idmap');
+const { loadOfflineDB, loadMappingCache, resolveToAniDB, parseEpisodeAndSeason, resolveEpisode, weeklyUpdate, offlineDB } = require('./lib/idmap');
 const { searchByAniDBId, searchByText, detectQuality, sortByGroupPriority } = require('./lib/search');
 const { getRDStream, rdInProgress, getCacheKey, serveLoadingVideo, DOWNLOADING_VIDEO_URL } = require('./lib/realdebrid');
 const { generateAllPosters, formatTimeCET } = require('./lib/posters');
@@ -412,7 +412,16 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
   // 1. Try AniDB ID lookup → AnimeTosho by ID
   const resolved = await resolveToAniDB(type, fullId);
   if (resolved?.anidb) {
-    torrents = await searchByAniDBId(resolved.anidb, isMovie ? null : episode, isMovie);
+    // Resolve episode number (S02E03 → absolute)
+    const { absoluteEpisode } = await resolveEpisode(fullId, season, episode);
+    const searchEp = isMovie ? null : absoluteEpisode;
+    torrents = await searchByAniDBId(resolved.anidb, searchEp, isMovie);
+
+    // If absolute didn't find results, try season episode as-is
+    if (!torrents.length && absoluteEpisode !== episode) {
+      console.log(`  🔄 Absolute ep ${absoluteEpisode} found nothing, trying S${season}E${episode}`);
+      torrents = await searchByAniDBId(resolved.anidb, episode, isMovie);
+    }
   }
 
   // 2. Fallback: text search
