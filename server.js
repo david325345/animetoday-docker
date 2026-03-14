@@ -7,7 +7,7 @@ const axios = require('axios');
 const config = require('./lib/config');
 const { getTodayAnime } = require('./lib/anilist');
 const { loadOfflineDB, loadAnimeLists, loadMappingCache, resolveToAniDB, resolveEpisode, parseEpisodeAndSeason, weeklyUpdate, offlineDB } = require('./lib/idmap');
-const { searchByAniDBId, searchByText, detectQuality, sortByGroupPriority } = require('./lib/search');
+const { searchByAniDBId, searchByText, detectQuality, sortByGroupPriority, loadEidCache } = require('./lib/search');
 const { getRDStream, rdInProgress, getCacheKey, serveLoadingVideo, DOWNLOADING_VIDEO_URL } = require('./lib/realdebrid');
 const { generateAllPosters, formatTimeCET } = require('./lib/posters');
 
@@ -505,6 +505,7 @@ app.listen(PORT, '0.0.0.0', async () => {
   await loadOfflineDB();
   await loadAnimeLists();
   await loadMappingCache();
+  loadEidCache();
 
   const users = config.listUsers();
   console.log(`  TMDB: ${config.getTMDBKey() ? '✅' : '❌ (web)'}`);
