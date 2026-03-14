@@ -8,7 +8,7 @@ const config = require('./lib/config');
 const { getTodayAnime } = require('./lib/anilist');
 const { loadOfflineDB, loadAnimeLists, loadMappingCache, resolveToAniDB, resolveEpisode, parseEpisodeAndSeason, weeklyUpdate, offlineDB } = require('./lib/idmap');
 const { searchByAniDBId, searchByText, detectQuality, sortByGroupPriority, loadEidCache } = require('./lib/search');
-const { getRDStream, rdInProgress, getCacheKey, serveLoadingVideo, DOWNLOADING_VIDEO_URL } = require('./lib/realdebrid');
+const { getRDStream, rdInProgress, getCacheKey, serveLoadingVideo, DOWNLOADING_VIDEO_URL, checkInstantAvailability } = require('./lib/realdebrid');
 const { generateAllPosters, formatTimeCET } = require('./lib/posters');
 
 process.on('uncaughtException', (err) => { console.error('⚠️ Uncaught:', err.message); console.error(err.stack); });
@@ -365,16 +365,35 @@ app.get('/:token/today/stream/:type/:id.json', async (req, res) => {
   }
 
   const hasRD = !!user?.rd_api_key;
-  const withMagnet = torrents.filter(t => t.magnet);
-  console.log(`  📤 Streams: ${withMagnet.length}`);
+  const withMagnet = torrents.filter(t => t.magnet).slice(0, 15);
+
+  // Check RD instant availability
+  let cachedHashes = {};
+  if (hasRD && withMagnet.length) {
+    const hashes = withMagnet.map(t => t.magnet.match(/btih:([a-fA-F0-9]+)/i)?.[1]?.toLowerCase()).filter(Boolean);
+    if (hashes.length) {
+      cachedHashes = await checkInstantAvailability(user.rd_api_key, hashes);
+      const cachedCount = Object.values(cachedHashes).filter(Boolean).length;
+      console.log(`  ⚡ RD cache: ${cachedCount}/${hashes.length} cached`);
+    }
+  }
+
+  const torrentsWithCache = withMagnet.map(t => {
+    const hash = t.magnet.match(/btih:([a-fA-F0-9]+)/i)?.[1]?.toLowerCase();
+    return { ...t, cached: hash ? !!cachedHashes[hash] : false };
+  });
+  torrentsWithCache.sort((a, b) => (b.cached ? 1 : 0) - (a.cached ? 1 : 0));
+
+  console.log(`  📤 Streams: ${torrentsWithCache.length}`);
   res.json({
-    streams: withMagnet.slice(0, 15).map(t => {
+    streams: torrentsWithCache.map(t => {
       const quality = detectQuality(t.name);
+      const cacheIcon = t.cached ? '⚡' : '⏳';
       const title = `${quality ? quality + ' · ' : ''}${t.name}\n👥 ${parseInt(t.seeders) || 0} seeders · 📦 ${t.filesize || 'N/A'}`;
       if (hasRD) {
-        return { name: `AT+RD`, title,
+        return { name: `${cacheIcon} AT+RD`, title,
           url: `${BASE_URL}/${req.params.token}/play/${storeMagnet(t.magnet)}/${ep}/video.mp4`,
-          behaviorHints: { bingeGroup: 'today-rd', notWebReady: true } };
+          behaviorHints: { bingeGroup: `today-rd-${t.cached ? 'c' : 'u'}`, notWebReady: true } };
       }
       return { name: `AT 🧲`, title, url: t.magnet, behaviorHints: { notWebReady: true } };
     })
@@ -474,19 +493,39 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
   const hasRD = !!user?.rd_api_key;
   console.log(`  📊 Before sort: ${torrents.length} (with magnet: ${torrents.filter(t=>t.magnet).length})`);
   const sorted = sortByGroupPriority(torrents);
-  const withMagnet = sorted.filter(t => t.magnet);
-  console.log(`  📤 Streams: ${withMagnet.length}`);
+  const withMagnet = sorted.filter(t => t.magnet).slice(0, 20);
+
+  // Check RD instant availability
+  let cachedHashes = {};
+  if (hasRD && withMagnet.length) {
+    const hashes = withMagnet.map(t => t.magnet.match(/btih:([a-fA-F0-9]+)/i)?.[1]?.toLowerCase()).filter(Boolean);
+    if (hashes.length) {
+      cachedHashes = await checkInstantAvailability(user.rd_api_key, hashes);
+      const cachedCount = Object.values(cachedHashes).filter(Boolean).length;
+      console.log(`  ⚡ RD cache: ${cachedCount}/${hashes.length} cached`);
+    }
+  }
+
+  // Sort: cached first, then uncached
+  const torrentsWithCache = withMagnet.map(t => {
+    const hash = t.magnet.match(/btih:([a-fA-F0-9]+)/i)?.[1]?.toLowerCase();
+    return { ...t, cached: hash ? !!cachedHashes[hash] : false };
+  });
+  torrentsWithCache.sort((a, b) => (b.cached ? 1 : 0) - (a.cached ? 1 : 0));
+
+  console.log(`  📤 Streams: ${torrentsWithCache.length}`);
 
   res.json({
-    streams: withMagnet.slice(0, 20).map(t => {
+    streams: torrentsWithCache.map(t => {
       const name = t.name || '';
       const quality = detectQuality(name);
+      const cacheIcon = t.cached ? '⚡' : '⏳';
       const title = `${quality ? quality + ' · ' : ''}${name}\n👥 ${parseInt(t.seeders) || 0} seeders | 📦 ${t.filesize || '?'}`;
       const epNum = isMovie ? 0 : episode;
       if (hasRD) {
-        return { name: `🎌 AT+RD`, title,
+        return { name: `${cacheIcon} AT+RD`, title,
           url: `${BASE_URL}/${token}/play/${storeMagnet(t.magnet)}/${epNum}/video.mp4`,
-          behaviorHints: { bingeGroup: 'nyaa-rd', notWebReady: true } };
+          behaviorHints: { bingeGroup: `nyaa-rd-${t.cached ? 'c' : 'u'}`, notWebReady: true } };
       }
       return { name: `🧲 AT`, title, url: t.magnet, behaviorHints: { notWebReady: true } };
     })
