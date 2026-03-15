@@ -30,7 +30,6 @@ let todayAnimeCache = [];
 // ===== Cache update =====
 async function updateCache() {
   console.log('🔄 Updating anime cache...');
-  clearRssIndex(); // Clear RSS index for fresh day
   const t0 = Date.now();
   try {
     const schedules = await getTodayAnime();
@@ -40,8 +39,7 @@ async function updateCache() {
   } catch (err) { console.error('❌ Cache failed:', err.message); }
 }
 
-cron.schedule('0 4 * * *', updateCache);
-cron.schedule('0 */6 * * *', updateCache);
+cron.schedule('0 4 * * *', () => { clearRssIndex(); updateCache(); });
 
 // ===== Magnet store (for clean RD stream URLs) =====
 const magnetStore = new Map();
