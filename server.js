@@ -7,7 +7,7 @@ const axios = require('axios');
 const config = require('./lib/config');
 const { getTodayAnime } = require('./lib/anilist');
 const { loadOfflineDB, loadAnimeLists, loadMappingCache, resolveToAniDB, resolveEpisode, parseEpisodeAndSeason, weeklyUpdate, offlineDB } = require('./lib/idmap');
-const { searchByAniDBId, searchByText, detectQuality, sortByGroupPriority, loadEidCache } = require('./lib/search');
+const { searchByAniDBId, searchByText, detectQuality, sortByGroupPriority, loadEidCache, DEFAULT_GROUPS, DEFAULT_RESOLUTIONS } = require('./lib/search');
 const { getRDStream, rdInProgress, getCacheKey, serveLoadingVideo, DOWNLOADING_VIDEO_URL, checkInstantAvailability } = require('./lib/realdebrid');
 const { generateAllPosters, formatTimeCET } = require('./lib/posters');
 const { startRssFetcher, clearRssIndex, searchRssIndex, getRssStats } = require('./lib/rss');
@@ -230,6 +230,34 @@ app.post('/api/refresh', async (req, res) => {
   res.json({ success: true, count: todayAnimeCache.length });
 });
 
+// ===== Sort Preferences API =====
+app.get('/api/sort-prefs/:token', (req, res) => {
+  const user = config.getUser(req.params.token);
+  if (!user) return res.json({});
+  res.json({
+    customSortEnabled: user.customSortEnabled || false,
+    groupPriority: user.groupPriority || DEFAULT_GROUPS,
+    resPriority: user.resPriority || DEFAULT_RESOLUTIONS,
+    excludedResolutions: user.excludedResolutions || [],
+    sortBySeeders: user.sortBySeeders !== false,
+    defaultGroups: DEFAULT_GROUPS,
+    defaultResolutions: DEFAULT_RESOLUTIONS
+  });
+});
+
+app.post('/api/sort-prefs/:token', express.json(), (req, res) => {
+  const user = config.getUser(req.params.token);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  const { customSortEnabled, groupPriority, resPriority, excludedResolutions, sortBySeeders } = req.body;
+  if (typeof customSortEnabled === 'boolean') user.customSortEnabled = customSortEnabled;
+  if (Array.isArray(groupPriority)) user.groupPriority = groupPriority;
+  if (Array.isArray(resPriority)) user.resPriority = resPriority;
+  if (Array.isArray(excludedResolutions)) user.excludedResolutions = excludedResolutions;
+  if (typeof sortBySeeders === 'boolean') user.sortBySeeders = sortBySeeders;
+  config.saveUser(req.params.token, user);
+  res.json({ success: true });
+});
+
 // ===== RD PLAY PROXY (shared by both addons) =====
 app.get('/:token/play/:hash/:episode/video.mp4', async (req, res) => {
   const user = config.getUser(req.params.token);
@@ -383,7 +411,8 @@ app.get('/:token/today/stream/:type/:id.json', async (req, res) => {
   }
 
   const hasRD = !!user?.rd_api_key;
-  const withMagnet = torrents.filter(t => t.magnet).slice(0, 15);
+  const sorted = sortByGroupPriority(torrents, user);
+  const withMagnet = sorted.filter(t => t.magnet).slice(0, 15);
 
   console.log(`  📤 Streams: ${withMagnet.length}`);
   res.json({
@@ -492,7 +521,7 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
   }
 
   const hasRD = !!user?.rd_api_key;
-  const sorted = sortByGroupPriority(torrents);
+  const sorted = sortByGroupPriority(torrents, user);
   const withMagnet = sorted.filter(t => t.magnet).slice(0, 20);
 
   console.log(`  📤 Streams: ${withMagnet.length}`);
