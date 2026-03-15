@@ -58,6 +58,25 @@
         #app-section { display:none; }
         .footer { text-align:center; padding:30px 0; color:var(--dim); font-size:12px; border-top:1px solid var(--border); margin-top:40px; }
         .footer a { color:var(--accent); text-decoration:none; }
+        /* Sort preferences */
+        .sort-list { list-style:none; padding:0; margin:8px 0; }
+        .sort-list li { display:flex; align-items:center; gap:10px; background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:8px 12px; margin:4px 0; cursor:grab; font-size:13px; font-weight:500; user-select:none; transition:border-color 0.2s; }
+        .sort-list li:active { cursor:grabbing; }
+        .sort-list li.dragging { opacity:0.5; border-color:var(--accent); }
+        .sort-list li .drag-handle { color:var(--dim); font-size:16px; flex-shrink:0; }
+        .sort-list li .item-name { flex:1; }
+        .sort-list li .remove-btn { color:var(--dim); cursor:pointer; font-size:16px; padding:0 4px; }
+        .sort-list li .remove-btn:hover { color:var(--accent); }
+        .sort-row { display:flex; gap:12px; flex-wrap:wrap; }
+        .sort-col { flex:1; min-width:250px; }
+        .sort-col h3 { font-size:14px; font-weight:600; margin-bottom:8px; color:var(--dim); }
+        .switch-row { display:flex; align-items:center; gap:12px; margin:8px 0; }
+        .switch-row label { font-size:13px; color:var(--text); }
+        .res-exclude { display:flex; flex-wrap:wrap; gap:8px; margin:8px 0; }
+        .res-exclude label { display:flex; align-items:center; gap:6px; font-size:12px; color:var(--dim); cursor:pointer; }
+        .res-exclude input { accent-color:var(--accent); }
+        .add-group-row { display:flex; gap:8px; margin-top:8px; }
+        .add-group-row input { flex:1; }
         @media(max-width:640px) { .container{padding:20px 14px;} .input-row{flex-direction:column;} .install-row{flex-direction:column;} .rd-user{flex-direction:column;text-align:center;} }
     </style>
 </head>
@@ -149,6 +168,43 @@
             <p class="desc">Vypněte anime které nechcete ve Stremio.</p>
             <div id="anime-list" class="anime-list"><div style="text-align:center;color:var(--dim);padding:20px">Načítám...</div></div>
         </div>
+
+        <!-- Sort Preferences -->
+        <div class="section">
+            <h2>⚙️ Řazení výsledků</h2>
+            <p class="desc">Nastavte prioritu skupin a rozlišení pro řazení torrentů ve Stremio.</p>
+
+            <div class="switch-row">
+                <button class="toggle off" id="sort-enabled-toggle" onclick="toggleCustomSort()"></button>
+                <label>Vlastní řazení</label>
+            </div>
+
+            <div id="sort-prefs-panel" style="display:none; margin-top:16px;">
+                <div class="switch-row">
+                    <button class="toggle on" id="sort-seeders-toggle" onclick="toggleSortSeeders()"></button>
+                    <label>Řadit podle seeders</label>
+                </div>
+
+                <div class="sort-row" style="margin-top:16px;">
+                    <div class="sort-col">
+                        <h3>📡 Priorita skupin</h3>
+                        <ul class="sort-list" id="group-list"></ul>
+                        <div class="add-group-row">
+                            <input type="text" id="new-group-input" class="input" placeholder="Název skupiny" style="font-size:12px;padding:8px 10px;">
+                            <button class="btn btn-s btn-sm" onclick="addGroup()" style="padding:8px 14px;font-size:12px;">+</button>
+                        </div>
+                    </div>
+                    <div class="sort-col">
+                        <h3>📺 Priorita rozlišení</h3>
+                        <ul class="sort-list" id="res-list"></ul>
+                        <h3 style="margin-top:16px;">🚫 Vyloučit rozlišení</h3>
+                        <div class="res-exclude" id="res-exclude"></div>
+                    </div>
+                </div>
+
+                <button class="btn btn-s btn-sm" onclick="resetSortPrefs()" style="margin-top:16px;">Obnovit výchozí</button>
+            </div>
+        </div>
     </div>
 
     <footer class="footer">
@@ -176,7 +232,7 @@ function showApp() {
     document.getElementById('install-today').href=`stremio://${todayUrl.replace(/^https?:\/\//,'')}`;
     document.getElementById('install-nyaa').href=`stremio://${nyaaUrl.replace(/^https?:\/\//,'')}`;
     document.getElementById('show-token').textContent=TOKEN;
-    checkRD(); checkTMDB(); loadAnime();
+    checkRD(); checkTMDB(); loadAnime(); loadSortPrefs();
 }
 
 async function createAccount() {
@@ -271,6 +327,134 @@ async function loadAnime() {
 async function toggleAnime(id,hidden) {
     await fetch(`/api/anime/${hidden?'show':'hide'}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:TOKEN,mediaId:id})});
     loadAnime(); toast(hidden?'👁️ Zobrazeno':'🙈 Skryto');
+}
+
+// Sort Preferences
+let sortPrefs = { customSortEnabled:false, groupPriority:[], resPriority:[], excludedResolutions:[], sortBySeeders:true, defaultGroups:[], defaultResolutions:[] };
+
+async function loadSortPrefs() {
+    try {
+        const r = await fetch(`/api/sort-prefs/${TOKEN}`);
+        const d = await r.json();
+        sortPrefs = { ...sortPrefs, ...d };
+        renderSortPrefs();
+    } catch {}
+}
+
+function renderSortPrefs() {
+    // Master toggle
+    const tog = document.getElementById('sort-enabled-toggle');
+    tog.className = sortPrefs.customSortEnabled ? 'toggle on' : 'toggle off';
+    document.getElementById('sort-prefs-panel').style.display = sortPrefs.customSortEnabled ? 'block' : 'none';
+
+    // Seeders toggle
+    const stog = document.getElementById('sort-seeders-toggle');
+    stog.className = sortPrefs.sortBySeeders !== false ? 'toggle on' : 'toggle off';
+
+    // Group list
+    renderSortList('group-list', sortPrefs.groupPriority, 'group');
+
+    // Resolution list
+    renderSortList('res-list', sortPrefs.resPriority, 'res');
+
+    // Excluded resolutions
+    const exDiv = document.getElementById('res-exclude');
+    const allRes = sortPrefs.defaultResolutions || ['1080p','720p','4K','480p','DVD'];
+    exDiv.innerHTML = allRes.map(r => {
+        const checked = (sortPrefs.excludedResolutions || []).includes(r) ? 'checked' : '';
+        return `<label><input type="checkbox" ${checked} onchange="toggleExcludeRes('${r}', this.checked)"> ${r}</label>`;
+    }).join('');
+}
+
+function renderSortList(containerId, items, type) {
+    const ul = document.getElementById(containerId);
+    ul.innerHTML = items.map((item, i) =>
+        `<li draggable="true" data-idx="${i}" data-type="${type}">
+            <span class="drag-handle">☰</span>
+            <span class="item-name">${item}</span>
+            ${type === 'group' ? `<span class="remove-btn" onclick="removeGroup(${i})">×</span>` : ''}
+        </li>`
+    ).join('');
+
+    // Drag & drop
+    let dragIdx = null;
+    ul.querySelectorAll('li').forEach(li => {
+        li.addEventListener('dragstart', e => { dragIdx = +li.dataset.idx; li.classList.add('dragging'); });
+        li.addEventListener('dragend', () => { li.classList.remove('dragging'); });
+        li.addEventListener('dragover', e => { e.preventDefault(); });
+        li.addEventListener('drop', e => {
+            e.preventDefault();
+            const dropIdx = +li.dataset.idx;
+            if (dragIdx === null || dragIdx === dropIdx) return;
+            const arr = type === 'group' ? sortPrefs.groupPriority : sortPrefs.resPriority;
+            const [moved] = arr.splice(dragIdx, 1);
+            arr.splice(dropIdx, 0, moved);
+            saveSortPrefs();
+            renderSortPrefs();
+        });
+    });
+}
+
+function toggleCustomSort() {
+    sortPrefs.customSortEnabled = !sortPrefs.customSortEnabled;
+    saveSortPrefs();
+    renderSortPrefs();
+}
+
+function toggleSortSeeders() {
+    sortPrefs.sortBySeeders = !sortPrefs.sortBySeeders;
+    saveSortPrefs();
+    renderSortPrefs();
+}
+
+function toggleExcludeRes(res, exclude) {
+    if (!sortPrefs.excludedResolutions) sortPrefs.excludedResolutions = [];
+    if (exclude && !sortPrefs.excludedResolutions.includes(res)) sortPrefs.excludedResolutions.push(res);
+    if (!exclude) sortPrefs.excludedResolutions = sortPrefs.excludedResolutions.filter(r => r !== res);
+    saveSortPrefs();
+}
+
+function addGroup() {
+    const input = document.getElementById('new-group-input');
+    const name = input.value.trim();
+    if (!name) return;
+    if (!sortPrefs.groupPriority.includes(name)) {
+        sortPrefs.groupPriority.push(name);
+        saveSortPrefs();
+        renderSortPrefs();
+    }
+    input.value = '';
+}
+
+function removeGroup(idx) {
+    sortPrefs.groupPriority.splice(idx, 1);
+    saveSortPrefs();
+    renderSortPrefs();
+}
+
+function resetSortPrefs() {
+    sortPrefs.groupPriority = [...(sortPrefs.defaultGroups || [])];
+    sortPrefs.resPriority = [...(sortPrefs.defaultResolutions || [])];
+    sortPrefs.excludedResolutions = [];
+    sortPrefs.sortBySeeders = true;
+    saveSortPrefs();
+    renderSortPrefs();
+    toast('🔄 Výchozí nastavení obnoveno');
+}
+
+async function saveSortPrefs() {
+    try {
+        await fetch(`/api/sort-prefs/${TOKEN}`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                customSortEnabled: sortPrefs.customSortEnabled,
+                groupPriority: sortPrefs.groupPriority,
+                resPriority: sortPrefs.resPriority,
+                excludedResolutions: sortPrefs.excludedResolutions,
+                sortBySeeders: sortPrefs.sortBySeeders
+            })
+        });
+    } catch {}
 }
 
 // Init
