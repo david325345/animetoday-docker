@@ -44,9 +44,15 @@ cron.schedule('0 4 * * *', () => { clearRssIndex(); updateCache(); });
 
 // ===== Magnet store (for clean RD stream URLs) =====
 const magnetStore = new Map();
+const nzbStore = new Map();
 function storeMagnet(magnet) {
   const hash = crypto.createHash('md5').update(magnet).digest('hex');
   magnetStore.set(hash, magnet);
+  return hash;
+}
+function storeNZB(nzbUrl, torrentName) {
+  const hash = crypto.createHash('md5').update(nzbUrl).digest('hex');
+  nzbStore.set(hash, { url: nzbUrl, name: torrentName });
   return hash;
 }
 
@@ -345,11 +351,11 @@ app.get('/:token/play-nzb/:hash/:episode/video.mp4', async (req, res) => {
   const user = config.getUser(req.params.token);
   if (!user?.tb_api_key) return serveLoadingVideo(res);
 
-  const nzbUrl = magnetStore.get(req.params.hash);
-  if (!nzbUrl) return serveLoadingVideo(res);
+  const nzb = nzbStore.get(req.params.hash);
+  if (!nzb) return serveLoadingVideo(res);
 
   const episode = parseInt(req.params.episode) || 0;
-  const url = await getTBNZBStream(nzbUrl, user.tb_api_key, episode);
+  const url = await getTBNZBStream(nzb.url, user.tb_api_key, episode, nzb.name);
   if (url) return res.redirect(302, url);
   serveLoadingVideo(res);
 });
@@ -501,7 +507,7 @@ app.get('/:token/today/stream/:type/:id.json', async (req, res) => {
     if (tbNZB && t.nzb_url) {
       const nzbTitle = `${quality ? quality + ' · ' : ''}${t.name}\n📡 Usenet · 📦 ${t.filesize || 'N/A'}`;
       streams.push({ name: `📡 NZB`, title: nzbTitle,
-        url: `${BASE_URL}/${req.params.token}/play-nzb/${storeMagnet(t.nzb_url)}/${ep}/video.mp4`,
+        url: `${BASE_URL}/${req.params.token}/play-nzb/${storeNZB(t.nzb_url, t.name)}/${ep}/video.mp4`,
         behaviorHints: { bingeGroup: 'today-nzb', notWebReady: true } });
     }
     if (!hasRD && !tbTorrents) {
@@ -630,7 +636,7 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
     if (tbNZB && t.nzb_url) {
       const nzbTitle = `${quality ? quality + ' · ' : ''}${name}\n📡 Usenet | 📦 ${t.filesize || '?'}`;
       streams.push({ name: `📡 NZB`, title: nzbTitle,
-        url: `${BASE_URL}/${token}/play-nzb/${storeMagnet(t.nzb_url)}/${epNum}/video.mp4`,
+        url: `${BASE_URL}/${token}/play-nzb/${storeNZB(t.nzb_url, t.name)}/${epNum}/video.mp4`,
         behaviorHints: { bingeGroup: 'nyaa-nzb', notWebReady: true } });
     }
     if (!hasRD && !tbTorrents) {
