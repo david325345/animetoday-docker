@@ -149,6 +149,36 @@
             </div>
         </div>
 
+        <!-- TorBox -->
+        <div class="section">
+            <h2>📦 TorBox</h2>
+            <p class="desc">TorBox Pro — torrenty + Usenet/NZB streaming.</p>
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+                <span class="badge off" id="tb-badge">Nepřipojen</span>
+            </div>
+            <div id="tb-user" class="rd-user">
+                <div style="flex:1"><div id="tb-name" style="font-weight:600;font-size:14px">—</div><div id="tb-meta" style="font-size:11px;color:var(--dim)">—</div></div>
+                <button class="btn btn-sm btn-d" onclick="disconnectTB()">Odpojit</button>
+            </div>
+            <div id="tb-toggles" style="display:none;margin-top:14px">
+                <div class="switch-row">
+                    <button class="toggle off" id="tb-torrent-toggle" onclick="toggleTB('tb_use_torrents')"></button>
+                    <label>Používat pro torrenty</label>
+                </div>
+                <div class="switch-row">
+                    <button class="toggle off" id="tb-nzb-toggle" onclick="toggleTB('tb_use_nzb')"></button>
+                    <label>Používat pro NZB/Usenet</label>
+                </div>
+            </div>
+            <div id="tb-login">
+                <p style="font-size:12px;color:var(--dim);margin-bottom:6px">API klíč z <a href="https://torbox.app/settings" target="_blank" style="color:var(--green)">torbox.app/settings</a>:</p>
+                <div class="input-row">
+                    <input type="password" id="tb-key" class="input" placeholder="TorBox API klíč">
+                    <button class="btn btn-s btn-sm" onclick="saveTBKey()">Uložit</button>
+                </div>
+            </div>
+        </div>
+
         <!-- TMDB -->
         <div class="section">
             <h2>🖼️ TMDB</h2>
@@ -232,7 +262,7 @@ function showApp() {
     document.getElementById('install-today').href=`stremio://${todayUrl.replace(/^https?:\/\//,'')}`;
     document.getElementById('install-nyaa').href=`stremio://${nyaaUrl.replace(/^https?:\/\//,'')}`;
     document.getElementById('show-token').textContent=TOKEN;
-    checkRD(); checkTMDB(); loadAnime(); loadSortPrefs();
+    checkRD(); checkTB(); checkTMDB(); loadAnime(); loadSortPrefs();
 }
 
 async function createAccount() {
@@ -327,6 +357,49 @@ async function loadAnime() {
 async function toggleAnime(id,hidden) {
     await fetch(`/api/anime/${hidden?'show':'hide'}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:TOKEN,mediaId:id})});
     loadAnime(); toast(hidden?'👁️ Zobrazeno':'🙈 Skryto');
+}
+
+// TorBox
+async function checkTB() {
+    try {
+        const r = await fetch(`/api/torbox/status/${TOKEN}`); const d = await r.json();
+        const b = document.getElementById('tb-badge'); const u = document.getElementById('tb-user');
+        const l = document.getElementById('tb-login'); const t = document.getElementById('tb-toggles');
+        if (d.connected) {
+            b.className='badge on'; b.textContent='Připojeno';
+            u.classList.add('vis'); l.style.display='none'; t.style.display='block';
+            const plans = ['Free','Essential','Standard','Pro'];
+            document.getElementById('tb-name').textContent = d.username || 'TorBox User';
+            document.getElementById('tb-meta').textContent = (plans[d.plan] || 'Unknown') + (d.expiration ? ' · do ' + new Date(d.expiration).toLocaleDateString('cs') : '');
+            const ttog = document.getElementById('tb-torrent-toggle');
+            const ntog = document.getElementById('tb-nzb-toggle');
+            ttog.className = d.tb_use_torrents ? 'toggle on' : 'toggle off';
+            ntog.className = d.tb_use_nzb ? 'toggle on' : 'toggle off';
+        } else {
+            b.className='badge off'; b.textContent='Nepřipojen';
+            u.classList.remove('vis'); l.style.display='block'; t.style.display='none';
+        }
+    } catch {}
+}
+
+async function saveTBKey() {
+    const key = document.getElementById('tb-key').value.trim();
+    if (!key) { toast('❌ Zadejte klíč'); return; }
+    const r = await fetch('/api/torbox/save-key', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({token:TOKEN, key}) });
+    const d = await r.json();
+    if (d.success) { document.getElementById('tb-key').value=''; toast('✅ TorBox uloženo!'); checkTB(); }
+    else toast('❌ Neplatný klíč');
+}
+
+async function disconnectTB() {
+    await fetch(`/api/torbox/disconnect/${TOKEN}`, {method:'POST'}); toast('🔌 TorBox odpojeno'); checkTB();
+}
+
+async function toggleTB(field) {
+    const el = field === 'tb_use_torrents' ? document.getElementById('tb-torrent-toggle') : document.getElementById('tb-nzb-toggle');
+    const newVal = el.className.includes('off');
+    el.className = newVal ? 'toggle on' : 'toggle off';
+    await fetch('/api/torbox/toggle', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({token:TOKEN, field, value:newVal}) });
 }
 
 // Sort Preferences
