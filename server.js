@@ -11,6 +11,7 @@ const { searchByAniDBId, searchByText, detectQuality, sortByGroupPriority, loadE
 const { getRDStream, rdInProgress, getCacheKey, serveLoadingVideo, DOWNLOADING_VIDEO_URL, checkInstantAvailability } = require('./lib/realdebrid');
 const { generateAllPosters, formatTimeCET } = require('./lib/posters');
 const { startRssFetcher, clearRssIndex, searchRssIndex, getRssStats } = require('./lib/rss');
+const { getTBStatus, getTBStream, getTBNZBStream } = require('./lib/torbox');
 
 process.on('uncaughtException', (err) => { console.error('⚠️ Uncaught:', err.message); console.error(err.stack); });
 process.on('unhandledRejection', (err) => { console.error('⚠️ Unhandled:', err?.message || err); });
@@ -256,6 +257,44 @@ app.post('/api/sort-prefs/:token', express.json(), (req, res) => {
   res.json({ success: true });
 });
 
+// ===== TorBox API =====
+app.post('/api/torbox/save-key', express.json(), async (req, res) => {
+  const { token, key } = req.body;
+  const user = config.getUser(token);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  const status = await getTBStatus(key);
+  if (!status) return res.json({ success: false, error: 'Invalid API key' });
+  user.tb_api_key = key;
+  user.tb_use_torrents = user.tb_use_torrents ?? false;
+  user.tb_use_nzb = user.tb_use_nzb ?? true;
+  config.saveUser(token, user);
+  res.json({ success: true, ...status });
+});
+
+app.get('/api/torbox/status/:token', async (req, res) => {
+  const user = config.getUser(req.params.token);
+  if (!user?.tb_api_key) return res.json({ connected: false });
+  const status = await getTBStatus(user.tb_api_key);
+  if (!status) return res.json({ connected: false });
+  res.json({ connected: true, ...status, tb_use_torrents: user.tb_use_torrents ?? false, tb_use_nzb: user.tb_use_nzb ?? true });
+});
+
+app.post('/api/torbox/disconnect/:token', (req, res) => {
+  const user = config.getUser(req.params.token);
+  if (user) { delete user.tb_api_key; delete user.tb_use_torrents; delete user.tb_use_nzb; config.saveUser(req.params.token, user); }
+  res.json({ success: true });
+});
+
+app.post('/api/torbox/toggle', express.json(), (req, res) => {
+  const { token, field, value } = req.body;
+  const user = config.getUser(token);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  if (field === 'tb_use_torrents') user.tb_use_torrents = !!value;
+  if (field === 'tb_use_nzb') user.tb_use_nzb = !!value;
+  config.saveUser(token, user);
+  res.json({ success: true });
+});
+
 // ===== RD PLAY PROXY (shared by both addons) =====
 app.get('/:token/play/:hash/:episode/video.mp4', async (req, res) => {
   const user = config.getUser(req.params.token);
@@ -285,6 +324,34 @@ app.get('/:token/play/:hash/:episode/video.mp4', async (req, res) => {
   serveLoadingVideo(res);
   rdP.then(u => { if (u) console.log('  RD: ✅ Background done, cached'); })
     .catch(() => {}).finally(() => rdInProgress.delete(cacheKey));
+});
+
+// ===== TB PLAY PROXY =====
+app.get('/:token/play-tb/:hash/:episode/video.mp4', async (req, res) => {
+  const user = config.getUser(req.params.token);
+  if (!user?.tb_api_key) return serveLoadingVideo(res);
+
+  const magnet = magnetStore.get(req.params.hash);
+  if (!magnet) return serveLoadingVideo(res);
+
+  const episode = parseInt(req.params.episode) || 0;
+  const url = await getTBStream(magnet, user.tb_api_key, episode);
+  if (url) return res.redirect(302, url);
+  serveLoadingVideo(res);
+});
+
+// ===== NZB PLAY PROXY =====
+app.get('/:token/play-nzb/:hash/:episode/video.mp4', async (req, res) => {
+  const user = config.getUser(req.params.token);
+  if (!user?.tb_api_key) return serveLoadingVideo(res);
+
+  const nzbUrl = magnetStore.get(req.params.hash);
+  if (!nzbUrl) return serveLoadingVideo(res);
+
+  const episode = parseInt(req.params.episode) || 0;
+  const url = await getTBNZBStream(nzbUrl, user.tb_api_key, episode);
+  if (url) return res.redirect(302, url);
+  serveLoadingVideo(res);
 });
 
 // ===== STREMIO: ANIME TODAY ADDON =====
@@ -409,23 +476,41 @@ app.get('/:token/today/stream/:type/:id.json', async (req, res) => {
   }
 
   const hasRD = !!user?.rd_api_key;
+  const hasTB = !!user?.tb_api_key;
+  const tbTorrents = hasTB && user.tb_use_torrents;
+  const tbNZB = hasTB && user.tb_use_nzb;
   const sorted = sortByGroupPriority(torrents, user);
   const withMagnet = sorted.filter(t => t.magnet).slice(0, 15);
 
-  console.log(`  📤 Streams: ${withMagnet.length}`);
-  res.json({
-    streams: withMagnet.map(t => {
-      const quality = detectQuality(t.name);
-      const src = t.source === 'nyaa-rss' ? 'RSS' : 'AT';
-      const title = `${quality ? quality + ' · ' : ''}${t.name}\n👥 ${parseInt(t.seeders) || 0} seeders · 📦 ${t.filesize || 'N/A'}`;
-      if (hasRD) {
-        return { name: `${src}+RD`, title,
-          url: `${BASE_URL}/${req.params.token}/play/${storeMagnet(t.magnet)}/${ep}/video.mp4`,
-          behaviorHints: { bingeGroup: 'today-rd', notWebReady: true } };
-      }
-      return { name: `AT 🧲`, title, url: t.magnet, behaviorHints: { notWebReady: true } };
-    })
-  });
+  const streams = [];
+  for (const t of withMagnet) {
+    const quality = detectQuality(t.name);
+    const src = t.source === 'nyaa-rss' ? 'RSS' : 'AT';
+    const title = `${quality ? quality + ' · ' : ''}${t.name}\n👥 ${parseInt(t.seeders) || 0} seeders · 📦 ${t.filesize || 'N/A'}`;
+
+    if (hasRD) {
+      streams.push({ name: `🎌 RD`, title,
+        url: `${BASE_URL}/${req.params.token}/play/${storeMagnet(t.magnet)}/${ep}/video.mp4`,
+        behaviorHints: { bingeGroup: 'today-rd', notWebReady: true } });
+    }
+    if (tbTorrents) {
+      streams.push({ name: `📦 TB`, title,
+        url: `${BASE_URL}/${req.params.token}/play-tb/${storeMagnet(t.magnet)}/${ep}/video.mp4`,
+        behaviorHints: { bingeGroup: 'today-tb', notWebReady: true } });
+    }
+    if (tbNZB && t.nzb_url) {
+      const nzbTitle = `${quality ? quality + ' · ' : ''}${t.name}\n📡 Usenet · 📦 ${t.filesize || 'N/A'}`;
+      streams.push({ name: `📡 NZB`, title: nzbTitle,
+        url: `${BASE_URL}/${req.params.token}/play-nzb/${storeMagnet(t.nzb_url)}/${ep}/video.mp4`,
+        behaviorHints: { bingeGroup: 'today-nzb', notWebReady: true } });
+    }
+    if (!hasRD && !tbTorrents) {
+      streams.push({ name: `🧲 ${src}`, title, url: t.magnet, behaviorHints: { notWebReady: true } });
+    }
+  }
+
+  console.log(`  📤 Streams: ${streams.length}`);
+  res.json({ streams });
 });
 
 // ===== STREMIO: NYAA SEARCH ADDON =====
@@ -519,25 +604,42 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
   }
 
   const hasRD = !!user?.rd_api_key;
+  const hasTB = !!user?.tb_api_key;
+  const tbTorrents = hasTB && user.tb_use_torrents;
+  const tbNZB = hasTB && user.tb_use_nzb;
   const sorted = sortByGroupPriority(torrents);
   const withMagnet = sorted.filter(t => t.magnet).slice(0, 20);
 
-  console.log(`  📤 Streams: ${withMagnet.length}`);
+  const streams = [];
+  for (const t of withMagnet) {
+    const name = t.name || '';
+    const quality = detectQuality(name);
+    const title = `${quality ? quality + ' · ' : ''}${name}\n👥 ${parseInt(t.seeders) || 0} seeders | 📦 ${t.filesize || '?'}`;
+    const epNum = isMovie ? 0 : episode;
 
-  res.json({
-    streams: withMagnet.map(t => {
-      const name = t.name || '';
-      const quality = detectQuality(name);
-      const title = `${quality ? quality + ' · ' : ''}${name}\n👥 ${parseInt(t.seeders) || 0} seeders | 📦 ${t.filesize || '?'}`;
-      const epNum = isMovie ? 0 : episode;
-      if (hasRD) {
-        return { name: `🎌 AT+RD`, title,
-          url: `${BASE_URL}/${token}/play/${storeMagnet(t.magnet)}/${epNum}/video.mp4`,
-          behaviorHints: { bingeGroup: 'nyaa-rd', notWebReady: true } };
-      }
-      return { name: `🧲 AT`, title, url: t.magnet, behaviorHints: { notWebReady: true } };
-    })
-  });
+    if (hasRD) {
+      streams.push({ name: `🎌 RD`, title,
+        url: `${BASE_URL}/${token}/play/${storeMagnet(t.magnet)}/${epNum}/video.mp4`,
+        behaviorHints: { bingeGroup: 'nyaa-rd', notWebReady: true } });
+    }
+    if (tbTorrents) {
+      streams.push({ name: `📦 TB`, title,
+        url: `${BASE_URL}/${token}/play-tb/${storeMagnet(t.magnet)}/${epNum}/video.mp4`,
+        behaviorHints: { bingeGroup: 'nyaa-tb', notWebReady: true } });
+    }
+    if (tbNZB && t.nzb_url) {
+      const nzbTitle = `${quality ? quality + ' · ' : ''}${name}\n📡 Usenet | 📦 ${t.filesize || '?'}`;
+      streams.push({ name: `📡 NZB`, title: nzbTitle,
+        url: `${BASE_URL}/${token}/play-nzb/${storeMagnet(t.nzb_url)}/${epNum}/video.mp4`,
+        behaviorHints: { bingeGroup: 'nyaa-nzb', notWebReady: true } });
+    }
+    if (!hasRD && !tbTorrents) {
+      streams.push({ name: `🧲 AT`, title, url: t.magnet, behaviorHints: { notWebReady: true } });
+    }
+  }
+
+  console.log(`  📤 Streams: ${streams.length}`);
+  res.json({ streams });
 });
 
 // ===== Health =====
