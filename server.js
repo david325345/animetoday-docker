@@ -438,14 +438,60 @@ async function resolveIMDbViaTMDB(nameVariants, anilistId) {
   const tmdbKey = config.getTMDBKey();
   if (!tmdbKey) { console.log(`  🔍 TMDB: no API key`); return null; }
 
-  // Build list of search names to try
+  const offRec = offlineDB.byAniList.get(anilistId);
+
+  // === Step 1: TVDB find (exact match, no search needed) ===
+  const tvdbId = offRec?.tvdb;
+  if (tvdbId) {
+    try {
+      const findResp = await axios.get(`https://api.themoviedb.org/3/find/${tvdbId}`, {
+        params: { api_key: tmdbKey, external_source: 'tvdb_id' },
+        timeout: 5000
+      });
+      const tvResults = findResp.data?.tv_results;
+      if (tvResults?.length) {
+        const tmdbId = tvResults[0].id;
+        try {
+          const extResp = await axios.get(`https://api.themoviedb.org/3/tv/${tmdbId}/external_ids`, {
+            params: { api_key: tmdbKey },
+            timeout: 5000
+          });
+          const imdbId = extResp.data?.imdb_id;
+          if (imdbId && imdbId.startsWith('tt')) {
+            console.log(`  🔍 TMDB: TVDB ${tvdbId} → TMDB ${tmdbId} "${tvResults[0].name}" → ${imdbId}`);
+            tmdbImdbCache.set(cacheKey, imdbId);
+            if (offRec && !offRec.imdb) offRec.imdb = imdbId;
+            return imdbId;
+          }
+        } catch {}
+      }
+      console.log(`  🔍 TMDB: TVDB ${tvdbId} → no IMDb found`);
+    } catch (err) {
+      console.log(`  🔍 TMDB find by TVDB error: ${err.message}`);
+    }
+  }
+
+  // === Step 2: Name search with cleaned variants ===
+  // Always clean names first — never search with "Season 3", "Part 2", etc.
+  function cleanAnimeName(name) {
+    if (!name) return '';
+    return name
+      .replace(/\s*(\d+(?:st|nd|rd|th))?\s*(Season|Part|Cour|Series|Phase|Chapter|Arc)\s*\d*\s*$/i, '') // "X Season 3" → "X"
+      .replace(/\s+\d+$/, '') // trailing number: "Shingeki no Kyojin 3" → "Shingeki no Kyojin"
+      .replace(/\s+[IVXLC]+$/, '') // roman numerals: "Title III" → "Title"
+      .trim();
+  }
+
   const searchNames = [];
   for (const name of nameVariants) {
-    if (name && !searchNames.includes(name)) searchNames.push(name);
-    // Also try without subtitle (after colon/dash)
-    if (name) {
-      const short = name.split(/[:\-–—]/)[0].trim();
-      if (short && short !== name && short.length >= 3 && !searchNames.includes(short)) searchNames.push(short);
+    if (!name) continue;
+    const clean = cleanAnimeName(name);
+    if (clean && clean.length >= 3 && !searchNames.includes(clean)) searchNames.push(clean);
+
+    // Also try without subtitle after colon/dash
+    const noSubtitle = clean.split(/[:\-–—]/)[0].trim();
+    if (noSubtitle && noSubtitle !== clean && noSubtitle.length >= 3 && !searchNames.includes(noSubtitle)) {
+      searchNames.push(noSubtitle);
     }
   }
 
@@ -478,7 +524,6 @@ async function resolveIMDbViaTMDB(nameVariants, anilistId) {
           if (imdbId && imdbId.startsWith('tt')) {
             console.log(`  🔍 TMDB: "${searchName}" → TMDB ${result.id} "${result.name}" → ${imdbId}`);
             tmdbImdbCache.set(cacheKey, imdbId);
-            const offRec = offlineDB.byAniList.get(anilistId);
             if (offRec && !offRec.imdb) offRec.imdb = imdbId;
             return imdbId;
           }
