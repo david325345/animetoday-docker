@@ -371,7 +371,6 @@ app.get('/:token/today/manifest.json', (req, res) => {
     resources: ['catalog'],
     types: ['series'],
     catalogs: [{ type: 'series', id: 'anime-today', name: 'Dnešní Anime', extra: [{ name: 'skip', isRequired: false }] }],
-    idPrefixes: ['tt'],
     behaviorHints: { configurable: false, configurationRequired: false }
   });
 });
