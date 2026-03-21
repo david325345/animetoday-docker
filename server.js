@@ -364,14 +364,14 @@ app.get('/:token/play-nzb/:hash/:episode/video.mp4', async (req, res) => {
 app.get('/:token/today/manifest.json', (req, res) => {
   res.json({
     id: 'cz.nyaa.anime.today.v5',
-    version: '5.0.0',
+    version: '5.2.0',
     name: 'Anime Today',
-    description: 'Dnešní anime z AniList + Nyaa.si + RealDebrid',
+    description: 'Dnešní anime z AniList — katalog s postery. Streamy přes Nyaa Search addon.',
     logo: `${BASE_URL}/logo.png`,
-    resources: ['catalog', 'meta', 'stream'],
+    resources: ['catalog', 'meta'],
     types: ['series'],
     catalogs: [{ type: 'series', id: 'anime-today', name: 'Dnešní Anime', extra: [{ name: 'skip', isRequired: false }] }],
-    idPrefixes: ['nyaa:'],
+    idPrefixes: ['tt', 'kitsu:', 'anilist:'],
     behaviorHints: { configurable: false, configurationRequired: false }
   });
 });
@@ -396,7 +396,7 @@ app.get('/:token/today/catalog/:type/:id.json', (req, res) => {
       const anilistId = m.id;
       const offRec = offlineDB.byAniList.get(anilistId);
       const meta = {
-        id: `nyaa:${m.id}:${s.episode}`, type: 'series',
+        id: offRec?.imdb || (offRec?.kitsu ? `kitsu:${offRec.kitsu}` : `anilist:${m.id}`), type: 'series',
         name: m.title.romaji || m.title.english || m.title.native,
         poster, background: bg || poster,
         description: `${time} · Epizoda ${s.episode}\n\n${(m.description || '').replace(/<[^>]*>/g, '')}`,
@@ -420,9 +420,26 @@ app.get('/:token/today/catalog/:type/:id.json', (req, res) => {
 });
 
 app.get('/:token/today/meta/:type/:id.json', (req, res) => {
-  const [prefix, anilistId, episode] = req.params.id.split(':');
-  if (prefix !== 'nyaa') return res.json({ meta: null });
-  const schedule = todayAnimeCache.find(s => s.media.id === parseInt(anilistId) && s.episode === parseInt(episode));
+  const reqId = req.params.id;
+  // Find schedule by IMDb ID
+  let schedule = null;
+  for (const s of todayAnimeCache) {
+    const rec = offlineDB.byAniList.get(s.media.id);
+    if (rec?.imdb === reqId) { schedule = s; break; }
+  }
+  // Fallback: try anilist: prefix
+  if (!schedule && reqId.startsWith('anilist:')) {
+    const alId = parseInt(reqId.split(':')[1]);
+    schedule = todayAnimeCache.find(s => s.media.id === alId);
+  }
+  // Fallback: try kitsu: prefix
+  if (!schedule && reqId.startsWith('kitsu:')) {
+    const kitsuId = parseInt(reqId.split(':')[1]);
+    for (const s of todayAnimeCache) {
+      const rec = offlineDB.byAniList.get(s.media.id);
+      if (rec?.kitsu === kitsuId) { schedule = s; break; }
+    }
+  }
   if (!schedule) return res.json({ meta: null });
 
   const m = schedule.media;
@@ -456,91 +473,6 @@ app.get('/:token/today/meta/:type/:id.json', (req, res) => {
     if (tvdbId) metaObj.tvdb_id = tvdbId;
   }
   res.json({ meta: metaObj });
-});
-
-app.get('/:token/today/stream/:type/:id.json', async (req, res) => {
-  const [prefix, anilistId, episode] = req.params.id.split(':');
-  if (prefix !== 'nyaa') return res.json({ streams: [] });
-  const user = config.getUser(req.params.token);
-  const schedule = todayAnimeCache.find(s => s.media.id === parseInt(anilistId) && s.episode === parseInt(episode));
-  if (!schedule) return res.json({ streams: [] });
-
-  const m = schedule.media;
-  const ep = parseInt(episode);
-
-  // Try AniDB ID lookup → AnimeTosho by ID
-  let torrents = [];
-  const anilistNum = parseInt(anilistId);
-  const record = offlineDB.byAniList.get(anilistNum);
-
-  if (record?.anidb) {
-    console.log(`  🆔 AniList ${anilistNum} → AniDB ${record.anidb} "${record.title}"`);
-    torrents = await searchByAniDBId(record.anidb, ep, false, true, true);
-  }
-
-  // Fallback: text search
-  if (!torrents.length) {
-    const names = [m.title.romaji, m.title.english].filter(Boolean);
-    console.log(`  🔄 Fallback text search: [${names.join(', ')}] ep${ep}`);
-    torrents = await searchByText(names, ep);
-  }
-
-  // Search RSS index for additional results
-  const rssNames = [m.title.romaji, m.title.english].filter(Boolean);
-  const rssResults = searchRssIndex(rssNames, ep);
-  if (rssResults.length) {
-    // Deduplicate: don't add RSS torrents that already exist in AnimeTosho results
-    const existingHashes = new Set(torrents.map(t => t.magnet?.match(/btih:([a-zA-Z0-9]+)/i)?.[1]?.toLowerCase()).filter(Boolean));
-    const newRss = rssResults.filter(r => {
-      const hash = r.magnet?.match(/btih:([a-zA-Z0-9]+)/i)?.[1]?.toLowerCase();
-      return hash && !existingHashes.has(hash);
-    });
-    if (newRss.length) {
-      torrents = [...torrents, ...newRss];
-      console.log(`  📡 +${newRss.length} from Nyaa RSS`);
-    }
-  }
-
-  if (!torrents.length) {
-    return res.json({ streams: [{ name: '❌ Torrent nenalezen', title: `Epizoda ${ep} nebyla nalezena`, externalUrl: 'https://animetosho.org', behaviorHints: { notWebReady: true } }] });
-  }
-
-  const hasRD = !!user?.rd_api_key;
-  const hasTB = !!user?.tb_api_key;
-  const tbTorrents = hasTB && user.tb_use_torrents;
-  const tbNZB = hasTB && user.tb_use_nzb;
-  const sorted = sortByGroupPriority(torrents, user);
-  const withMagnet = sorted.filter(t => t.magnet).slice(0, 15);
-
-  const streams = [];
-  for (const t of withMagnet) {
-    const quality = detectQuality(t.name);
-    const src = t.source === 'nyaa-rss' ? 'RSS' : 'AT';
-    const title = `${quality ? quality + ' · ' : ''}${t.name}\n👥 ${parseInt(t.seeders) || 0} seeders · 📦 ${t.filesize || 'N/A'}`;
-
-    if (hasRD) {
-      streams.push({ name: `🎌 RD`, title,
-        url: `${BASE_URL}/${req.params.token}/play/${storeMagnet(t.magnet)}/${ep}/video.mp4`,
-        behaviorHints: { bingeGroup: 'today-rd', notWebReady: true } });
-    }
-    if (tbTorrents) {
-      streams.push({ name: `📦 TB`, title,
-        url: `${BASE_URL}/${req.params.token}/play-tb/${storeMagnet(t.magnet)}/${ep}/video.mp4`,
-        behaviorHints: { bingeGroup: 'today-tb', notWebReady: true } });
-    }
-    if (tbNZB && t.nzb_url) {
-      const nzbTitle = `${quality ? quality + ' · ' : ''}${t.name}\n📡 Usenet · 📦 ${t.filesize || 'N/A'}`;
-      streams.push({ name: `📡 NZB`, title: nzbTitle,
-        url: `${BASE_URL}/${req.params.token}/play-nzb/${storeNZB(t.nzb_url, t.name)}/${ep}/video.mp4`,
-        behaviorHints: { bingeGroup: 'today-nzb', notWebReady: true } });
-    }
-    if (!hasRD && !tbTorrents) {
-      streams.push({ name: `🧲 ${src}`, title, url: t.magnet, behaviorHints: { notWebReady: true } });
-    }
-  }
-
-  console.log(`  📤 Streams: ${streams.length}`);
-  res.json({ streams });
 });
 
 // ===== STREMIO: NYAA SEARCH ADDON =====
@@ -582,7 +514,7 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
     console.log(`  📺 TVDB: ${tvdbId} S${tvdbSeason}E${tvdbEpisode}`);
     const resolved = resolveViaTVDB(tvdbId, tvdbSeason, tvdbEpisode);
     if (resolved?.anidbId) {
-      torrents = await searchByAniDBId(resolved.anidbId, resolved.episode, isMovie);
+      torrents = await searchByAniDBId(resolved.anidbId, resolved.episode, isMovie, false);
     }
   }
   // Handle AniList ID format: anilist:154587:2:8 or anilist:154587
@@ -600,13 +532,13 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
         if (tvdbId) {
           const resolved = resolveViaTVDB(tvdbId, season, episode);
           if (resolved?.anidbId) {
-            torrents = await searchByAniDBId(resolved.anidbId, resolved.episode, isMovie);
+            torrents = await searchByAniDBId(resolved.anidbId, resolved.episode, isMovie, false);
           }
         }
       }
       if (!torrents.length) {
         console.log(`  🆔 AniList ${anilistId} → AniDB ${rec.anidb} "${rec.title}"`);
-        torrents = await searchByAniDBId(rec.anidb, isMovie ? null : episode, isMovie);
+        torrents = await searchByAniDBId(rec.anidb, isMovie ? null : episode, isMovie, false);
       }
     }
   }
@@ -619,7 +551,7 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
     if (epResult.anidbId) {
       // anime-lists gave us a season-specific AniDB ID
       console.log(`  🎯 Season-specific AniDB: ${epResult.anidbId} ep${epResult.episode}`);
-      torrents = await searchByAniDBId(epResult.anidbId, epResult.episode, false);
+      torrents = await searchByAniDBId(epResult.anidbId, epResult.episode, false, false);
     }
   }
 
@@ -628,14 +560,14 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
     const resolved = await resolveToAniDB(type, fullId);
     if (resolved?.anidb) {
       const searchEp = isMovie ? null : episode;
-      torrents = await searchByAniDBId(resolved.anidb, searchEp, isMovie);
+      torrents = await searchByAniDBId(resolved.anidb, searchEp, isMovie, false);
 
       // If S01 episode search found nothing and season > 1, try absolute episode via Cinemeta offset
       if (!torrents.length && season > 1 && !isMovie) {
         const epResult = await resolveEpisode(type, fullId, season, episode);
         if (epResult.episode !== episode) {
           console.log(`  🔄 Trying absolute ep ${epResult.episode}`);
-          torrents = await searchByAniDBId(resolved.anidb, epResult.episode, false);
+          torrents = await searchByAniDBId(resolved.anidb, epResult.episode, false, false);
         }
       }
     }
@@ -673,6 +605,40 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
 
   } // end else (IMDb/Kitsu)
 
+  // Detect if this is a today's anime — skip cache and add RSS results
+  let isTodayAnime = false;
+  let todaySchedule = null;
+  if (!isMovie) {
+    // Check if IMDb ID matches any today anime
+    for (const s of todayAnimeCache) {
+      const rec = offlineDB.byAniList.get(s.media.id);
+      if (rec?.imdb && fullId.startsWith(rec.imdb)) { isTodayAnime = true; todaySchedule = s; break; }
+    }
+    // Check AniList ID
+    if (!isTodayAnime && fullId.startsWith('anilist:')) {
+      const alId = parseInt(fullId.split(':')[1]);
+      todaySchedule = todayAnimeCache.find(s => s.media.id === alId);
+      if (todaySchedule) isTodayAnime = true;
+    }
+  }
+
+  // For today's anime: add RSS results
+  if (isTodayAnime && todaySchedule) {
+    const rssNames = [todaySchedule.media.title.romaji, todaySchedule.media.title.english].filter(Boolean);
+    const rssResults = searchRssIndex(rssNames, episode);
+    if (rssResults.length) {
+      const existingHashes = new Set(torrents.map(t => t.magnet?.match(/btih:([a-zA-Z0-9]+)/i)?.[1]?.toLowerCase()).filter(Boolean));
+      const newRss = rssResults.filter(r => {
+        const hash = r.magnet?.match(/btih:([a-zA-Z0-9]+)/i)?.[1]?.toLowerCase();
+        return hash && !existingHashes.has(hash);
+      });
+      if (newRss.length) {
+        torrents = [...torrents, ...newRss];
+        console.log(`  📡 +${newRss.length} from Nyaa RSS`);
+      }
+    }
+  }
+
   if (!torrents.length) {
     return res.json({ streams: [{ name: '❌ Nenalezeno', title: `Nenalezeno na AnimeTosho`, url: 'https://animetosho.org', behaviorHints: { notWebReady: true } }] });
   }
@@ -681,7 +647,8 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
   const hasTB = !!user?.tb_api_key;
   const tbTorrents = hasTB && user.tb_use_torrents;
   const tbNZB = hasTB && user.tb_use_nzb;
-  const sorted = sortByGroupPriority(torrents);
+  // Use custom sort for today's anime, default sort otherwise
+  const sorted = isTodayAnime ? sortByGroupPriority(torrents, user) : sortByGroupPriority(torrents);
   const withMagnet = sorted.filter(t => t.magnet).slice(0, 20);
 
   const streams = [];
