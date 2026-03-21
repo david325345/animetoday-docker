@@ -424,6 +424,63 @@ async function getCinemetaMeta(imdbId) {
   } catch { return null; }
 }
 
+// TMDB → IMDb resolver: search by name, get external_ids
+const tmdbImdbCache = new Map();
+
+async function resolveIMDbViaTMDB(animeName, anilistId) {
+  const cacheKey = `tmdb:${anilistId}`;
+  if (tmdbImdbCache.has(cacheKey)) return tmdbImdbCache.get(cacheKey);
+
+  const tmdbKey = config.getTMDBKey();
+  if (!tmdbKey) return null;
+
+  try {
+    // Search TMDB for this anime
+    const searchResp = await axios.get('https://api.themoviedb.org/3/search/tv', {
+      params: { api_key: tmdbKey, query: animeName, language: 'en-US' },
+      timeout: 5000
+    });
+    const results = searchResp.data?.results;
+    if (!results?.length) {
+      console.log(`  🔍 TMDB: no results for "${animeName}"`);
+      tmdbImdbCache.set(cacheKey, null);
+      return null;
+    }
+
+    // Try top results (prefer animation genre = 16)
+    const sorted = [...results].sort((a, b) => {
+      const aAnim = (a.genre_ids || []).includes(16) ? 1 : 0;
+      const bAnim = (b.genre_ids || []).includes(16) ? 1 : 0;
+      return bAnim - aAnim || (b.popularity || 0) - (a.popularity || 0);
+    });
+
+    for (const result of sorted.slice(0, 3)) {
+      try {
+        const extResp = await axios.get(`https://api.themoviedb.org/3/tv/${result.id}/external_ids`, {
+          params: { api_key: tmdbKey },
+          timeout: 5000
+        });
+        const imdbId = extResp.data?.imdb_id;
+        if (imdbId && imdbId.startsWith('tt')) {
+          console.log(`  🔍 TMDB: "${animeName}" → TMDB ${result.id} "${result.name}" → ${imdbId}`);
+          tmdbImdbCache.set(cacheKey, imdbId);
+          // Enrich offline-db so next time we have it
+          const offRec = offlineDB.byAniList.get(anilistId);
+          if (offRec && !offRec.imdb) offRec.imdb = imdbId;
+          return imdbId;
+        }
+      } catch {}
+    }
+
+    console.log(`  🔍 TMDB: "${animeName}" found on TMDB but no IMDb ID`);
+    tmdbImdbCache.set(cacheKey, null);
+    return null;
+  } catch (err) {
+    console.log(`  🔍 TMDB search error: ${err.message}`);
+    return null;
+  }
+}
+
 app.get('/:token/today/meta/:type/:id.json', async (req, res) => {
   const atId = req.params.id; // at:187941
   const type = req.params.type;
@@ -437,15 +494,22 @@ app.get('/:token/today/meta/:type/:id.json', async (req, res) => {
   const schedule = todayAnimeCache.find(s => s.media.id === anilistId);
   const m = schedule?.media;
   const offRec = offlineDB.byAniList.get(anilistId);
-  const imdbId = offRec?.imdb;
+  let imdbId = offRec?.imdb;
 
   console.log(`  🔍 AniList: ${anilistId}, IMDb: ${imdbId || 'none'}, schedule: ${schedule ? 'yes' : 'no'}`);
+
+  // If no IMDb, try TMDB search
+  if (!imdbId && m?.title) {
+    const searchName = m.title.romaji || m.title.english || m.title.native;
+    if (searchName) {
+      imdbId = await resolveIMDbViaTMDB(searchName, anilistId);
+    }
+  }
 
   // === Strategy 1: IMDb exists → full Cinemeta proxy, only swap id ===
   if (imdbId) {
     const cinemeta = await getCinemetaMeta(imdbId);
     if (cinemeta) {
-      // Pass through everything from Cinemeta, only replace id with our at: prefix
       const meta = { ...cinemeta, id: atId };
       console.log(`  📤 Meta (Cinemeta proxy): ${meta.name} — ${(meta.videos || []).length} videos`);
       return res.json({ meta });
