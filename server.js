@@ -526,9 +526,18 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
     console.log(`  🔍 Looking for today anime: imdb=${imdbBase} kitsu=${kitsuId} anilist=${anilistIdNum} (cache size: ${todayAnimeCache.length})`);
     for (const s of todayAnimeCache) {
       const rec = offlineDB.byAniList.get(s.media.id);
-      if (imdbBase && rec?.imdb === imdbBase) { episode = s.episode; season = 1; console.log(`  ✅ Matched by IMDb: ep${episode}`); break; }
+      if (imdbBase) {
+        if (rec?.imdb === imdbBase) { episode = s.episode; season = 1; console.log(`  ✅ Matched by IMDb: ep${episode}`); break; }
+      }
       if (kitsuId && rec?.kitsu === kitsuId) { episode = s.episode; season = 1; console.log(`  ✅ Matched by Kitsu: ep${episode}`); break; }
       if (anilistIdNum && s.media.id === anilistIdNum) { episode = s.episode; season = 1; console.log(`  ✅ Matched by AniList: ep${episode}`); break; }
+    }
+    // If IMDb not matched, try matching via catalog IDs
+    if (imdbBase && episode <= 1) {
+      for (const s of todayAnimeCache) {
+        const rec = offlineDB.byAniList.get(s.media.id);
+        console.log(`    cache: anilist=${s.media.id} imdb=${rec?.imdb} kitsu=${rec?.kitsu} title=${s.media.title?.romaji}`);
+      }
     }
     console.log(`  📅 No episode in ID, today anime → episode: ${episode}`);
   }
