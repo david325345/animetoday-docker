@@ -441,32 +441,13 @@ app.get('/:token/today/meta/:type/:id.json', async (req, res) => {
 
   console.log(`  🔍 AniList: ${anilistId}, IMDb: ${imdbId || 'none'}, schedule: ${schedule ? 'yes' : 'no'}`);
 
-  // === Strategy 1: IMDb exists → return Cinemeta meta with tt: video IDs ===
-  // Stremio will then send tt:season:episode to Nyaa Search stream endpoint
+  // === Strategy 1: IMDb exists → full Cinemeta proxy, only swap id ===
   if (imdbId) {
     const cinemeta = await getCinemetaMeta(imdbId);
     if (cinemeta) {
-      // Use Cinemeta meta as base but keep our at: ID and our poster
-      let poster = schedule?.generatedPoster ? `${BASE_URL}${schedule.generatedPoster}` : (schedule?.tmdbImages?.poster || cinemeta.poster || m?.coverImage?.extraLarge);
-      if (!poster || poster === 'null') poster = 'https://via.placeholder.com/230x345/1a1a2e/ffffff?text=No+Image';
-
-      const meta = {
-        id: atId,
-        type: 'series',
-        name: cinemeta.name || m?.title?.romaji || offRec?.title || 'Unknown',
-        poster,
-        background: cinemeta.background || m?.bannerImage || schedule?.tmdbImages?.backdrop || poster,
-        description: cinemeta.description || (m?.description || '').replace(/<[^>]*>/g, ''),
-        genres: cinemeta.genres || m?.genres || [],
-        releaseInfo: cinemeta.releaseInfo || '',
-        imdbRating: cinemeta.imdbRating || (m?.averageScore ? (m.averageScore / 10).toFixed(1) : undefined),
-        // Keep original tt: video IDs — Stremio sends these to Nyaa Search
-        videos: cinemeta.videos || [],
-        logo: cinemeta.logo,
-        runtime: cinemeta.runtime,
-      };
-
-      console.log(`  📤 Meta (Cinemeta): ${meta.name} — ${(meta.videos || []).length} videos with tt: IDs`);
+      // Pass through everything from Cinemeta, only replace id with our at: prefix
+      const meta = { ...cinemeta, id: atId };
+      console.log(`  📤 Meta (Cinemeta proxy): ${meta.name} — ${(meta.videos || []).length} videos`);
       return res.json({ meta });
     }
     console.log(`  ⚠️ Cinemeta fetch failed for ${imdbId}, using fallback`);
