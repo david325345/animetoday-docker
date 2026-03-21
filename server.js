@@ -35,6 +35,24 @@ async function updateCache() {
   try {
     const schedules = await getTodayAnime();
     await generateAllPosters(schedules, offlineDB);
+
+    // Pre-resolve IMDb IDs for all anime via TMDB (for catalog + Fusion compatibility)
+    let resolved = 0;
+    for (const s of schedules) {
+      const offRec = offlineDB.byAniList.get(s.media.id);
+      if (offRec?.imdb) {
+        s.resolvedImdbId = offRec.imdb;
+        resolved++;
+      } else if (s.media.title) {
+        const names = [s.media.title.romaji, s.media.title.english, s.media.title.native].filter(Boolean);
+        if (names.length) {
+          const imdbId = await resolveIMDbViaTMDB(names, s.media.id);
+          if (imdbId) { s.resolvedImdbId = imdbId; resolved++; }
+        }
+      }
+    }
+    console.log(`🔗 IMDb resolved: ${resolved}/${schedules.length}`);
+
     todayAnimeCache = schedules;
     console.log(`✅ Cache: ${todayAnimeCache.length} anime (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
   } catch (err) { console.error('❌ Cache failed:', err.message); }
@@ -394,8 +412,8 @@ app.get('/:token/today/catalog/:type/:id.json', (req, res) => {
       const bg = m.bannerImage || s.tmdbImages?.backdrop || poster;
       const time = formatTimeCET(s.airingAt);
       const offRec = offlineDB.byAniList.get(m.id);
-      // Always use at: prefix — our meta endpoint provides episodes
-      const id = `at:${m.id}`;
+      // Use IMDb ID for maximum compatibility (Fusion, Cinemeta), at: only as fallback
+      const id = s.resolvedImdbId || `at:${m.id}`;
       return {
         id, type: 'series',
         name: m.title.romaji || m.title.english || m.title.native,
