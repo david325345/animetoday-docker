@@ -520,14 +520,15 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
 
   // If no explicit episode, check todayAnimeCache for correct episode
   if (!hasExplicitEpisode && !isMovie) {
+    const imdbBase = fullId.startsWith('tt') ? idParts[0] : null;
+    const kitsuId = fullId.startsWith('kitsu:') ? parseInt(idParts[1]) : null;
+    const anilistIdNum = fullId.startsWith('anilist:') ? parseInt(idParts[1]) : null;
+    console.log(`  🔍 Looking for today anime: imdb=${imdbBase} kitsu=${kitsuId} anilist=${anilistIdNum} (cache size: ${todayAnimeCache.length})`);
     for (const s of todayAnimeCache) {
       const rec = offlineDB.byAniList.get(s.media.id);
-      const imdbBase = fullId.startsWith('tt') ? idParts[0] : null;
-      const kitsuId = fullId.startsWith('kitsu:') ? parseInt(idParts[1]) : null;
-      const anilistIdNum = fullId.startsWith('anilist:') ? parseInt(idParts[1]) : null;
-      if (imdbBase && rec?.imdb === imdbBase) { episode = s.episode; season = 1; break; }
-      if (kitsuId && rec?.kitsu === kitsuId) { episode = s.episode; season = 1; break; }
-      if (anilistIdNum && s.media.id === anilistIdNum) { episode = s.episode; season = 1; break; }
+      if (imdbBase && rec?.imdb === imdbBase) { episode = s.episode; season = 1; console.log(`  ✅ Matched by IMDb: ep${episode}`); break; }
+      if (kitsuId && rec?.kitsu === kitsuId) { episode = s.episode; season = 1; console.log(`  ✅ Matched by Kitsu: ep${episode}`); break; }
+      if (anilistIdNum && s.media.id === anilistIdNum) { episode = s.episode; season = 1; console.log(`  ✅ Matched by AniList: ep${episode}`); break; }
     }
     console.log(`  📅 No episode in ID, today anime → episode: ${episode}`);
   }
