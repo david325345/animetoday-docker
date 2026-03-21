@@ -179,6 +179,32 @@
             </div>
         </div>
 
+        <!-- NekoBT -->
+        <div class="section">
+            <h2>🐱 NekoBT</h2>
+            <p class="desc">NekoBT tracker — kvalitnější fansub torrenty. OTL (originální překlad) level 3-4 mají prioritu.</p>
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+                <span class="badge off" id="neko-badge">Nepřipojen</span>
+            </div>
+            <div id="neko-user" class="rd-user">
+                <div style="flex:1"><div id="neko-name" style="font-weight:600;font-size:14px">—</div><div id="neko-meta" style="font-size:11px;color:var(--dim)">NekoBT účet</div></div>
+                <button class="btn btn-sm btn-d" onclick="disconnectNeko()">Odpojit</button>
+            </div>
+            <div id="neko-toggles" style="display:none;margin-top:14px">
+                <div class="switch-row">
+                    <button class="toggle on" id="neko-enabled-toggle" onclick="toggleNeko()"></button>
+                    <label>Hledat na NekoBT</label>
+                </div>
+            </div>
+            <div id="neko-login">
+                <p style="font-size:12px;color:var(--dim);margin-bottom:6px">API klíč z <a href="https://nekobt.to/settings" target="_blank" style="color:var(--green)">nekobt.to/settings</a>:</p>
+                <div class="input-row">
+                    <input type="password" id="neko-key" class="input" placeholder="NekoBT API klíč">
+                    <button class="btn btn-s btn-sm" onclick="saveNekoKey()">Uložit</button>
+                </div>
+            </div>
+        </div>
+
         <!-- TMDB -->
         <div class="section">
             <h2>🖼️ TMDB</h2>
@@ -238,7 +264,7 @@
     </div>
 
     <footer class="footer">
-        <p>Nyaa + Anime Today v5.0 · Data: <a href="https://anilist.co" target="_blank">AniList</a>, <a href="https://nyaa.si" target="_blank">Nyaa.si</a>, <a href="https://www.themoviedb.org" target="_blank">TMDB</a></p>
+        <p>Nyaa + Anime Today v5.0 · Data: <a href="https://anilist.co" target="_blank">AniList</a>, <a href="https://nyaa.si" target="_blank">Nyaa.si</a>, <a href="https://nekobt.to" target="_blank">NekoBT</a>, <a href="https://www.themoviedb.org" target="_blank">TMDB</a></p>
     </footer>
 </div>
 <div id="toast" class="toast"></div>
@@ -262,7 +288,7 @@ function showApp() {
     document.getElementById('install-today').href=`stremio://${todayUrl.replace(/^https?:\/\//,'')}`;
     document.getElementById('install-nyaa').href=`stremio://${nyaaUrl.replace(/^https?:\/\//,'')}`;
     document.getElementById('show-token').textContent=TOKEN;
-    checkRD(); checkTB(); checkTMDB(); loadAnime(); loadSortPrefs();
+    checkRD(); checkTB(); checkNeko(); checkTMDB(); loadAnime(); loadSortPrefs();
 }
 
 async function createAccount() {
@@ -400,6 +426,46 @@ async function toggleTB(field) {
     const newVal = el.className.includes('off');
     el.className = newVal ? 'toggle on' : 'toggle off';
     await fetch('/api/torbox/toggle', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({token:TOKEN, field, value:newVal}) });
+}
+
+// NekoBT
+async function checkNeko() {
+    try {
+        const r = await fetch(`/api/nekobt/status/${TOKEN}`); const d = await r.json();
+        const b = document.getElementById('neko-badge'); const u = document.getElementById('neko-user');
+        const l = document.getElementById('neko-login'); const t = document.getElementById('neko-toggles');
+        if (d.connected) {
+            b.className='badge on'; b.textContent='Připojeno';
+            u.classList.add('vis'); l.style.display='none'; t.style.display='block';
+            document.getElementById('neko-name').textContent = d.username || 'NekoBT User';
+            document.getElementById('neko-meta').textContent = 'NekoBT účet';
+            const etog = document.getElementById('neko-enabled-toggle');
+            etog.className = d.enabled !== false ? 'toggle on' : 'toggle off';
+        } else {
+            b.className='badge off'; b.textContent='Nepřipojen';
+            u.classList.remove('vis'); l.style.display='block'; t.style.display='none';
+        }
+    } catch {}
+}
+
+async function saveNekoKey() {
+    const key = document.getElementById('neko-key').value.trim();
+    if (!key) { toast('❌ Zadejte klíč'); return; }
+    const r = await fetch('/api/nekobt/save-key', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({token:TOKEN, key}) });
+    const d = await r.json();
+    if (d.success) { document.getElementById('neko-key').value=''; toast('✅ NekoBT uloženo!'); checkNeko(); }
+    else toast('❌ ' + (d.error || 'Neplatný klíč'));
+}
+
+async function disconnectNeko() {
+    await fetch(`/api/nekobt/disconnect/${TOKEN}`, {method:'POST'}); toast('🔌 NekoBT odpojeno'); checkNeko();
+}
+
+async function toggleNeko() {
+    const el = document.getElementById('neko-enabled-toggle');
+    const newVal = el.className.includes('off');
+    el.className = newVal ? 'toggle on' : 'toggle off';
+    await fetch('/api/nekobt/toggle', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({token:TOKEN, enabled:newVal}) });
 }
 
 // Sort Preferences
