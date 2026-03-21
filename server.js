@@ -363,8 +363,8 @@ app.get('/:token/play-nzb/:hash/:episode/video.mp4', async (req, res) => {
 // ===== STREMIO: ANIME TODAY ADDON =====
 app.get('/:token/today/manifest.json', (req, res) => {
   res.json({
-    id: 'cz.nyaa.anime.today.v5',
-    version: '5.2.0',
+    id: 'cz.nyaa.anime.today.v6',
+    version: '6.0.0',
     name: 'Anime Today',
     description: 'Dnešní anime z AniList — katalog s postery. Streamy přes Nyaa Search addon.',
     logo: `${BASE_URL}/logo.png`,
