@@ -371,7 +371,7 @@ app.get('/:token/today/manifest.json', (req, res) => {
     resources: ['catalog', 'meta'],
     types: ['series'],
     catalogs: [{ type: 'series', id: 'anime-today', name: 'Dnešní Anime', extra: [{ name: 'skip', isRequired: false }] }],
-    idPrefixes: ['tt'],
+    idPrefixes: ['tt', 'kitsu:', 'anilist:'],
     behaviorHints: { configurable: false, configurationRequired: false }
   });
 });
@@ -502,25 +502,6 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
 
   let { season, episode } = parseEpisodeAndSeason(fullId);
   let torrents = [];
-
-  // If no episode in ID, check if this is a today's anime and use its episode
-  const idParts = fullId.split(':');
-  const hasExplicitEpisode = fullId.startsWith('kitsu:') ? idParts.length >= 3 :
-    fullId.startsWith('tt') ? idParts.length >= 3 :
-    fullId.startsWith('anilist:') ? idParts.length >= 4 :
-    fullId.startsWith('tvdb:') ? idParts.length >= 4 : idParts.length >= 3;
-
-  if (!hasExplicitEpisode && !isMovie) {
-    const idValue = fullId.startsWith('kitsu:') ? parseInt(idParts[1]) : null;
-    const imdbValue = fullId.startsWith('tt') ? idParts[0] : null;
-    for (const s of todayAnimeCache) {
-      const rec = offlineDB.byAniList.get(s.media.id);
-      if (imdbValue && rec?.imdb === imdbValue) { episode = s.episode; season = 1; break; }
-      if (idValue && rec?.kitsu === idValue) { episode = s.episode; season = 1; break; }
-      if (fullId.startsWith('anilist:') && s.media.id === parseInt(idParts[1])) { episode = s.episode; season = 1; break; }
-    }
-    if (episode > 1 || !hasExplicitEpisode) console.log(`  📅 Today anime detected, episode: ${episode}`);
-  }
 
   // Handle TVDB ID format: tvdb:424536:2:8
   if (fullId.startsWith('tvdb:')) {
