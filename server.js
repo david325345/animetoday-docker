@@ -454,6 +454,27 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
   let { season, episode } = parseEpisodeAndSeason(fullId);
   let torrents = [];
 
+  // Detect if episode was explicitly provided in the ID
+  const idParts = fullId.split(':');
+  const hasExplicitEpisode = fullId.startsWith('kitsu:') ? idParts.length >= 4 :
+    fullId.startsWith('tt') ? idParts.length >= 3 :
+    fullId.startsWith('anilist:') ? idParts.length >= 4 :
+    fullId.startsWith('tvdb:') ? idParts.length >= 4 : idParts.length >= 3;
+
+  // If no explicit episode, check todayAnimeCache for correct episode
+  if (!hasExplicitEpisode && !isMovie) {
+    for (const s of todayAnimeCache) {
+      const rec = offlineDB.byAniList.get(s.media.id);
+      const imdbBase = fullId.startsWith('tt') ? idParts[0] : null;
+      const kitsuId = fullId.startsWith('kitsu:') ? parseInt(idParts[1]) : null;
+      const anilistIdNum = fullId.startsWith('anilist:') ? parseInt(idParts[1]) : null;
+      if (imdbBase && rec?.imdb === imdbBase) { episode = s.episode; season = 1; break; }
+      if (kitsuId && rec?.kitsu === kitsuId) { episode = s.episode; season = 1; break; }
+      if (anilistIdNum && s.media.id === anilistIdNum) { episode = s.episode; season = 1; break; }
+    }
+    console.log(`  📅 No episode in ID, today anime → episode: ${episode}`);
+  }
+
   // Handle TVDB ID format: tvdb:424536:2:8
   if (fullId.startsWith('tvdb:')) {
     const parts = fullId.split(':');
