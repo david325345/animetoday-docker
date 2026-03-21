@@ -420,59 +420,8 @@ app.get('/:token/today/catalog/:type/:id.json', (req, res) => {
 });
 
 app.get('/:token/today/meta/:type/:id.json', (req, res) => {
-  const reqId = req.params.id;
-  // Find schedule by IMDb ID
-  let schedule = null;
-  for (const s of todayAnimeCache) {
-    const rec = offlineDB.byAniList.get(s.media.id);
-    if (rec?.imdb === reqId) { schedule = s; break; }
-  }
-  // Fallback: try anilist: prefix
-  if (!schedule && reqId.startsWith('anilist:')) {
-    const alId = parseInt(reqId.split(':')[1]);
-    schedule = todayAnimeCache.find(s => s.media.id === alId);
-  }
-  // Fallback: try kitsu: prefix
-  if (!schedule && reqId.startsWith('kitsu:')) {
-    const kitsuId = parseInt(reqId.split(':')[1]);
-    for (const s of todayAnimeCache) {
-      const rec = offlineDB.byAniList.get(s.media.id);
-      if (rec?.kitsu === kitsuId) { schedule = s; break; }
-    }
-  }
-  if (!schedule) return res.json({ meta: null });
-
-  const m = schedule.media;
-  const time = formatTimeCET(schedule.airingAt);
-  let poster = schedule.generatedPoster ? `${BASE_URL}${schedule.generatedPoster}` : (schedule.tmdbImages?.poster || m.coverImage?.extraLarge || m.coverImage?.large);
-  if (!poster || poster === 'null') poster = 'https://via.placeholder.com/230x345/1a1a2e/ffffff?text=No+Image';
-
-  const anilistId2 = m.id;
-  const offRec = offlineDB.byAniList.get(anilistId2);
-  const metaObj = {
-    id: req.params.id, type: 'series',
-    name: m.title.romaji || m.title.english || m.title.native,
-    poster, background: m.bannerImage || schedule.tmdbImages?.backdrop || poster,
-    description: `Vysílání: ${time} (CET)\nEpizoda ${schedule.episode}\n\n${(m.description || '').replace(/<[^>]*>/g, '')}`,
-    genres: m.genres || [],
-    releaseInfo: `${time} · ${m.season || ''} ${m.seasonYear || ''} · Ep ${schedule.episode}`.trim(),
-    imdbRating: m.averageScore ? (m.averageScore / 10).toFixed(1).toString() : undefined,
-    videos: [{
-      id: req.params.id, title: `Epizoda ${schedule.episode}`,
-      episode: schedule.episode, season: 1,
-      released: new Date(schedule.airingAt * 1000).toISOString(), thumbnail: poster
-    }]
-  };
-  // Add external IDs
-  if (offRec?.imdb) metaObj.imdb_id = offRec.imdb;
-  // if (offRec?.kitsu) metaObj.kitsu_id = offRec.kitsu; // disabled - Omni remaps to kitsu
-  if (m.idMal) metaObj.mal_id = m.idMal;
-  metaObj.anilist_id = anilistId2;
-  if (offRec?.anidb) {
-    const tvdbId = getTVDBFromAniDB(offRec.anidb);
-    if (tvdbId) metaObj.tvdb_id = tvdbId;
-  }
-  res.json({ meta: metaObj });
+  // Disabled — let Omni/Stremio/Fusion use their own metadata provider (Cinemeta/TVDB)
+  res.json({ meta: null });
 });
 
 // ===== STREMIO: NYAA SEARCH ADDON =====
