@@ -1165,11 +1165,17 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
   for (const t of withMagnet) {
     const name = t.name || '';
     const quality = detectQuality(name);
-    const source = t.nekobt ? '🐱' : '';
-    const groupInfo = t.nekobt && t.groups?.length ? ` [${t.groups[0]}]` : '';
-    const levelInfo = t.nekobt && t.level >= 3 ? ' ⭐OTL' : (t.nekobt && t.mtl ? ' ⚠️MTL' : '');
-    const title = `${quality ? quality + ' · ' : ''}${source}${name}${groupInfo}${levelInfo}\n👥 ${parseInt(t.seeders) || 0} seeders | 📦 ${t.filesize || '?'}`;
     const epNum = isMovie ? 0 : episode;
+
+    // Unified format: "4K · [Group] · ⭐OTL\nTorrent Name\n👥 seeders | 📦 size"
+    const tags = [quality];
+    if (t.nekobt && t.groups?.length) tags.push(`[${t.groups[0]}]`);
+    if (t.nekobt && t.level >= 3) tags.push('⭐OTL');
+    else if (t.nekobt && t.mtl) tags.push('⚠️MTL');
+    const line1 = tags.filter(Boolean).join(' · ');
+    const title = `${line1 ? line1 + '\n' : ''}${name}\n👥 ${parseInt(t.seeders) || 0} seeders | 📦 ${t.filesize || '?'}`;
+
+    const nzbTitle = `${line1 ? line1 + '\n' : ''}${name}\n📡 Usenet | 📦 ${t.filesize || '?'}`;
 
     if (hasRD) {
       streams.push({ name: t.nekobt ? `🐱 RD` : `🎌 RD`, title,
@@ -1182,7 +1188,6 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
         behaviorHints: { bingeGroup: t.nekobt ? 'neko-tb' : 'nyaa-tb', notWebReady: true } });
     }
     if (tbNZB && t.nzb_url) {
-      const nzbTitle = `${quality ? quality + ' · ' : ''}${name}\n📡 Usenet | 📦 ${t.filesize || '?'}`;
       streams.push({ name: `📡 NZB`, title: nzbTitle,
         url: `${BASE_URL}/${token}/play-nzb/${storeNZB(t.nzb_url, t.name)}/${epNum}/video.mp4`,
         behaviorHints: { bingeGroup: 'nyaa-nzb', notWebReady: true } });
