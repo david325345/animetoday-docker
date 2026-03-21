@@ -12,6 +12,7 @@ const { getRDStream, rdInProgress, getCacheKey, serveLoadingVideo, DOWNLOADING_V
 const { generateAllPosters, formatTimeCET } = require('./lib/posters');
 const { startRssFetcher, clearRssIndex, searchRssIndex, getRssStats } = require('./lib/rss');
 const { getTBStatus, getTBStream, getTBNZBStream } = require('./lib/torbox');
+const { searchNekobt, validateApiKey: validateNekobtKey, sortNekobtResults } = require('./lib/nekobt');
 
 process.on('uncaughtException', (err) => { console.error('⚠️ Uncaught:', err.message); console.error(err.stack); });
 process.on('unhandledRejection', (err) => { console.error('⚠️ Unhandled:', err?.message || err); });
@@ -106,6 +107,8 @@ app.get('/api/user/:token', (req, res) => {
   res.json({
     hidden_anime: user.hidden_anime,
     has_rd: !!user.rd_api_key,
+    has_nekobt: !!user.nekobt_api_key,
+    nekobt_enabled: user.nekobt_enabled !== false,
     created: user.created,
   });
 });
@@ -315,6 +318,56 @@ app.post('/api/torbox/toggle', express.json(), (req, res) => {
   if (!user) return res.status(404).json({ error: 'User not found' });
   if (field === 'tb_use_torrents') user.tb_use_torrents = !!value;
   if (field === 'tb_use_nzb') user.tb_use_nzb = !!value;
+  config.saveUser(token, user);
+  res.json({ success: true });
+});
+
+// ===== NekoBT API =====
+app.post('/api/nekobt/save-key', express.json(), async (req, res) => {
+  const { token, key } = req.body;
+  const user = config.getUser(token);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  if (!key) return res.json({ success: false, error: 'Missing API key' });
+
+  const result = await validateNekobtKey(key);
+  if (!result) return res.json({ success: false, error: 'Invalid NekoBT API key' });
+
+  user.nekobt_api_key = key;
+  user.nekobt_enabled = true;
+  config.saveUser(token, user);
+  console.log(`✅ NekoBT connected for ${token} (user: ${result.username})`);
+  res.json({ success: true, username: result.username });
+});
+
+app.get('/api/nekobt/status/:token', async (req, res) => {
+  const user = config.getUser(req.params.token);
+  if (!user?.nekobt_api_key) return res.json({ connected: false });
+
+  const result = await validateNekobtKey(user.nekobt_api_key);
+  if (!result) return res.json({ connected: false });
+
+  res.json({
+    connected: true,
+    enabled: user.nekobt_enabled !== false,
+    username: result.username,
+  });
+});
+
+app.post('/api/nekobt/disconnect/:token', (req, res) => {
+  const user = config.getUser(req.params.token);
+  if (user) {
+    delete user.nekobt_api_key;
+    delete user.nekobt_enabled;
+    config.saveUser(req.params.token, user);
+  }
+  res.json({ success: true });
+});
+
+app.post('/api/nekobt/toggle', express.json(), (req, res) => {
+  const { token, enabled } = req.body;
+  const user = config.getUser(token);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  user.nekobt_enabled = !!enabled;
   config.saveUser(token, user);
   res.json({ success: true });
 });
@@ -1023,6 +1076,78 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
     }
   }
 
+  // ===== NekoBT integration: search if user has NekoBT key =====
+  const hasNekobt = user?.nekobt_api_key && user?.nekobt_enabled !== false;
+  let nekobtTorrents = [];
+  if (hasNekobt) {
+    // Collect anime names for NekoBT search
+    const nekobtNames = [];
+
+    // From today's anime schedule
+    if (todaySchedule?.media?.title) {
+      const { romaji, english } = todaySchedule.media.title;
+      if (romaji) nekobtNames.push(romaji);
+      if (english && english !== romaji) nekobtNames.push(english);
+    }
+
+    // From AniList ID (at: prefix)
+    if (fullId.startsWith('at:')) {
+      const anilistId = parseInt(fullId.split(':')[1]);
+      const rec = offlineDB.byAniList.get(anilistId);
+      if (rec?.title && !nekobtNames.includes(rec.title)) nekobtNames.push(rec.title);
+      const schedule = todayAnimeCache.find(s => s.media.id === anilistId);
+      if (schedule?.media?.title) {
+        const { romaji, english } = schedule.media.title;
+        if (romaji && !nekobtNames.includes(romaji)) nekobtNames.push(romaji);
+        if (english && !nekobtNames.includes(english)) nekobtNames.push(english);
+      }
+    }
+
+    // From IMDb/Kitsu — try to get names from offline DB or Cinemeta
+    if (!nekobtNames.length) {
+      try {
+        const resolved = await resolveToAniDB(type, fullId);
+        if (resolved?.title) nekobtNames.push(resolved.title);
+      } catch {}
+    }
+    if (!nekobtNames.length && fullId.startsWith('tt')) {
+      try {
+        const cine = await axios.get(`https://v3-cinemeta.strem.io/meta/${type}/${fullId.split(':')[0]}.json`, { timeout: 5000 });
+        const meta = cine.data?.meta;
+        if (meta?.name) nekobtNames.push(meta.name);
+      } catch {}
+    }
+
+    if (nekobtNames.length) {
+      console.log(`  🐱 NekoBT search: [${nekobtNames.join(', ')}] S${season}E${episode}`);
+      nekobtTorrents = await searchNekobt(nekobtNames, user.nekobt_api_key, season, episode, isMovie);
+
+      // Deduplicate by infohash
+      if (nekobtTorrents.length) {
+        const existingHashes = new Set(
+          torrents.map(t => {
+            const h = t.infohash || t.magnet?.match(/btih:([a-zA-Z0-9]+)/i)?.[1];
+            return h?.toLowerCase();
+          }).filter(Boolean)
+        );
+
+        const newNekobt = nekobtTorrents.filter(t => {
+          const h = t.infohash?.toLowerCase();
+          return h && !existingHashes.has(h);
+        });
+
+        if (newNekobt.length) {
+          // Sort NekoBT results (prefer OTL level 3-4)
+          const sorted = sortNekobtResults(newNekobt);
+          torrents = [...torrents, ...sorted];
+          console.log(`  🐱 +${newNekobt.length} unique from NekoBT (${nekobtTorrents.length - newNekobt.length} duplicates)`);
+        } else {
+          console.log(`  🐱 NekoBT: all ${nekobtTorrents.length} results already in AnimeTosho`);
+        }
+      }
+    }
+  }
+
   if (!torrents.length) {
     return res.json({ streams: [{ name: '❌ Nenalezeno', title: `Nenalezeno na AnimeTosho`, url: 'https://animetosho.org', behaviorHints: { notWebReady: true } }] });
   }
@@ -1033,24 +1158,28 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
   const tbNZB = hasTB && user.tb_use_nzb;
   // Use custom sort for today's anime, default sort otherwise
   const sorted = isTodayAnime ? sortByGroupPriority(torrents, user) : sortByGroupPriority(torrents);
-  const withMagnet = sorted.filter(t => t.magnet).slice(0, 20);
+  const maxResults = hasNekobt ? 30 : 20;
+  const withMagnet = sorted.filter(t => t.magnet).slice(0, maxResults);
 
   const streams = [];
   for (const t of withMagnet) {
     const name = t.name || '';
     const quality = detectQuality(name);
-    const title = `${quality ? quality + ' · ' : ''}${name}\n👥 ${parseInt(t.seeders) || 0} seeders | 📦 ${t.filesize || '?'}`;
+    const source = t.nekobt ? '🐱' : '';
+    const groupInfo = t.nekobt && t.groups?.length ? ` [${t.groups[0]}]` : '';
+    const levelInfo = t.nekobt && t.level >= 3 ? ' ⭐OTL' : (t.nekobt && t.mtl ? ' ⚠️MTL' : '');
+    const title = `${quality ? quality + ' · ' : ''}${source}${name}${groupInfo}${levelInfo}\n👥 ${parseInt(t.seeders) || 0} seeders | 📦 ${t.filesize || '?'}`;
     const epNum = isMovie ? 0 : episode;
 
     if (hasRD) {
-      streams.push({ name: `🎌 RD`, title,
+      streams.push({ name: t.nekobt ? `🐱 RD` : `🎌 RD`, title,
         url: `${BASE_URL}/${token}/play/${storeMagnet(t.magnet)}/${epNum}/video.mp4`,
-        behaviorHints: { bingeGroup: 'nyaa-rd', notWebReady: true } });
+        behaviorHints: { bingeGroup: t.nekobt ? 'neko-rd' : 'nyaa-rd', notWebReady: true } });
     }
     if (tbTorrents) {
-      streams.push({ name: `📦 TB`, title,
+      streams.push({ name: t.nekobt ? `🐱 TB` : `📦 TB`, title,
         url: `${BASE_URL}/${token}/play-tb/${storeMagnet(t.magnet)}/${epNum}/video.mp4`,
-        behaviorHints: { bingeGroup: 'nyaa-tb', notWebReady: true } });
+        behaviorHints: { bingeGroup: t.nekobt ? 'neko-tb' : 'nyaa-tb', notWebReady: true } });
     }
     if (tbNZB && t.nzb_url) {
       const nzbTitle = `${quality ? quality + ' · ' : ''}${name}\n📡 Usenet | 📦 ${t.filesize || '?'}`;
@@ -1059,21 +1188,27 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
         behaviorHints: { bingeGroup: 'nyaa-nzb', notWebReady: true } });
     }
     if (!hasRD && !tbTorrents) {
-      streams.push({ name: `🧲 AT`, title, url: t.magnet, behaviorHints: { notWebReady: true } });
+      streams.push({ name: t.nekobt ? `🐱 NekoBT` : `🧲 AT`, title, url: t.magnet, behaviorHints: { notWebReady: true } });
     }
   }
 
-  console.log(`  📤 Streams: ${streams.length}`);
+  console.log(`  📤 Streams: ${streams.length}${hasNekobt ? ' (NekoBT enabled)' : ''}`);
   res.json({ streams });
 });
 
 // ===== Health =====
 app.get('/health', (req, res) => {
   const rss = getRssStats();
+  const users = config.listUsers();
+  const nekobtUsers = users.filter(t => {
+    const u = config.getUser(t);
+    return u?.nekobt_api_key;
+  }).length;
   res.json({
     status: 'ok', uptime: process.uptime(),
     animeCount: todayAnimeCache.length,
-    users: config.listUsers().length,
+    users: users.length,
+    nekobtUsers,
     offlineDB: offlineDB.loaded ? offlineDB.byAniDB.size : 0,
     rss: { indexed: rss.count, fetches: rss.fetches }
   });
