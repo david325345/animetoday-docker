@@ -6,7 +6,7 @@ const axios = require('axios');
 
 const config = require('./lib/config');
 const { getTodayAnime } = require('./lib/anilist');
-const { loadOfflineDB, loadAnimeLists, loadMappingCache, resolveToAniDB, resolveEpisode, parseEpisodeAndSeason, weeklyUpdate, offlineDB } = require('./lib/idmap');
+const { loadOfflineDB, loadAnimeLists, loadMappingCache, resolveToAniDB, resolveEpisode, resolveViaTVDB, parseEpisodeAndSeason, weeklyUpdate, offlineDB, getTVDBFromAniDB } = require('./lib/idmap');
 const { searchByAniDBId, searchByText, detectQuality, sortByGroupPriority, loadEidCache, DEFAULT_GROUPS, DEFAULT_RESOLUTIONS } = require('./lib/search');
 const { getRDStream, rdInProgress, getCacheKey, serveLoadingVideo, DOWNLOADING_VIDEO_URL, checkInstantAvailability } = require('./lib/realdebrid');
 const { generateAllPosters, formatTimeCET } = require('./lib/posters');
@@ -392,7 +392,10 @@ app.get('/:token/today/catalog/:type/:id.json', (req, res) => {
       if (!poster || poster === 'null') poster = 'https://via.placeholder.com/230x345/1a1a2e/ffffff?text=No+Image';
       const bg = m.bannerImage || s.tmdbImages?.backdrop || poster;
       const time = formatTimeCET(s.airingAt);
-      return {
+      // Resolve IDs from offline-db
+      const anilistId = m.id;
+      const offRec = offlineDB.byAniList.get(anilistId);
+      const meta = {
         id: `nyaa:${m.id}:${s.episode}`, type: 'series',
         name: m.title.romaji || m.title.english || m.title.native,
         poster, background: bg || poster,
@@ -401,6 +404,17 @@ app.get('/:token/today/catalog/:type/:id.json', (req, res) => {
         releaseInfo: `${time} · ${m.season || ''} ${m.seasonYear || ''} · Ep ${s.episode}`.trim(),
         imdbRating: m.averageScore ? (m.averageScore / 10).toFixed(1) : undefined
       };
+      // Add external IDs for Fusion/Stremio compatibility
+      if (offRec?.imdb) meta.imdb_id = offRec.imdb;
+      if (offRec?.kitsu) meta.kitsu_id = offRec.kitsu;
+      if (m.idMal) meta.mal_id = m.idMal;
+      meta.anilist_id = anilistId;
+      // Get TVDB ID from anime-lists
+      if (offRec?.anidb) {
+        const tvdbId = getTVDBFromAniDB(offRec.anidb);
+        if (tvdbId) meta.tvdb_id = tvdbId;
+      }
+      return meta;
     })
   });
 });
@@ -416,22 +430,32 @@ app.get('/:token/today/meta/:type/:id.json', (req, res) => {
   let poster = schedule.generatedPoster ? `${BASE_URL}${schedule.generatedPoster}` : (schedule.tmdbImages?.poster || m.coverImage?.extraLarge || m.coverImage?.large);
   if (!poster || poster === 'null') poster = 'https://via.placeholder.com/230x345/1a1a2e/ffffff?text=No+Image';
 
-  res.json({
-    meta: {
-      id: req.params.id, type: 'series',
-      name: m.title.romaji || m.title.english || m.title.native,
-      poster, background: m.bannerImage || schedule.tmdbImages?.backdrop || poster,
-      description: `Vysílání: ${time} (CET)\nEpizoda ${schedule.episode}\n\n${(m.description || '').replace(/<[^>]*>/g, '')}`,
-      genres: m.genres || [],
-      releaseInfo: `${time} · ${m.season || ''} ${m.seasonYear || ''} · Ep ${schedule.episode}`.trim(),
-      imdbRating: m.averageScore ? (m.averageScore / 10).toFixed(1).toString() : undefined,
-      videos: [{
-        id: req.params.id, title: `Epizoda ${schedule.episode}`,
-        episode: schedule.episode, season: 1,
-        released: new Date(schedule.airingAt * 1000).toISOString(), thumbnail: poster
-      }]
-    }
-  });
+  const anilistId2 = m.id;
+  const offRec = offlineDB.byAniList.get(anilistId2);
+  const metaObj = {
+    id: req.params.id, type: 'series',
+    name: m.title.romaji || m.title.english || m.title.native,
+    poster, background: m.bannerImage || schedule.tmdbImages?.backdrop || poster,
+    description: `Vysílání: ${time} (CET)\nEpizoda ${schedule.episode}\n\n${(m.description || '').replace(/<[^>]*>/g, '')}`,
+    genres: m.genres || [],
+    releaseInfo: `${time} · ${m.season || ''} ${m.seasonYear || ''} · Ep ${schedule.episode}`.trim(),
+    imdbRating: m.averageScore ? (m.averageScore / 10).toFixed(1).toString() : undefined,
+    videos: [{
+      id: req.params.id, title: `Epizoda ${schedule.episode}`,
+      episode: schedule.episode, season: 1,
+      released: new Date(schedule.airingAt * 1000).toISOString(), thumbnail: poster
+    }]
+  };
+  // Add external IDs
+  if (offRec?.imdb) metaObj.imdb_id = offRec.imdb;
+  if (offRec?.kitsu) metaObj.kitsu_id = offRec.kitsu;
+  if (m.idMal) metaObj.mal_id = m.idMal;
+  metaObj.anilist_id = anilistId2;
+  if (offRec?.anidb) {
+    const tvdbId = getTVDBFromAniDB(offRec.anidb);
+    if (tvdbId) metaObj.tvdb_id = tvdbId;
+  }
+  res.json({ meta: metaObj });
 });
 
 app.get('/:token/today/stream/:type/:id.json', async (req, res) => {
@@ -530,7 +554,7 @@ app.get('/:token/nyaa/manifest.json', (req, res) => {
     resources: ['stream'],
     types: ['series', 'movie'],
     catalogs: [],
-    idPrefixes: ['kitsu:', 'tt'],
+    idPrefixes: ['kitsu:', 'tt', 'tvdb:', 'anilist:'],
     behaviorHints: { configurable: false, configurationRequired: false }
   });
 });
@@ -544,11 +568,53 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
 
   console.log(`=== STREAM === type=${type} id=${fullId}`);
 
-  const { season, episode } = parseEpisodeAndSeason(fullId);
+  let { season, episode } = parseEpisodeAndSeason(fullId);
   let torrents = [];
 
+  // Handle TVDB ID format: tvdb:424536:2:8
+  if (fullId.startsWith('tvdb:')) {
+    const parts = fullId.split(':');
+    const tvdbId = parts[1];
+    const tvdbSeason = parseInt(parts[2]) || 1;
+    const tvdbEpisode = parseInt(parts[3]) || 1;
+    season = tvdbSeason;
+    episode = tvdbEpisode;
+    console.log(`  📺 TVDB: ${tvdbId} S${tvdbSeason}E${tvdbEpisode}`);
+    const resolved = resolveViaTVDB(tvdbId, tvdbSeason, tvdbEpisode);
+    if (resolved?.anidbId) {
+      torrents = await searchByAniDBId(resolved.anidbId, resolved.episode, isMovie);
+    }
+  }
+  // Handle AniList ID format: anilist:154587:2:8 or anilist:154587
+  else if (fullId.startsWith('anilist:')) {
+    const parts = fullId.split(':');
+    const anilistId = parseInt(parts[1]);
+    season = parseInt(parts[2]) || 1;
+    episode = parseInt(parts[3]) || 1;
+    console.log(`  🔷 AniList: ${anilistId} S${season}E${episode}`);
+    const rec = offlineDB.byAniList.get(anilistId);
+    if (rec?.anidb) {
+      if (season > 1) {
+        // Try anime-lists for season-specific AniDB
+        const tvdbId = getTVDBFromAniDB(rec.anidb);
+        if (tvdbId) {
+          const resolved = resolveViaTVDB(tvdbId, season, episode);
+          if (resolved?.anidbId) {
+            torrents = await searchByAniDBId(resolved.anidbId, resolved.episode, isMovie);
+          }
+        }
+      }
+      if (!torrents.length) {
+        console.log(`  🆔 AniList ${anilistId} → AniDB ${rec.anidb} "${rec.title}"`);
+        torrents = await searchByAniDBId(rec.anidb, isMovie ? null : episode, isMovie);
+      }
+    }
+  }
+  // Existing: IMDb (tt...) and Kitsu (kitsu:...)
+  else {
+
   // 1. For multi-season: try anime-lists to get per-season AniDB ID + correct episode
-  if (season > 1 && !isMovie) {
+  if (!torrents.length && season > 1 && !isMovie) {
     const epResult = await resolveEpisode(type, fullId, season, episode);
     if (epResult.anidbId) {
       // anime-lists gave us a season-specific AniDB ID
@@ -604,6 +670,8 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
       torrents = await searchByText(names, isMovie ? null : episode, isMovie);
     }
   }
+
+  } // end else (IMDb/Kitsu)
 
   if (!torrents.length) {
     return res.json({ streams: [{ name: '❌ Nenalezeno', title: `Nenalezeno na AnimeTosho`, url: 'https://animetosho.org', behaviorHints: { notWebReady: true } }] });
