@@ -652,6 +652,51 @@ app.get('/:token/nyaa/meta/:type/:id.json', async (req, res) => {
     return res.json({ meta: null });
   }
 
+  // === at: (Anime Today) — resolve to IMDb via TMDB, then Cinemeta proxy ===
+  if (fullId.startsWith('at:')) {
+    const anilistId = parseInt(fullId.split(':')[1]);
+    if (!anilistId) return res.json({ meta: null });
+
+    const schedule = todayAnimeCache.find(s => s.media.id === anilistId);
+    const m = schedule?.media;
+    const offRec = offlineDB.byAniList.get(anilistId);
+    let imdbId = offRec?.imdb;
+
+    console.log(`  🔍 AT: AniList ${anilistId}, IMDb: ${imdbId || 'none'}`);
+
+    if (!imdbId && m?.title) {
+      const names = [m.title.romaji, m.title.english, m.title.native].filter(Boolean);
+      if (names.length) imdbId = await resolveIMDbViaTMDB(names, anilistId);
+    }
+
+    if (imdbId) {
+      const cinemeta = await getCinemetaMeta(imdbId);
+      if (cinemeta) {
+        const meta = { ...cinemeta, id: fullId };
+        console.log(`  📤 AT Meta (Cinemeta proxy): ${meta.name} — ${(meta.videos || []).length} videos`);
+        return res.json({ meta });
+      }
+    }
+
+    // Fallback: generate episodes
+    const currentEp = schedule?.episode || offRec?.episodes || 1;
+    const totalEp = m?.episodes || currentEp;
+    const epCount = Math.max(currentEp, totalEp);
+    const videos = [];
+    for (let ep = 1; ep <= epCount; ep++) {
+      videos.push({ id: `at:${anilistId}:1:${ep}`, title: `Episode ${ep}`, season: 1, episode: ep });
+    }
+    const meta = {
+      id: fullId, type: 'series',
+      name: m?.title?.romaji || m?.title?.english || offRec?.title || 'Unknown',
+      description: m?.description ? m.description.replace(/<[^>]*>/g, '') : '',
+      genres: m?.genres || [],
+      videos,
+    };
+    console.log(`  📤 AT Meta (fallback): ${meta.name} — ${videos.length} videos`);
+    return res.json({ meta });
+  }
+
   // === Kitsu ===
   if (!fullId.startsWith('kitsu:')) return res.json({ meta: null });
 
