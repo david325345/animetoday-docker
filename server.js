@@ -34,7 +34,7 @@ async function updateCache() {
   const t0 = Date.now();
   try {
     const schedules = await getTodayAnime();
-    await generateAllPosters(schedules);
+    await generateAllPosters(schedules, offlineDB);
     todayAnimeCache = schedules;
     console.log(`✅ Cache: ${todayAnimeCache.length} anime (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
   } catch (err) { console.error('❌ Cache failed:', err.message); }
