@@ -6,7 +6,7 @@ const axios = require('axios');
 
 const config = require('./lib/config');
 const { getTodayAnime } = require('./lib/anilist');
-const { loadOfflineDB, loadAnimeLists, loadMappingCache, resolveToAniDB, resolveEpisode, resolveViaTVDB, parseEpisodeAndSeason, weeklyUpdate, offlineDB, getTVDBFromAniDB } = require('./lib/idmap');
+const { loadOfflineDB, loadAnimeLists, loadMappingCache, resolveToAniDB, resolveEpisode, resolveViaTVDB, parseEpisodeAndSeason, weeklyUpdate, offlineDB, getTVDBFromAniDB, getTVDBInfoFromAniDB } = require('./lib/idmap');
 const { searchByAniDBId, searchByText, detectQuality, sortByGroupPriority, loadEidCache, DEFAULT_GROUPS, DEFAULT_RESOLUTIONS } = require('./lib/search');
 const { getRDStream, rdInProgress, getCacheKey, serveLoadingVideo, DOWNLOADING_VIDEO_URL, checkInstantAvailability } = require('./lib/realdebrid');
 const { generateAllPosters, formatTimeCET } = require('./lib/posters');
@@ -395,8 +395,22 @@ app.get('/:token/today/catalog/:type/:id.json', (req, res) => {
       // Resolve IDs from offline-db
       const anilistId = m.id;
       const offRec = offlineDB.byAniList.get(anilistId);
+      // Determine TVDB season from anime-lists
+      let tvdbSeason = 1;
+      let tvdbEpisode = s.episode;
+      if (offRec?.anidb) {
+        const tvdbInfo = getTVDBInfoFromAniDB(offRec.anidb);
+        if (tvdbInfo) {
+          tvdbSeason = tvdbInfo.season;
+          tvdbEpisode = s.episode - (tvdbInfo.offset || 0);
+          if (tvdbEpisode < 1) tvdbEpisode = s.episode;
+        }
+      }
+      // Build ID with season:episode
+      let baseId = offRec?.imdb || (offRec?.kitsu ? `kitsu:${offRec.kitsu}` : `anilist:${m.id}`);
+      const catalogId = `${baseId}:${tvdbSeason}:${tvdbEpisode}`;
       const meta = {
-        id: offRec?.imdb || (offRec?.kitsu ? `kitsu:${offRec.kitsu}` : `anilist:${m.id}`), type: 'series',
+        id: catalogId, type: 'series',
         name: m.title.romaji || m.title.english || m.title.native,
         poster, background: bg || poster,
         description: `${time} · Epizoda ${s.episode}\n\n${(m.description || '').replace(/<[^>]*>/g, '')}`,
@@ -421,10 +435,13 @@ app.get('/:token/today/catalog/:type/:id.json', (req, res) => {
 
 app.get('/:token/today/meta/:type/:id.json', (req, res) => {
   const reqId = req.params.id;
+  // Strip season:episode from ID for matching (tt12345:1:6 → tt12345)
+  const baseImdb = reqId.startsWith('tt') ? reqId.split(':')[0] : null;
   // Find schedule by IMDb ID
   let schedule = null;
   for (const s of todayAnimeCache) {
     const rec = offlineDB.byAniList.get(s.media.id);
+    if (rec?.imdb && baseImdb && rec.imdb === baseImdb) { schedule = s; break; }
     if (rec?.imdb === reqId) { schedule = s; break; }
   }
   // Fallback: try anilist: prefix
