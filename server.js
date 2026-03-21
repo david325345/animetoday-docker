@@ -406,7 +406,7 @@ app.get('/:token/today/catalog/:type/:id.json', (req, res) => {
       };
       // Add external IDs for Fusion/Stremio compatibility
       if (offRec?.imdb) meta.imdb_id = offRec.imdb;
-      if (offRec?.kitsu) meta.kitsu_id = offRec.kitsu;
+      // if (offRec?.kitsu) meta.kitsu_id = offRec.kitsu; // disabled - Omni remaps to kitsu
       if (m.idMal) meta.mal_id = m.idMal;
       meta.anilist_id = anilistId;
       // Get TVDB ID from anime-lists
@@ -465,7 +465,7 @@ app.get('/:token/today/meta/:type/:id.json', (req, res) => {
   };
   // Add external IDs
   if (offRec?.imdb) metaObj.imdb_id = offRec.imdb;
-  if (offRec?.kitsu) metaObj.kitsu_id = offRec.kitsu;
+  // if (offRec?.kitsu) metaObj.kitsu_id = offRec.kitsu; // disabled - Omni remaps to kitsu
   if (m.idMal) metaObj.mal_id = m.idMal;
   metaObj.anilist_id = anilistId2;
   if (offRec?.anidb) {
