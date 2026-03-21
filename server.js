@@ -434,47 +434,62 @@ app.get('/:token/today/meta/:type/:id.json', async (req, res) => {
   const anilistId = parseInt(atId.split(':')[1]);
   if (!anilistId) return res.json({ meta: null });
 
-  // Find in todayAnimeCache for poster/description
   const schedule = todayAnimeCache.find(s => s.media.id === anilistId);
   const m = schedule?.media;
   const offRec = offlineDB.byAniList.get(anilistId);
   const imdbId = offRec?.imdb;
 
-  // Build videos array
-  let videos = [];
+  console.log(`  🔍 AniList: ${anilistId}, IMDb: ${imdbId || 'none'}, schedule: ${schedule ? 'yes' : 'no'}`);
 
+  // === Strategy 1: IMDb exists → return Cinemeta meta with tt: video IDs ===
+  // Stremio will then send tt:season:episode to Nyaa Search stream endpoint
   if (imdbId) {
-    // Get episodes from Cinemeta
     const cinemeta = await getCinemetaMeta(imdbId);
-    if (cinemeta?.videos?.length) {
-      // Map Cinemeta videos but use at: prefix in IDs
-      videos = cinemeta.videos.map(v => ({
-        id: `at:${anilistId}:${v.season}:${v.episode}`,
-        title: v.title || v.name || `Episode ${v.episode}`,
-        season: v.season,
-        episode: v.episode,
-        released: v.released || v.firstAired,
-        overview: v.overview || '',
-        // Keep the original IMDb-based ID for stream resolution
-        imdbId: imdbId,
-      }));
-      console.log(`  📺 Cinemeta: ${videos.length} episodes for ${imdbId}`);
+    if (cinemeta) {
+      // Use Cinemeta meta as base but keep our at: ID and our poster
+      let poster = schedule?.generatedPoster ? `${BASE_URL}${schedule.generatedPoster}` : (schedule?.tmdbImages?.poster || cinemeta.poster || m?.coverImage?.extraLarge);
+      if (!poster || poster === 'null') poster = 'https://via.placeholder.com/230x345/1a1a2e/ffffff?text=No+Image';
+
+      const meta = {
+        id: atId,
+        type: 'series',
+        name: cinemeta.name || m?.title?.romaji || offRec?.title || 'Unknown',
+        poster,
+        background: cinemeta.background || m?.bannerImage || schedule?.tmdbImages?.backdrop || poster,
+        description: cinemeta.description || (m?.description || '').replace(/<[^>]*>/g, ''),
+        genres: cinemeta.genres || m?.genres || [],
+        releaseInfo: cinemeta.releaseInfo || '',
+        imdbRating: cinemeta.imdbRating || (m?.averageScore ? (m.averageScore / 10).toFixed(1) : undefined),
+        // Keep original tt: video IDs — Stremio sends these to Nyaa Search
+        videos: cinemeta.videos || [],
+        logo: cinemeta.logo,
+        runtime: cinemeta.runtime,
+      };
+
+      console.log(`  📤 Meta (Cinemeta): ${meta.name} — ${(meta.videos || []).length} videos with tt: IDs`);
+      return res.json({ meta });
     }
+    console.log(`  ⚠️ Cinemeta fetch failed for ${imdbId}, using fallback`);
   }
 
-  // Fallback: if no IMDb or no Cinemeta videos, create single episode from schedule
-  if (!videos.length && schedule) {
-    videos = [{
-      id: `at:${anilistId}:1:${schedule.episode}`,
-      title: `Episode ${schedule.episode}`,
+  // === Strategy 2: No IMDb → generate episodes with at: IDs ===
+  const currentEp = schedule?.episode || offRec?.episodes || 1;
+  const totalEp = m?.episodes || currentEp;
+  const epCount = Math.max(currentEp, totalEp);
+
+  console.log(`  📺 Generating ${epCount} episodes (no IMDb, using at: IDs)`);
+
+  const videos = [];
+  for (let ep = 1; ep <= epCount; ep++) {
+    videos.push({
+      id: `at:${anilistId}:1:${ep}`,
+      title: `Episode ${ep}`,
       season: 1,
-      episode: schedule.episode,
-      released: new Date(schedule.airingAt * 1000).toISOString(),
-    }];
-    console.log(`  📺 Fallback: single episode ${schedule.episode}`);
+      episode: ep,
+      released: schedule ? new Date((schedule.airingAt - (currentEp - ep) * 7 * 24 * 3600) * 1000).toISOString() : undefined,
+    });
   }
 
-  // Build poster
   let poster = schedule?.generatedPoster ? `${BASE_URL}${schedule.generatedPoster}` : (schedule?.tmdbImages?.poster || m?.coverImage?.extraLarge || m?.coverImage?.large);
   if (!poster || poster === 'null') poster = 'https://via.placeholder.com/230x345/1a1a2e/ffffff?text=No+Image';
   const bg = m?.bannerImage || schedule?.tmdbImages?.backdrop || poster;
@@ -493,7 +508,7 @@ app.get('/:token/today/meta/:type/:id.json', async (req, res) => {
     videos,
   };
 
-  console.log(`  📤 Meta: ${meta.name} — ${videos.length} videos`);
+  console.log(`  📤 Meta (fallback): ${meta.name} — ${videos.length} videos with at: IDs`);
   res.json({ meta });
 });
 
