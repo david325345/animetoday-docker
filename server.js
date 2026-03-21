@@ -368,7 +368,7 @@ app.get('/:token/today/manifest.json', (req, res) => {
     name: 'Anime Today',
     description: 'Dnešní anime z AniList — katalog s postery. Streamy přes Nyaa Search addon.',
     logo: `${BASE_URL}/logo.png`,
-    resources: ['catalog', 'meta'],
+    resources: ['catalog'],
     types: ['series'],
     catalogs: [{ type: 'series', id: 'anime-today', name: 'Dnešní Anime', extra: [{ name: 'skip', isRequired: false }] }],
     idPrefixes: ['tt'],
