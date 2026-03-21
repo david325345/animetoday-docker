@@ -377,6 +377,7 @@ app.get('/:token/today/manifest.json', (req, res) => {
 });
 
 app.get('/:token/today/catalog/:type/:id.json', (req, res) => {
+  console.log(`=== TODAY CATALOG === type=${req.params.type} id=${req.params.id}`);
   if (req.params.id !== 'anime-today') return res.json({ metas: [] });
   const user = config.getUser(req.params.token);
   const hidden = user?.hidden_anime || [];
@@ -420,6 +421,7 @@ app.get('/:token/today/catalog/:type/:id.json', (req, res) => {
 });
 
 app.get('/:token/today/meta/:type/:id.json', (req, res) => {
+  console.log(`=== TODAY META === type=${req.params.type} id=${req.params.id}`);
   // Disabled — let Omni/Stremio/Fusion use their own metadata provider (Cinemeta/TVDB)
   res.json({ meta: null });
 });
