@@ -427,58 +427,72 @@ async function getCinemetaMeta(imdbId) {
 // TMDB → IMDb resolver: search by name, get external_ids
 const tmdbImdbCache = new Map();
 
-async function resolveIMDbViaTMDB(animeName, anilistId) {
+async function resolveIMDbViaTMDB(nameVariants, anilistId) {
   const cacheKey = `tmdb:${anilistId}`;
-  if (tmdbImdbCache.has(cacheKey)) return tmdbImdbCache.get(cacheKey);
+  if (tmdbImdbCache.has(cacheKey)) {
+    const cached = tmdbImdbCache.get(cacheKey);
+    if (cached) console.log(`  🔍 TMDB (cached): AniList ${anilistId} → ${cached}`);
+    return cached;
+  }
 
   const tmdbKey = config.getTMDBKey();
-  if (!tmdbKey) return null;
+  if (!tmdbKey) { console.log(`  🔍 TMDB: no API key`); return null; }
 
-  try {
-    // Search TMDB for this anime
-    const searchResp = await axios.get('https://api.themoviedb.org/3/search/tv', {
-      params: { api_key: tmdbKey, query: animeName, language: 'en-US' },
-      timeout: 5000
-    });
-    const results = searchResp.data?.results;
-    if (!results?.length) {
-      console.log(`  🔍 TMDB: no results for "${animeName}"`);
-      tmdbImdbCache.set(cacheKey, null);
-      return null;
+  // Build list of search names to try
+  const searchNames = [];
+  for (const name of nameVariants) {
+    if (name && !searchNames.includes(name)) searchNames.push(name);
+    // Also try without subtitle (after colon/dash)
+    if (name) {
+      const short = name.split(/[:\-–—]/)[0].trim();
+      if (short && short !== name && short.length >= 3 && !searchNames.includes(short)) searchNames.push(short);
     }
-
-    // Try top results (prefer animation genre = 16)
-    const sorted = [...results].sort((a, b) => {
-      const aAnim = (a.genre_ids || []).includes(16) ? 1 : 0;
-      const bAnim = (b.genre_ids || []).includes(16) ? 1 : 0;
-      return bAnim - aAnim || (b.popularity || 0) - (a.popularity || 0);
-    });
-
-    for (const result of sorted.slice(0, 3)) {
-      try {
-        const extResp = await axios.get(`https://api.themoviedb.org/3/tv/${result.id}/external_ids`, {
-          params: { api_key: tmdbKey },
-          timeout: 5000
-        });
-        const imdbId = extResp.data?.imdb_id;
-        if (imdbId && imdbId.startsWith('tt')) {
-          console.log(`  🔍 TMDB: "${animeName}" → TMDB ${result.id} "${result.name}" → ${imdbId}`);
-          tmdbImdbCache.set(cacheKey, imdbId);
-          // Enrich offline-db so next time we have it
-          const offRec = offlineDB.byAniList.get(anilistId);
-          if (offRec && !offRec.imdb) offRec.imdb = imdbId;
-          return imdbId;
-        }
-      } catch {}
-    }
-
-    console.log(`  🔍 TMDB: "${animeName}" found on TMDB but no IMDb ID`);
-    tmdbImdbCache.set(cacheKey, null);
-    return null;
-  } catch (err) {
-    console.log(`  🔍 TMDB search error: ${err.message}`);
-    return null;
   }
+
+  for (const searchName of searchNames) {
+    try {
+      const searchResp = await axios.get('https://api.themoviedb.org/3/search/tv', {
+        params: { api_key: tmdbKey, query: searchName, language: 'en-US' },
+        timeout: 5000
+      });
+      const results = searchResp.data?.results;
+      if (!results?.length) {
+        console.log(`  🔍 TMDB: no results for "${searchName}"`);
+        continue;
+      }
+
+      // Prefer animation genre (16)
+      const sorted = [...results].sort((a, b) => {
+        const aAnim = (a.genre_ids || []).includes(16) ? 1 : 0;
+        const bAnim = (b.genre_ids || []).includes(16) ? 1 : 0;
+        return bAnim - aAnim || (b.popularity || 0) - (a.popularity || 0);
+      });
+
+      for (const result of sorted.slice(0, 3)) {
+        try {
+          const extResp = await axios.get(`https://api.themoviedb.org/3/tv/${result.id}/external_ids`, {
+            params: { api_key: tmdbKey },
+            timeout: 5000
+          });
+          const imdbId = extResp.data?.imdb_id;
+          if (imdbId && imdbId.startsWith('tt')) {
+            console.log(`  🔍 TMDB: "${searchName}" → TMDB ${result.id} "${result.name}" → ${imdbId}`);
+            tmdbImdbCache.set(cacheKey, imdbId);
+            const offRec = offlineDB.byAniList.get(anilistId);
+            if (offRec && !offRec.imdb) offRec.imdb = imdbId;
+            return imdbId;
+          }
+        } catch {}
+      }
+      console.log(`  🔍 TMDB: "${searchName}" found ${results.length} results but no IMDb ID`);
+    } catch (err) {
+      console.log(`  🔍 TMDB search error for "${searchName}": ${err.message}`);
+    }
+  }
+
+  console.log(`  🔍 TMDB: all variants failed for AniList ${anilistId}`);
+  tmdbImdbCache.set(cacheKey, null);
+  return null;
 }
 
 app.get('/:token/today/meta/:type/:id.json', async (req, res) => {
@@ -498,11 +512,11 @@ app.get('/:token/today/meta/:type/:id.json', async (req, res) => {
 
   console.log(`  🔍 AniList: ${anilistId}, IMDb: ${imdbId || 'none'}, schedule: ${schedule ? 'yes' : 'no'}`);
 
-  // If no IMDb, try TMDB search
+  // If no IMDb, try TMDB search with multiple name variants
   if (!imdbId && m?.title) {
-    const searchName = m.title.romaji || m.title.english || m.title.native;
-    if (searchName) {
-      imdbId = await resolveIMDbViaTMDB(searchName, anilistId);
+    const names = [m.title.romaji, m.title.english, m.title.native].filter(Boolean);
+    if (names.length) {
+      imdbId = await resolveIMDbViaTMDB(names, anilistId);
     }
   }
 
