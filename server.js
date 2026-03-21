@@ -639,7 +639,20 @@ app.get('/:token/nyaa/meta/:type/:id.json', async (req, res) => {
   const type = req.params.type;
   console.log(`=== NYAA META === type=${type} id=${fullId}`);
 
-  // Only handle kitsu: IDs — at: goes through today addon, tt: through Cinemeta
+  // === IMDb (tt...) — Cinemeta proxy ===
+  if (fullId.startsWith('tt')) {
+    const imdbId = fullId.split(':')[0];
+    const cinemeta = await getCinemetaMeta(imdbId);
+    if (cinemeta) {
+      const meta = { ...cinemeta, id: fullId };
+      console.log(`  📤 IMDb Meta (Cinemeta proxy): ${meta.name} — ${(meta.videos || []).length} videos`);
+      return res.json({ meta });
+    }
+    console.log(`  ⚠️ Cinemeta no data for ${imdbId}`);
+    return res.json({ meta: null });
+  }
+
+  // === Kitsu ===
   if (!fullId.startsWith('kitsu:')) return res.json({ meta: null });
 
   const kitsuId = parseInt(fullId.split(':')[1]);
@@ -712,7 +725,7 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
 
   // Detect if episode was explicitly provided in the ID
   const idParts = fullId.split(':');
-  const hasExplicitEpisode = fullId.startsWith('at:') ? idParts.length >= 4 :
+  const hasExplicitEpisode = fullId.startsWith('at:') ? idParts.length >= 3 :
     fullId.startsWith('kitsu:') ? idParts.length >= 4 :
     fullId.startsWith('tt') ? idParts.length >= 3 :
     fullId.startsWith('anilist:') ? idParts.length >= 4 :
@@ -754,12 +767,17 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
     }
   }
 
-  // Handle at: ID format from Anime Today: at:187941:1:5
+  // Handle at: ID format from Anime Today: at:187941:1:5 or at:187941:5
   if (fullId.startsWith('at:')) {
     const parts = fullId.split(':');
     const anilistId = parseInt(parts[1]);
-    season = parseInt(parts[2]) || 1;
-    episode = parseInt(parts[3]) || 1;
+    if (parts.length >= 4) {
+      season = parseInt(parts[2]) || 1;
+      episode = parseInt(parts[3]) || 1;
+    } else {
+      season = 1;
+      episode = parseInt(parts[2]) || 1;
+    }
     console.log(`  🎌 AT: AniList ${anilistId} S${season}E${episode}`);
     const rec = offlineDB.byAniList.get(anilistId);
 
