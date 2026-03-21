@@ -479,6 +479,8 @@ async function resolveIMDbViaTMDB(nameVariants, anilistId) {
       .replace(/\s*(\d+(?:st|nd|rd|th))?\s*(Season|Part|Cour|Series|Phase|Chapter|Arc)\s*\d*\s*$/i, '') // "X Season 3" → "X"
       .replace(/\s+\d+$/, '') // trailing number: "Shingeki no Kyojin 3" → "Shingeki no Kyojin"
       .replace(/\s+[IVXLC]+$/, '') // roman numerals: "Title III" → "Title"
+      .replace(/[!?♪♫★☆~※♥❤.,;'"`(){}[\]]/g, '') // strip special chars: "Title!" → "Title"
+      .replace(/\s{2,}/g, ' ') // collapse double spaces
       .trim();
   }
 
@@ -619,17 +621,81 @@ app.get('/:token/today/meta/:type/:id.json', async (req, res) => {
 // ===== STREMIO: NYAA SEARCH ADDON =====
 app.get('/:token/nyaa/manifest.json', (req, res) => {
   res.json({
-    id: 'cz.nyaa.search.v6',
-    version: '6.0.0',
+    id: 'cz.nyaa.search.v7',
+    version: '7.0.0',
     name: 'Nyaa Search',
     description: 'Anime z Nyaa.si + RealDebrid. Funguje s Cinemeta/Kitsu/Anime Today.',
     logo: `${BASE_URL}/logo-nyaa.png`,
-    resources: ['stream'],
+    resources: ['stream', 'meta'],
     types: ['series', 'movie'],
     catalogs: [],
     idPrefixes: ['at:', 'kitsu:', 'tt', 'tvdb:', 'anilist:'],
     behaviorHints: { configurable: false, configurationRequired: false }
   });
+});
+
+app.get('/:token/nyaa/meta/:type/:id.json', async (req, res) => {
+  const fullId = req.params.id;
+  const type = req.params.type;
+  console.log(`=== NYAA META === type=${type} id=${fullId}`);
+
+  // Only handle kitsu: IDs — at: goes through today addon, tt: through Cinemeta
+  if (!fullId.startsWith('kitsu:')) return res.json({ meta: null });
+
+  const kitsuId = parseInt(fullId.split(':')[1]);
+  if (!kitsuId) return res.json({ meta: null });
+
+  const offRec = offlineDB.byKitsu.get(kitsuId);
+  let imdbId = offRec?.imdb;
+
+  console.log(`  🔍 Kitsu: ${kitsuId}, AniDB: ${offRec?.anidb || 'none'}, IMDb: ${imdbId || 'none'}`);
+
+  // If no IMDb, try TMDB
+  if (!imdbId && offRec) {
+    const names = [offRec.title, ...(offRec.synonyms || []).slice(0, 3)].filter(Boolean);
+    if (names.length) {
+      // Use anilist ID for cache key if available, otherwise kitsu
+      const cacheId = offRec.anilist || kitsuId;
+      imdbId = await resolveIMDbViaTMDB(names, cacheId);
+      if (imdbId && !offRec.imdb) offRec.imdb = imdbId;
+    }
+  }
+
+  // Cinemeta proxy
+  if (imdbId) {
+    const cinemeta = await getCinemetaMeta(imdbId);
+    if (cinemeta) {
+      const meta = { ...cinemeta, id: fullId };
+      console.log(`  📤 Kitsu Meta (Cinemeta proxy): ${meta.name} — ${(meta.videos || []).length} videos`);
+      return res.json({ meta });
+    }
+    console.log(`  ⚠️ Cinemeta fetch failed for ${imdbId}`);
+  }
+
+  // Fallback: generate episodes
+  const epCount = offRec?.episodes || 1;
+  console.log(`  📺 Kitsu fallback: generating ${epCount} episodes`);
+
+  const videos = [];
+  for (let ep = 1; ep <= epCount; ep++) {
+    videos.push({
+      id: `kitsu:${kitsuId}:1:${ep}`,
+      title: `Episode ${ep}`,
+      season: 1,
+      episode: ep,
+    });
+  }
+
+  const meta = {
+    id: fullId,
+    type: 'series',
+    name: offRec?.title || 'Unknown',
+    description: '',
+    videos,
+  };
+
+  console.log(`  📤 Kitsu Meta (fallback): ${meta.name} — ${videos.length} videos`);
+  res.json({ meta });
 });
 
 app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
