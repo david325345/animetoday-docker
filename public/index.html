@@ -287,6 +287,15 @@
                         <h3 style="margin-top:16px;">🚫 Vyloučit rozlišení</h3>
                         <div class="res-exclude" id="res-exclude"></div>
                     </div>
+                    <div class="sort-col">
+                        <h3>🌐 Priorita jazyků</h3>
+                        <p style="font-size:11px;color:var(--dim);margin-bottom:8px">Pro NZB — řadí podle audio/titulků. Přetáhněte pro změnu pořadí.</p>
+                        <ul class="sort-list" id="lang-list"></ul>
+                        <div class="add-group-row">
+                            <input type="text" id="new-lang-input" class="input" placeholder="Jazyk (CZ, EN, ...)" style="font-size:12px;padding:8px 10px;">
+                            <button class="btn btn-s btn-sm" onclick="addLang()" style="padding:8px 14px;font-size:12px;">+</button>
+                        </div>
+                    </div>
                 </div>
 
                 <button class="btn btn-s btn-sm" onclick="resetSortPrefs()" style="margin-top:16px;">Obnovit výchozí</button>
@@ -541,7 +550,7 @@ async function toggleGeek() {
 }
 
 // Sort Preferences
-let sortPrefs = { customSortEnabled:false, groupPriority:[], resPriority:[], excludedResolutions:[], sortBySeeders:true, defaultGroups:[], defaultResolutions:[] };
+let sortPrefs = { customSortEnabled:false, groupPriority:[], resPriority:[], langPriority:[], excludedResolutions:[], sortBySeeders:true, defaultGroups:[], defaultResolutions:[], defaultLangs:[] };
 
 async function loadSortPrefs() {
     try {
@@ -568,6 +577,9 @@ function renderSortPrefs() {
     // Resolution list
     renderSortList('res-list', sortPrefs.resPriority, 'res');
 
+    // Language list
+    renderSortList('lang-list', sortPrefs.langPriority || [], 'lang');
+
     // Excluded resolutions
     const exDiv = document.getElementById('res-exclude');
     const allRes = sortPrefs.defaultResolutions || ['1080p','720p','4K','480p','DVD'];
@@ -583,7 +595,7 @@ function renderSortList(containerId, items, type) {
         `<li draggable="true" data-idx="${i}" data-type="${type}">
             <span class="drag-handle">☰</span>
             <span class="item-name">${item}</span>
-            ${type === 'group' ? `<span class="remove-btn" onclick="removeGroup(${i})">×</span>` : ''}
+            ${(type === 'group' || type === 'lang') ? `<span class="remove-btn" onclick="${type === 'group' ? 'removeGroup' : 'removeLang'}(${i})">×</span>` : ''}
         </li>`
     ).join('');
 
@@ -597,7 +609,7 @@ function renderSortList(containerId, items, type) {
             e.preventDefault();
             const dropIdx = +li.dataset.idx;
             if (dragIdx === null || dragIdx === dropIdx) return;
-            const arr = type === 'group' ? sortPrefs.groupPriority : sortPrefs.resPriority;
+            const arr = type === 'group' ? sortPrefs.groupPriority : type === 'lang' ? sortPrefs.langPriority : sortPrefs.resPriority;
             const [moved] = arr.splice(dragIdx, 1);
             arr.splice(dropIdx, 0, moved);
             saveSortPrefs();
@@ -625,6 +637,26 @@ function toggleExcludeRes(res, exclude) {
     saveSortPrefs();
 }
 
+function addLang() {
+    const input = document.getElementById('new-lang-input');
+    const name = input.value.trim().toUpperCase();
+    if (!name) return;
+    if (!sortPrefs.langPriority) sortPrefs.langPriority = [];
+    if (!sortPrefs.langPriority.includes(name)) {
+        sortPrefs.langPriority.push(name);
+        saveSortPrefs();
+        renderSortPrefs();
+    }
+    input.value = '';
+}
+
+function removeLang(idx) {
+    if (!sortPrefs.langPriority) return;
+    sortPrefs.langPriority.splice(idx, 1);
+    saveSortPrefs();
+    renderSortPrefs();
+}
+
 function addGroup() {
     const input = document.getElementById('new-group-input');
     const name = input.value.trim();
@@ -646,6 +678,7 @@ function removeGroup(idx) {
 function resetSortPrefs() {
     sortPrefs.groupPriority = [...(sortPrefs.defaultGroups || [])];
     sortPrefs.resPriority = [...(sortPrefs.defaultResolutions || [])];
+    sortPrefs.langPriority = [...(sortPrefs.defaultLangs || [])];
     sortPrefs.excludedResolutions = [];
     sortPrefs.sortBySeeders = true;
     saveSortPrefs();
@@ -661,6 +694,7 @@ async function saveSortPrefs() {
                 customSortEnabled: sortPrefs.customSortEnabled,
                 groupPriority: sortPrefs.groupPriority,
                 resPriority: sortPrefs.resPriority,
+                langPriority: sortPrefs.langPriority,
                 excludedResolutions: sortPrefs.excludedResolutions,
                 sortBySeeders: sortPrefs.sortBySeeders
             })
