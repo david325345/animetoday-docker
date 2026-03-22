@@ -1452,6 +1452,49 @@ function getLangScore(item, langOrder) {
   return langOrder.length; // no match
 }
 
+// ===== Filter language string to show only user-preferred languages =====
+// "French - Japanese - English - Russian" + userLangs=['en','jp'] → "English - Japanese"
+function filterLangString(langStr, userLangs) {
+  if (!langStr || !userLangs?.length) return langStr; // no filter, show all
+
+  const aliases = {
+    'cz': ['czech', 'cze', 'ces', 'cz'],
+    'en': ['english', 'eng', 'en'],
+    'de': ['german', 'deu', 'ger', 'de'],
+    'fr': ['french', 'fre', 'fra', 'fr'],
+    'es': ['spanish', 'spa', 'es'],
+    'it': ['italian', 'ita', 'it'],
+    'pt': ['portuguese', 'por', 'pt'],
+    'ja': ['japanese', 'jpn', 'ja', 'jp'],
+    'ko': ['korean', 'kor', 'ko'],
+    'zh': ['chinese', 'zho', 'chi', 'zh'],
+    'ru': ['russian', 'rus', 'ru'],
+    'pl': ['polish', 'pol', 'pl'],
+    'nl': ['dutch', 'nld', 'dut', 'nl'],
+    'sk': ['slovak', 'slk', 'slo', 'sk'],
+    'hu': ['hungarian', 'hun', 'hu'],
+    'multi': ['multi'],
+  };
+
+  // Build set of all alias words the user wants
+  const wantedWords = new Set();
+  for (const lang of userLangs) {
+    wantedWords.add(lang);
+    const al = aliases[lang] || [];
+    for (const a of al) wantedWords.add(a);
+    // Reverse: if user typed "japanese", also match "ja"
+    for (const [key, vals] of Object.entries(aliases)) {
+      if (vals.includes(lang)) { wantedWords.add(key); for (const v of vals) wantedWords.add(v); }
+    }
+  }
+
+  // Split language string by common separators and keep only matching parts
+  const parts = langStr.split(/\s*[-,/]\s*/);
+  const kept = parts.filter(p => wantedWords.has(p.toLowerCase().trim()));
+
+  return kept.length ? kept.join(' - ') : '';
+}
+
 app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
   const token = req.params.token;
   const type = req.params.type;
@@ -1676,8 +1719,17 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
 
     // Build info line: source | 🔊 lang | 💬 subs | 📦 size | 📅 date
     const infoParts = [sourceLabel];
-    if (t.language) infoParts.push(`🔊 ${t.language}`);
-    if (t.subs) infoParts.push(`💬 ${t.subs}`);
+
+    // Filter languages based on user's langPriority (show only matching languages)
+    const userLangs = (user?.langPriority || []).map(l => l.toLowerCase());
+    if (t.language) {
+      const filtered = filterLangString(t.language, userLangs);
+      if (filtered) infoParts.push(`🔊 ${filtered}`);
+    }
+    if (t.subs) {
+      const filtered = filterLangString(t.subs, userLangs);
+      if (filtered) infoParts.push(`💬 ${filtered}`);
+    }
     infoParts.push(`📦 ${t.filesize || '?'}`);
     if (t.usenetdate) {
       try {
