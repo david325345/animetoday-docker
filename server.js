@@ -1244,10 +1244,10 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
 // ===== STREMIO: NYAA NZB SEARCH ADDON =====
 app.get('/:token/nzb/manifest.json', (req, res) => {
   res.json({
-    id: 'cz.nyaa.nzb.v1',
+    id: 'cz.nzb.search.v1',
     version: '1.0.0',
-    name: 'Nyaa NZB Search',
-    description: 'Anime NZB z AnimeTosho + NZBgeek — Usenet streaming přes TorBox.',
+    name: 'NZB Search',
+    description: 'NZB z NZBgeek + AnimeTosho — Usenet streaming přes TorBox. Anime, seriály, filmy.',
     logo: `${BASE_URL}/logo-nzb.png`,
     resources: ['stream'],
     types: ['series', 'movie'],
@@ -1468,7 +1468,20 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
     const tags = [quality].filter(Boolean);
     const line1 = tags.join(' · ');
     const sourceLabel = t.source === 'nzbgeek' ? '📰 NZBgeek' : '📡 AT';
-    const title = `${line1 ? line1 + '\n' : ''}${name}\n${sourceLabel} | 📦 ${t.filesize || '?'}`;
+
+    // Build info line: source | 🔊 lang | 💬 subs | 📦 size | 📅 date
+    const infoParts = [sourceLabel];
+    if (t.language) infoParts.push(`🔊 ${t.language}`);
+    if (t.subs) infoParts.push(`💬 ${t.subs}`);
+    infoParts.push(`📦 ${t.filesize || '?'}`);
+    if (t.usenetdate) {
+      try {
+        const d = new Date(t.usenetdate);
+        if (!isNaN(d)) infoParts.push(`📅 ${d.getDate()}.${d.getMonth() + 1}.`);
+      } catch {}
+    }
+    const infoLine = infoParts.join(' | ');
+    const title = `${line1 ? line1 + '\n' : ''}${name}\n${infoLine}`;
 
     // Use nzb_url directly — AnimeTosho and NZBgeek both provide working URLs
     const nzbUrl = t.nzb_url;
