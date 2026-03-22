@@ -13,7 +13,7 @@ const { generateAllPosters, formatTimeCET } = require('./lib/posters');
 const { startRssFetcher, clearRssIndex, searchRssIndex, getRssStats } = require('./lib/rss');
 const { getTBStatus, getTBStream, getTBNZBStream } = require('./lib/torbox');
 const { searchNekobt, validateApiKey: validateNekobtKey, sortNekobtResults } = require('./lib/nekobt');
-const { searchByTVDB: nzbgeekSearch, validateApiKey: validateNzbgeekKey, getNzbUrl } = require('./lib/nzbgeek');
+const { searchByTVDB: nzbgeekSearch, validateApiKey: validateNzbgeekKey } = require('./lib/nzbgeek');
 
 process.on('uncaughtException', (err) => { console.error('⚠️ Uncaught:', err.message); console.error(err.stack); });
 process.on('unhandledRejection', (err) => { console.error('⚠️ Unhandled:', err?.message || err); });
@@ -1446,11 +1446,8 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
     const sourceLabel = t.source === 'nzbgeek' ? '📰 NZBgeek' : '📡 AT';
     const title = `${line1 ? line1 + '\n' : ''}${name}\n${sourceLabel} | 📦 ${t.filesize || '?'}`;
 
-    // For NZBgeek results, construct proper NZB URL with user's API key
-    let nzbUrl = t.nzb_url;
-    if (t.source === 'nzbgeek' && t.guid && hasNzbgeek) {
-      nzbUrl = getNzbUrl(t.guid, user.nzbgeek_api_key);
-    }
+    // Use nzb_url directly — AnimeTosho and NZBgeek both provide working URLs
+    const nzbUrl = t.nzb_url;
 
     if (nzbUrl) {
       streams.push({
