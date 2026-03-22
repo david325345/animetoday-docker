@@ -1291,7 +1291,10 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
     else if (t.nekobt && t.mtl) tags.push('⚠️MTL');
     if (t.seadex && t.dualAudio) tags.push('Dual Audio');
     const line1 = tags.filter(Boolean).join(' · ');
-    const title = `${line1 ? line1 + '\n' : ''}${name}\n👥 ${parseInt(t.seeders) || 0} seeders | 📦 ${t.filesize || '?'}`;
+    const statsLine = t.seadex
+      ? `📦 ${t.filesize || '?'}`
+      : `👥 ${parseInt(t.seeders) || 0} seeders | 📦 ${t.filesize || '?'}`;
+    const title = `${line1 ? line1 + '\n' : ''}${name}\n${statsLine}`;
 
     // Stream name label
     const streamName = t.seadex ? (t.isBest ? '🏆 Best' : '🏆 SD') :
