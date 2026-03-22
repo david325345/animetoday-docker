@@ -1314,8 +1314,7 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
 
     // Unified format: "🏆 SeaDex Best · 1080p · [Group]\nTorrent Name\n👥 seeders | 📦 size"
     const tags = [];
-    if (t.seadex && t.isBest) tags.push('🏆 SeaDex Best');
-    else if (t.seadex) tags.push('🏆 SeaDex');
+    if (t.seadex) tags.push('🏆 SeaDex');
     if (quality) tags.push(quality);
     if (t.nekobt && t.groups?.length) tags.push(`[${t.groups[0]}]`);
     if (t.nekobt && t.level >= 3) tags.push('⭐OTL');
@@ -1328,8 +1327,8 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
     const title = `${line1 ? line1 + '\n' : ''}${name}\n${statsLine}`;
 
     // Stream name label
-    const streamName = t.seadex ? (t.isBest ? '🏆 Best' : '🏆 SD') :
-                       t.nekobt ? '🐱 NekoBT' : '🎌';
+    const streamName = t.seadex ? '🏆' :
+                       t.nekobt ? '🐱' : '🎌';
 
     if (hasRD) {
       streams.push({ name: `${streamName} RD`, title,
