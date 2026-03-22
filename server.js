@@ -265,20 +265,23 @@ app.get('/api/sort-prefs/:token', (req, res) => {
     customSortEnabled: user.customSortEnabled || false,
     groupPriority: user.groupPriority || DEFAULT_GROUPS,
     resPriority: user.resPriority || DEFAULT_RESOLUTIONS,
+    langPriority: user.langPriority || [],
     excludedResolutions: user.excludedResolutions || [],
     sortBySeeders: user.sortBySeeders !== false,
     defaultGroups: DEFAULT_GROUPS,
-    defaultResolutions: DEFAULT_RESOLUTIONS
+    defaultResolutions: DEFAULT_RESOLUTIONS,
+    defaultLangs: []
   });
 });
 
 app.post('/api/sort-prefs/:token', express.json(), (req, res) => {
   const user = config.getUser(req.params.token);
   if (!user) return res.status(404).json({ error: 'User not found' });
-  const { customSortEnabled, groupPriority, resPriority, excludedResolutions, sortBySeeders } = req.body;
+  const { customSortEnabled, groupPriority, resPriority, langPriority, excludedResolutions, sortBySeeders } = req.body;
   if (typeof customSortEnabled === 'boolean') user.customSortEnabled = customSortEnabled;
   if (Array.isArray(groupPriority)) user.groupPriority = groupPriority;
   if (Array.isArray(resPriority)) user.resPriority = resPriority;
+  if (Array.isArray(langPriority)) user.langPriority = langPriority;
   if (Array.isArray(excludedResolutions)) user.excludedResolutions = excludedResolutions;
   if (typeof sortBySeeders === 'boolean') user.sortBySeeders = sortBySeeders;
   config.saveUser(req.params.token, user);
@@ -1257,6 +1260,54 @@ app.get('/:token/nzb/manifest.json', (req, res) => {
   });
 });
 
+// ===== Language score helper for NZB sorting =====
+// Returns lowest index from langOrder found in item's language/subs/title
+// Lower = better match. Items with no match get langOrder.length (worst)
+function getLangScore(item, langOrder) {
+  // Combine all language info: NZBgeek attrs + title keywords
+  const langText = [
+    item.language || '',
+    item.subs || '',
+    item.name || ''
+  ].join(' ').toLowerCase();
+
+  // Common language aliases
+  const aliases = {
+    'cz': ['czech', 'cze', 'ces', 'cz'],
+    'en': ['english', 'eng', 'en'],
+    'de': ['german', 'deu', 'ger', 'de'],
+    'fr': ['french', 'fre', 'fra', 'fr'],
+    'es': ['spanish', 'spa', 'es'],
+    'it': ['italian', 'ita', 'it'],
+    'pt': ['portuguese', 'por', 'pt'],
+    'ja': ['japanese', 'jpn', 'ja'],
+    'ko': ['korean', 'kor', 'ko'],
+    'zh': ['chinese', 'zho', 'chi', 'zh'],
+    'ru': ['russian', 'rus', 'ru'],
+    'pl': ['polish', 'pol', 'pl'],
+    'nl': ['dutch', 'nld', 'dut', 'nl'],
+    'sk': ['slovak', 'slk', 'slo', 'sk'],
+    'hu': ['hungarian', 'hun', 'hu'],
+    'multi': ['multi'],
+  };
+
+  for (let i = 0; i < langOrder.length; i++) {
+    const lang = langOrder[i].toLowerCase();
+    // Direct match
+    if (langText.includes(lang)) return i;
+    // Alias match
+    const aliasList = aliases[lang] || [];
+    for (const alias of aliasList) {
+      if (langText.includes(alias)) return i;
+    }
+    // Also check if any alias key matches this lang
+    for (const [key, vals] of Object.entries(aliases)) {
+      if (vals.includes(lang) && (langText.includes(key) || vals.some(v => langText.includes(v)))) return i;
+    }
+  }
+  return langOrder.length; // no match
+}
+
 app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
   const token = req.params.token;
   const type = req.params.type;
@@ -1434,6 +1485,7 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
   let sorted = nzbResults;
   if (user?.customSortEnabled) {
     const resOrder = user.resPriority || DEFAULT_RESOLUTIONS;
+    const langOrder = (user.langPriority || []).map(l => l.toLowerCase());
     const excludedRes = new Set((user.excludedResolutions || []).map(r => r.toLowerCase()));
 
     // Filter excluded resolutions
@@ -1443,8 +1495,16 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
       return true;
     });
 
-    // Sort by resolution priority, then by grabs/seeders
+    // Sort by: language priority → resolution priority → grabs/seeders
     sorted.sort((a, b) => {
+      // Language priority (from NZBgeek language/subs attrs + title)
+      if (langOrder.length) {
+        const aLangScore = getLangScore(a, langOrder);
+        const bLangScore = getLangScore(b, langOrder);
+        if (aLangScore !== bLangScore) return aLangScore - bLangScore;
+      }
+
+      // Resolution priority
       const aRes = detectQuality(a.name);
       const bRes = detectQuality(b.name);
       const aResIdx = aRes ? resOrder.indexOf(aRes) : -1;
@@ -1452,6 +1512,7 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
       const aResPri = aResIdx >= 0 ? aResIdx : resOrder.length;
       const bResPri = bResIdx >= 0 ? bResIdx : resOrder.length;
       if (aResPri !== bResPri) return aResPri - bResPri;
+
       // By grabs or seeders
       return (parseInt(b.grabs) || parseInt(b.seeders) || 0) - (parseInt(a.grabs) || parseInt(a.seeders) || 0);
     });
@@ -1477,7 +1538,11 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
     if (t.usenetdate) {
       try {
         const d = new Date(t.usenetdate);
-        if (!isNaN(d)) infoParts.push(`📅 ${d.getDate()}.${d.getMonth() + 1}.`);
+        if (!isNaN(d)) {
+          const days = Math.floor((Date.now() - d.getTime()) / 86400000);
+          const age = days < 1 ? '<1d' : days < 30 ? `${days}d` : days < 365 ? `${Math.floor(days / 7)}w` : `${Math.floor(days / 365)}y`;
+          infoParts.push(`📅 ${age}`);
+        }
       } catch {}
     }
     const infoLine = infoParts.join(' | ');
