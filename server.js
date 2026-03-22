@@ -1224,11 +1224,22 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
     } else if (fullId.startsWith('anilist:')) {
       seadexAnilistId = parseInt(fullId.split(':')[1]);
     } else {
-      // Try to find AniList ID from offline-db via IMDb/Kitsu
+      // Try to find AniList ID from offline-db via IMDb
       if (fullId.startsWith('tt')) {
         const imdbBase = fullId.split(':')[0];
+        // Method 1: scan offline-db for IMDb match
         for (const [alId, rec] of offlineDB.byAniList) {
           if (rec.imdb === imdbBase) { seadexAnilistId = alId; break; }
+        }
+        // Method 2: check todayAnimeCache
+        if (!seadexAnilistId) {
+          for (const s of todayAnimeCache) {
+            const rec = offlineDB.byAniList.get(s.media.id);
+            if (rec?.imdb === imdbBase || s.resolvedImdbId === imdbBase) {
+              seadexAnilistId = s.media.id;
+              break;
+            }
+          }
         }
       } else if (fullId.startsWith('kitsu:')) {
         const kitsuId = parseInt(fullId.split(':')[1]);
@@ -1236,6 +1247,8 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
         if (rec?.anilist) seadexAnilistId = rec.anilist;
       }
     }
+
+    console.log(`  🏆 SeaDex: enabled, AniList ID=${seadexAnilistId || 'none'} (from ${fullId.split(':')[0]})`);
 
     if (seadexAnilistId) {
       const seadexResults = await seadexSearch(seadexAnilistId);
