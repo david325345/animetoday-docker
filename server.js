@@ -903,7 +903,6 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
   console.log(`=== STREAM === type=${type} id=${fullId}`);
 
   let { season, episode } = parseEpisodeAndSeason(fullId);
-  let torrents = [];
 
   // Detect if episode was explicitly provided in the ID
   const idParts = fullId.split(':');
@@ -949,7 +948,116 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
     }
   }
 
-  // Handle at: ID format from Anime Today: at:187941:1:5 or at:187941:5
+  // ===== UNIFIED ID RESOLVE (before any search) =====
+  const resolved = { anidbId: null, anilistId: null, tvdbId: null, names: [], title: null };
+
+  if (fullId.startsWith('at:')) {
+    const alId = parseInt(fullId.split(':')[1]);
+    resolved.anilistId = alId;
+    const rec = offlineDB.byAniList.get(alId);
+    if (rec) {
+      resolved.anidbId = rec.anidb || null;
+      resolved.tvdbId = rec.tvdb || null;
+      resolved.title = rec.title || null;
+      if (rec.title) resolved.names.push(rec.title);
+    }
+    const sched = todayAnimeCache.find(s => s.media.id === alId);
+    if (sched?.media?.title) {
+      const { romaji, english } = sched.media.title;
+      if (romaji && !resolved.names.includes(romaji)) resolved.names.push(romaji);
+      if (english && !resolved.names.includes(english)) resolved.names.push(english);
+    }
+  } else if (fullId.startsWith('anilist:')) {
+    const alId = parseInt(fullId.split(':')[1]);
+    resolved.anilistId = alId;
+    const rec = offlineDB.byAniList.get(alId);
+    if (rec) {
+      resolved.anidbId = rec.anidb || null;
+      resolved.tvdbId = rec.tvdb || null;
+      resolved.title = rec.title || null;
+      if (rec.title) resolved.names.push(rec.title);
+    }
+  } else if (fullId.startsWith('kitsu:')) {
+    const kitsuId = parseInt(fullId.split(':')[1]);
+    const rec = offlineDB.byKitsu.get(kitsuId);
+    if (rec) {
+      resolved.anidbId = rec.anidb || null;
+      resolved.anilistId = rec.anilist || null;
+      resolved.tvdbId = rec.tvdb || null;
+      resolved.title = rec.title || null;
+      if (rec.title) resolved.names.push(rec.title);
+    }
+  } else if (fullId.startsWith('tvdb:')) {
+    const tvdbId = fullId.split(':')[1];
+    resolved.tvdbId = tvdbId;
+    const tvdbResolved = resolveViaTVDB(tvdbId, season, episode);
+    if (tvdbResolved?.anidbId) {
+      resolved.anidbId = tvdbResolved.anidbId;
+      const rec = offlineDB.byAniDB.get(tvdbResolved.anidbId);
+      if (rec) {
+        resolved.anilistId = rec.anilist || null;
+        resolved.title = rec.title || null;
+        if (rec.title) resolved.names.push(rec.title);
+      }
+    }
+  } else if (fullId.startsWith('tt')) {
+    // IMDb — try offline-db scan + anime-lists
+    const imdbBase = fullId.split(':')[0];
+    for (const [alId, rec] of offlineDB.byAniList) {
+      if (rec.imdb === imdbBase) {
+        resolved.anilistId = alId;
+        resolved.anidbId = rec.anidb || null;
+        resolved.tvdbId = rec.tvdb || null;
+        resolved.title = rec.title || null;
+        if (rec.title) resolved.names.push(rec.title);
+        break;
+      }
+    }
+    // Fallback: todayAnimeCache
+    if (!resolved.anilistId) {
+      for (const s of todayAnimeCache) {
+        const rec = offlineDB.byAniList.get(s.media.id);
+        if (rec?.imdb === imdbBase || s.resolvedImdbId === imdbBase) {
+          resolved.anilistId = s.media.id;
+          resolved.anidbId = rec?.anidb || null;
+          resolved.tvdbId = rec?.tvdb || null;
+          resolved.title = rec?.title || null;
+          if (rec?.title && !resolved.names.includes(rec.title)) resolved.names.push(rec.title);
+          if (s.media?.title?.romaji && !resolved.names.includes(s.media.title.romaji)) resolved.names.push(s.media.title.romaji);
+          if (s.media?.title?.english && !resolved.names.includes(s.media.title.english)) resolved.names.push(s.media.title.english);
+          break;
+        }
+      }
+    }
+  }
+
+  console.log(`  🔗 Resolved: AniDB=${resolved.anidbId || '?'}, AniList=${resolved.anilistId || '?'}, TVDB=${resolved.tvdbId || '?'}, names=[${resolved.names.join(', ')}]`);
+
+  // Detect today's anime early (needed for RSS)
+  let isTodayAnime = false;
+  let todaySchedule = null;
+  if (!isMovie) {
+    for (const s of todayAnimeCache) {
+      const rec = offlineDB.byAniList.get(s.media.id);
+      if (resolved.anilistId && s.media.id === resolved.anilistId) { isTodayAnime = true; todaySchedule = s; break; }
+      if (rec?.imdb && fullId.startsWith(rec.imdb)) { isTodayAnime = true; todaySchedule = s; break; }
+    }
+    // Add today schedule names to resolved
+    if (todaySchedule?.media?.title) {
+      const { romaji, english } = todaySchedule.media.title;
+      if (romaji && !resolved.names.includes(romaji)) resolved.names.push(romaji);
+      if (english && !resolved.names.includes(english)) resolved.names.push(english);
+    }
+  }
+
+  // ===== PARALLEL SEARCH: AnimeTosho + NekoBT + SeaDex =====
+  const hasNekobt = user?.nekobt_api_key && user?.nekobt_enabled !== false;
+  const hasSeadex = user?.seadex_enabled;
+
+  // AnimeTosho search task (complex flow with fallbacks)
+  const atSearchTask = (async () => {
+    let torrents = [];
+    // Handle at: ID format from Anime Today: at:187941:1:5 or at:187941:5
   if (fullId.startsWith('at:')) {
     const parts = fullId.split(':');
     const anilistId = parseInt(parts[1]);
@@ -1102,118 +1210,42 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
 
   } // end else (IMDb/Kitsu)
 
-  // Detect if this is a today's anime — skip cache and add RSS results
-  let isTodayAnime = false;
-  let todaySchedule = null;
-  if (!isMovie) {
-    // Check if IMDb ID matches any today anime
-    for (const s of todayAnimeCache) {
-      const rec = offlineDB.byAniList.get(s.media.id);
-      if (rec?.imdb && fullId.startsWith(rec.imdb)) { isTodayAnime = true; todaySchedule = s; break; }
-    }
-    // Check AniList ID
-    if (!isTodayAnime && fullId.startsWith('anilist:')) {
-      const alId = parseInt(fullId.split(':')[1]);
-      todaySchedule = todayAnimeCache.find(s => s.media.id === alId);
-      if (todaySchedule) isTodayAnime = true;
-    }
-    // Check at: ID (Anime Today catalog)
-    if (!isTodayAnime && fullId.startsWith('at:')) {
-      const alId = parseInt(fullId.split(':')[1]);
-      todaySchedule = todayAnimeCache.find(s => s.media.id === alId);
-      if (todaySchedule) isTodayAnime = true;
-    }
-  }
-
-  // For today's anime: add RSS results
-  if (isTodayAnime && todaySchedule) {
-    const rssNames = [todaySchedule.media.title.romaji, todaySchedule.media.title.english].filter(Boolean);
-    const rssResults = searchRssIndex(rssNames, episode);
-    if (rssResults.length) {
-      const existingHashes = new Set(torrents.map(t => t.magnet?.match(/btih:([a-zA-Z0-9]+)/i)?.[1]?.toLowerCase()).filter(Boolean));
-      const newRss = rssResults.filter(r => {
-        const hash = r.magnet?.match(/btih:([a-zA-Z0-9]+)/i)?.[1]?.toLowerCase();
-        return hash && !existingHashes.has(hash);
-      });
-      if (newRss.length) {
-        torrents = [...torrents, ...newRss];
-        console.log(`  📡 +${newRss.length} from Nyaa RSS`);
-      }
-    }
-  }
-
-  // ===== NekoBT + SeaDex: run in parallel =====
-  const hasNekobt = user?.nekobt_api_key && user?.nekobt_enabled !== false;
-  const hasSeadex = user?.seadex_enabled;
-
-  // Prepare NekoBT names (sync, no await needed)
-  const nekobtNames = [];
-  if (hasNekobt) {
-    if (todaySchedule?.media?.title) {
-      const { romaji, english } = todaySchedule.media.title;
-      if (romaji) nekobtNames.push(romaji);
-      if (english && english !== romaji) nekobtNames.push(english);
-    }
-    if (fullId.startsWith('at:')) {
-      const anilistId = parseInt(fullId.split(':')[1]);
-      const rec = offlineDB.byAniList.get(anilistId);
-      if (rec?.title && !nekobtNames.includes(rec.title)) nekobtNames.push(rec.title);
-      const schedule = todayAnimeCache.find(s => s.media.id === anilistId);
-      if (schedule?.media?.title) {
-        const { romaji, english } = schedule.media.title;
-        if (romaji && !nekobtNames.includes(romaji)) nekobtNames.push(romaji);
-        if (english && !nekobtNames.includes(english)) nekobtNames.push(english);
-      }
-    }
-  }
-
-  // Prepare SeaDex AniList ID (sync lookups first, async fallback in promise)
-  let seadexAnilistId = null;
-  if (hasSeadex) {
-    if (fullId.startsWith('at:')) {
-      seadexAnilistId = parseInt(fullId.split(':')[1]);
-    } else if (fullId.startsWith('anilist:')) {
-      seadexAnilistId = parseInt(fullId.split(':')[1]);
-    } else if (fullId.startsWith('tt')) {
-      const imdbBase = fullId.split(':')[0];
-      for (const [alId, rec] of offlineDB.byAniList) {
-        if (rec.imdb === imdbBase) { seadexAnilistId = alId; break; }
-      }
-      if (!seadexAnilistId) {
-        for (const s of todayAnimeCache) {
-          const rec = offlineDB.byAniList.get(s.media.id);
-          if (rec?.imdb === imdbBase || s.resolvedImdbId === imdbBase) {
-            seadexAnilistId = s.media.id; break;
-          }
+    // Add RSS for today's anime
+    if (isTodayAnime && todaySchedule) {
+      const rssNames = [todaySchedule.media.title.romaji, todaySchedule.media.title.english].filter(Boolean);
+      const rssResults = searchRssIndex(rssNames, episode);
+      if (rssResults.length) {
+        const existingHashes = new Set(torrents.map(t => t.magnet?.match(/btih:([a-zA-Z0-9]+)/i)?.[1]?.toLowerCase()).filter(Boolean));
+        const newRss = rssResults.filter(r => {
+          const hash = r.magnet?.match(/btih:([a-zA-Z0-9]+)/i)?.[1]?.toLowerCase();
+          return hash && !existingHashes.has(hash);
+        });
+        if (newRss.length) {
+          torrents = [...torrents, ...newRss];
+          console.log(`  📡 +${newRss.length} from Nyaa RSS`);
         }
       }
-    } else if (fullId.startsWith('kitsu:')) {
-      const kitsuId = parseInt(fullId.split(':')[1]);
-      const rec = offlineDB.byKitsu.get(kitsuId);
-      if (rec?.anilist) seadexAnilistId = rec.anilist;
     }
-  }
 
-  // Launch parallel searches
-  const parallelTasks = [];
+    return torrents;
+  })().catch(err => { console.error(`  AT search error: ${err.message}`); return []; });
 
-  // NekoBT task
-  if (hasNekobt && nekobtNames.length) {
-    console.log(`  🐱 NekoBT search: [${nekobtNames.join(', ')}] S${season}E${episode}`);
-    parallelTasks.push(
-      searchNekobt(nekobtNames, user.nekobt_api_key, season, episode, isMovie)
-        .then(results => ({ source: 'nekobt', results }))
-        .catch(() => ({ source: 'nekobt', results: [] }))
-    );
-  } else if (hasNekobt && !nekobtNames.length) {
-    // Need async name resolve for NekoBT
-    parallelTasks.push(
+  // NekoBT search task
+  const nekobtTask = (hasNekobt && resolved.names.length) ?
+    (async () => {
+      console.log(`  🐱 NekoBT search: [${resolved.names.join(', ')}] S${season}E${episode}`);
+      return await searchNekobt(resolved.names, user.nekobt_api_key, season, episode, isMovie);
+    })().catch(() => []) :
+    // Fallback: need async name resolve
+    (hasNekobt ?
       (async () => {
-        const names = [];
-        try {
-          const resolved = await resolveToAniDB(type, fullId);
-          if (resolved?.title) names.push(resolved.title);
-        } catch {}
+        const names = [...resolved.names];
+        if (!names.length) {
+          try {
+            const res = await resolveToAniDB(type, fullId);
+            if (res?.title) names.push(res.title);
+          } catch {}
+        }
         if (!names.length && fullId.startsWith('tt')) {
           try {
             const cine = await axios.get(`https://v3-cinemeta.strem.io/meta/${type}/${fullId.split(':')[0]}.json`, { timeout: 5000 });
@@ -1222,68 +1254,66 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
         }
         if (names.length) {
           console.log(`  🐱 NekoBT search: [${names.join(', ')}] S${season}E${episode}`);
-          return { source: 'nekobt', results: await searchNekobt(names, user.nekobt_api_key, season, episode, isMovie) };
+          return await searchNekobt(names, user.nekobt_api_key, season, episode, isMovie);
         }
-        return { source: 'nekobt', results: [] };
-      })().catch(() => ({ source: 'nekobt', results: [] }))
+        return [];
+      })().catch(() => []) :
+      Promise.resolve([])
     );
-  }
 
-  // SeaDex task
-  if (hasSeadex) {
-    parallelTasks.push(
-      (async () => {
-        // Async fallback for AniList ID if sync lookups failed
-        let alId = seadexAnilistId;
-        if (!alId && fullId.startsWith('tt')) {
-          try {
-            const resolved = await resolveToAniDB('series', fullId.split(':')[0]);
-            if (resolved?.anidb) {
-              const rec = offlineDB.byAniDB.get(resolved.anidb);
-              if (rec?.anilist) alId = rec.anilist;
-            }
-          } catch {}
-        }
-        if (alId) {
-          console.log(`  🏆 SeaDex: searching AniList ${alId}`);
-          return { source: 'seadex', results: await seadexSearch(alId) };
-        }
-        console.log(`  🏆 SeaDex: no AniList ID resolved`);
-        return { source: 'seadex', results: [] };
-      })().catch(() => ({ source: 'seadex', results: [] }))
-    );
-  }
+  // SeaDex search task
+  const seadexTask = hasSeadex ?
+    (async () => {
+      let alId = resolved.anilistId;
+      // Async fallback if no AniList ID yet
+      if (!alId && fullId.startsWith('tt')) {
+        try {
+          const res = await resolveToAniDB('series', fullId.split(':')[0]);
+          if (res?.anidb) {
+            const rec = offlineDB.byAniDB.get(res.anidb);
+            if (rec?.anilist) alId = rec.anilist;
+          }
+        } catch {}
+      }
+      if (alId) {
+        console.log(`  🏆 SeaDex: searching AniList ${alId}`);
+        return await seadexSearch(alId);
+      }
+      console.log(`  🏆 SeaDex: no AniList ID resolved`);
+      return [];
+    })().catch(() => []) :
+    Promise.resolve([]);
 
-  // Wait for all parallel tasks
-  const parallelResults = await Promise.all(parallelTasks);
+  // ===== Run all three in parallel =====
+  const [atResults, nekobtResults, seadexResults] = await Promise.all([atSearchTask, nekobtTask, seadexTask]);
 
-  // Process NekoBT results
-  const nekobtResult = parallelResults.find(r => r.source === 'nekobt');
-  if (nekobtResult?.results?.length) {
+  let torrents = atResults;
+
+  // Merge NekoBT results
+  if (nekobtResults.length) {
     const existingHashes = new Set(
       torrents.map(t => {
         const h = t.infohash || t.magnet?.match(/btih:([a-zA-Z0-9]+)/i)?.[1];
         return h?.toLowerCase();
       }).filter(Boolean)
     );
-    const newNekobt = nekobtResult.results.filter(t => {
+    const newNekobt = nekobtResults.filter(t => {
       const h = t.infohash?.toLowerCase();
       return h && !existingHashes.has(h);
     });
     if (newNekobt.length) {
-      const sorted = sortNekobtResults(newNekobt);
-      torrents = [...torrents, ...sorted];
-      console.log(`  🐱 +${newNekobt.length} unique from NekoBT (${nekobtResult.results.length - newNekobt.length} duplicates)`);
+      const sortedNeko = sortNekobtResults(newNekobt);
+      torrents = [...torrents, ...sortedNeko];
+      console.log(`  🐱 +${newNekobt.length} unique from NekoBT (${nekobtResults.length - newNekobt.length} duplicates)`);
     } else {
-      console.log(`  🐱 NekoBT: all ${nekobtResult.results.length} results already present`);
+      console.log(`  🐱 NekoBT: all ${nekobtResults.length} results already present`);
     }
   }
 
-  // Process SeaDex results — mark existing + add new
-  const seadexResult = parallelResults.find(r => r.source === 'seadex');
-  if (seadexResult?.results?.length) {
+  // Merge SeaDex results — mark existing + add new
+  if (seadexResults.length) {
     const seadexByHash = new Map();
-    for (const sr of seadexResult.results) {
+    for (const sr of seadexResults) {
       if (sr.infohash) seadexByHash.set(sr.infohash.toLowerCase(), sr);
     }
     let marked = 0;
@@ -1300,7 +1330,7 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
     }
     const remaining = [...seadexByHash.values()];
     if (remaining.length) torrents = [...torrents, ...remaining];
-    console.log(`  🏆 SeaDex: ${marked} marked, +${remaining.length} new (${seadexResult.results.length} total)`);
+    console.log(`  🏆 SeaDex: ${marked} marked, +${remaining.length} new (${seadexResults.length} total)`);
   }
 
   if (!torrents.length) {
