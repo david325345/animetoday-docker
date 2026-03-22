@@ -294,6 +294,10 @@
                     <div class="sort-col">
                         <h3>📺 Priorita rozlišení</h3>
                         <ul class="sort-list" id="res-list"></ul>
+                        <div class="add-group-row">
+                            <input type="text" id="new-res-input" class="input" placeholder="Rozlišení (4K, 1080p, SeaDex, ...)" style="font-size:12px;padding:8px 10px;">
+                            <button class="btn btn-s btn-sm" onclick="addRes()" style="padding:8px 14px;font-size:12px;">+</button>
+                        </div>
                         <h3 style="margin-top:16px;">🚫 Vyloučit rozlišení</h3>
                         <div class="res-exclude" id="res-exclude"></div>
                     </div>
@@ -621,7 +625,7 @@ function renderSortList(containerId, items, type) {
         `<li draggable="true" data-idx="${i}" data-type="${type}">
             <span class="drag-handle">☰</span>
             <span class="item-name">${item}</span>
-            ${(type === 'group' || type === 'lang') ? `<span class="remove-btn" onclick="${type === 'group' ? 'removeGroup' : 'removeLang'}(${i})">×</span>` : ''}
+            ${(type === 'group' || type === 'lang' || type === 'res') ? `<span class="remove-btn" onclick="${type === 'group' ? 'removeGroup' : type === 'lang' ? 'removeLang' : 'removeRes'}(${i})">×</span>` : ''}
         </li>`
     ).join('');
 
@@ -661,6 +665,24 @@ function toggleExcludeRes(res, exclude) {
     if (exclude && !sortPrefs.excludedResolutions.includes(res)) sortPrefs.excludedResolutions.push(res);
     if (!exclude) sortPrefs.excludedResolutions = sortPrefs.excludedResolutions.filter(r => r !== res);
     saveSortPrefs();
+}
+
+function addRes() {
+    const input = document.getElementById('new-res-input');
+    const name = input.value.trim();
+    if (!name) return;
+    if (!sortPrefs.resPriority.includes(name)) {
+        sortPrefs.resPriority.push(name);
+        saveSortPrefs();
+        renderSortPrefs();
+    }
+    input.value = '';
+}
+
+function removeRes(idx) {
+    sortPrefs.resPriority.splice(idx, 1);
+    saveSortPrefs();
+    renderSortPrefs();
 }
 
 function addLang() {
