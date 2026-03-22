@@ -1406,8 +1406,32 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
     return res.json({ streams: [] });
   }
 
-  // ===== Sort using user preferences =====
-  const sorted = sortByGroupPriority(nzbResults, user || null);
+  // ===== Sort NZB using user preferences (without magnet filter) =====
+  let sorted = nzbResults;
+  if (user?.customSortEnabled) {
+    const resOrder = user.resPriority || DEFAULT_RESOLUTIONS;
+    const excludedRes = new Set((user.excludedResolutions || []).map(r => r.toLowerCase()));
+
+    // Filter excluded resolutions
+    sorted = sorted.filter(t => {
+      const res = detectQuality(t.name);
+      if (res && excludedRes.has(res.toLowerCase())) return false;
+      return true;
+    });
+
+    // Sort by resolution priority, then by grabs/seeders
+    sorted.sort((a, b) => {
+      const aRes = detectQuality(a.name);
+      const bRes = detectQuality(b.name);
+      const aResIdx = aRes ? resOrder.indexOf(aRes) : -1;
+      const bResIdx = bRes ? resOrder.indexOf(bRes) : -1;
+      const aResPri = aResIdx >= 0 ? aResIdx : resOrder.length;
+      const bResPri = bResIdx >= 0 ? bResIdx : resOrder.length;
+      if (aResPri !== bResPri) return aResPri - bResPri;
+      // By grabs or seeders
+      return (parseInt(b.grabs) || parseInt(b.seeders) || 0) - (parseInt(a.grabs) || parseInt(a.seeders) || 0);
+    });
+  }
   const topResults = sorted.slice(0, 20);
 
   // ===== Generate TorBox NZB streams =====
