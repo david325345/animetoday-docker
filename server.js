@@ -1241,6 +1241,16 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
             }
           }
         }
+        // Method 3: resolve IMDb→AniDB via anime-lists, then AniDB→AniList via offline-db
+        if (!seadexAnilistId) {
+          try {
+            const resolved = await resolveToAniDB('series', imdbBase);
+            if (resolved?.anidb) {
+              const rec = offlineDB.byAniDB.get(resolved.anidb);
+              if (rec?.anilist) seadexAnilistId = rec.anilist;
+            }
+          } catch {}
+        }
       } else if (fullId.startsWith('kitsu:')) {
         const kitsuId = parseInt(fullId.split(':')[1]);
         const rec = offlineDB.byKitsu.get(kitsuId);
