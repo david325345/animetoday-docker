@@ -13,7 +13,7 @@ const { generateAllPosters, formatTimeCET } = require('./lib/posters');
 const { startRssFetcher, clearRssIndex, searchRssIndex, getRssStats } = require('./lib/rss');
 const { getTBStatus, getTBStream, getTBNZBStream } = require('./lib/torbox');
 const { searchNekobt, validateApiKey: validateNekobtKey, sortNekobtResults } = require('./lib/nekobt');
-const { searchByTVDB: nzbgeekSearch, validateApiKey: validateNzbgeekKey } = require('./lib/nzbgeek');
+const { searchByTVDB: nzbgeekSearch, searchByIMDb: nzbgeekMovieSearch, validateApiKey: validateNzbgeekKey } = require('./lib/nzbgeek');
 
 process.on('uncaughtException', (err) => { console.error('⚠️ Uncaught:', err.message); console.error(err.stack); });
 process.on('unhandledRejection', (err) => { console.error('⚠️ Unhandled:', err?.message || err); });
@@ -1388,8 +1388,32 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
 
   // ===== Source 2: NZBgeek =====
   const hasNzbgeek = user.nzbgeek_api_key && user.nzbgeek_enabled !== false;
-  if (hasNzbgeek && tvdbId && !isMovie) {
-    const geekResults = await nzbgeekSearch(tvdbId, season, episode, user.nzbgeek_api_key);
+  if (hasNzbgeek) {
+    let geekResults = [];
+
+    // Determine if this is anime (from offline-db)
+    let isAnime = false;
+    if (fullId.startsWith('at:') || fullId.startsWith('kitsu:') || fullId.startsWith('anilist:')) {
+      isAnime = true;
+    } else if (fullId.startsWith('tt')) {
+      // Check if IMDb ID is in anime offline-db
+      const imdbBase = fullId.split(':')[0];
+      for (const [, rec] of offlineDB.byAniList) {
+        if (rec.imdb === imdbBase) { isAnime = true; break; }
+      }
+    }
+
+    const cat = isAnime ? '5070' : null; // anime cat or all
+
+    if (isMovie && fullId.startsWith('tt')) {
+      // Movie: search by IMDb ID
+      const imdbId = fullId.split(':')[0];
+      geekResults = await nzbgeekMovieSearch(imdbId, user.nzbgeek_api_key);
+    } else if (tvdbId) {
+      // Series: search by TVDB ID
+      geekResults = await nzbgeekSearch(tvdbId, season, episode, user.nzbgeek_api_key, cat);
+    }
+
     if (geekResults.length) {
       // Deduplicate by name similarity (rough)
       const existingNames = new Set(nzbResults.map(r => r.name.toLowerCase().replace(/[^a-z0-9]/g, '')));
