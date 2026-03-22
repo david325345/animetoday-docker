@@ -1240,25 +1240,33 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
     if (seadexAnilistId) {
       const seadexResults = await seadexSearch(seadexAnilistId);
       if (seadexResults.length) {
-        // Deduplicate by infohash
-        const existingHashes = new Set(
-          torrents.map(t => {
-            const h = t.infohash || t.magnet?.match(/btih:([a-zA-Z0-9]+)/i)?.[1];
-            return h?.toLowerCase();
-          }).filter(Boolean)
-        );
-
-        const newSeadex = seadexResults.filter(t => {
-          const h = t.infohash?.toLowerCase();
-          return h && !existingHashes.has(h);
-        });
-
-        if (newSeadex.length) {
-          torrents = [...torrents, ...newSeadex];
-          console.log(`  🏆 +${newSeadex.length} unique from SeaDex (${seadexResults.length - newSeadex.length} duplicates)`);
-        } else {
-          console.log(`  🏆 SeaDex: all ${seadexResults.length} results already present`);
+        // Build hash→seadex lookup
+        const seadexByHash = new Map();
+        for (const sr of seadexResults) {
+          if (sr.infohash) seadexByHash.set(sr.infohash.toLowerCase(), sr);
         }
+
+        // Mark existing torrents that match SeaDex infohash
+        let marked = 0;
+        for (const t of torrents) {
+          const h = (t.infohash || t.magnet?.match(/btih:([a-zA-Z0-9]+)/i)?.[1] || '').toLowerCase();
+          const sr = h ? seadexByHash.get(h) : null;
+          if (sr) {
+            t.seadex = true;
+            t.isBest = sr.isBest;
+            t.dualAudio = sr.dualAudio;
+            seadexByHash.delete(h); // consumed
+            marked++;
+          }
+        }
+
+        // Add remaining SeaDex torrents not found in existing results
+        const remaining = [...seadexByHash.values()];
+        if (remaining.length) {
+          torrents = [...torrents, ...remaining];
+        }
+
+        console.log(`  🏆 SeaDex: ${marked} marked, +${remaining.length} new (${seadexResults.length} total)`);
       }
     }
   }
