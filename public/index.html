@@ -236,6 +236,16 @@
             </div>
         </div>
 
+        <!-- SeaDex -->
+        <div class="section">
+            <h2>🏆 SeaDex</h2>
+            <p class="desc">Index nejkvalitnějších anime releases — automaticky označí a upřednostní nejlepší kvalitu videa a titulků.</p>
+            <div class="switch-row">
+                <button class="toggle off" id="seadex-toggle" onclick="toggleSeadex()"></button>
+                <label>Hledat na SeaDex</label>
+            </div>
+        </div>
+
         <!-- TMDB -->
         <div class="section">
             <h2>🖼️ TMDB</h2>
@@ -331,7 +341,7 @@ function showApp() {
     document.getElementById('install-nyaa').href=`stremio://${nyaaUrl.replace(/^https?:\/\//,'')}`;
     document.getElementById('install-nzb').href=`stremio://${nzbUrl.replace(/^https?:\/\//,'')}`;
     document.getElementById('show-token').textContent=TOKEN;
-    checkRD(); checkTB(); checkNeko(); checkGeek(); checkTMDB(); loadAnime(); loadSortPrefs();
+    checkRD(); checkTB(); checkNeko(); checkGeek(); checkSeadex(); checkTMDB(); loadAnime(); loadSortPrefs();
 }
 
 async function createAccount() {
@@ -547,6 +557,22 @@ async function toggleGeek() {
     const newVal = el.className.includes('off');
     el.className = newVal ? 'toggle on' : 'toggle off';
     await fetch('/api/nzbgeek/toggle', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({token:TOKEN, enabled:newVal}) });
+}
+
+// SeaDex
+async function checkSeadex() {
+    try {
+        const r = await fetch(`/api/seadex/status/${TOKEN}`); const d = await r.json();
+        const el = document.getElementById('seadex-toggle');
+        el.className = d.enabled ? 'toggle on' : 'toggle off';
+    } catch {}
+}
+
+async function toggleSeadex() {
+    const el = document.getElementById('seadex-toggle');
+    const newVal = el.className.includes('off');
+    el.className = newVal ? 'toggle on' : 'toggle off';
+    await fetch('/api/seadex/toggle', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({token:TOKEN, enabled:newVal}) });
 }
 
 // Sort Preferences
