@@ -14,6 +14,7 @@ const { startRssFetcher, clearRssIndex, searchRssIndex, getRssStats } = require(
 const { getTBStatus, getTBStream, getTBNZBStream } = require('./lib/torbox');
 const { searchNekobt, validateApiKey: validateNekobtKey, sortNekobtResults } = require('./lib/nekobt');
 const { searchByTVDB: nzbgeekSearch, searchByIMDb: nzbgeekMovieSearch, validateApiKey: validateNzbgeekKey } = require('./lib/nzbgeek');
+const { searchByAniListId: seadexSearch, findEpisodeFile: seadexFindEpisode } = require('./lib/seadex');
 
 process.on('uncaughtException', (err) => { console.error('⚠️ Uncaught:', err.message); console.error(err.stack); });
 process.on('unhandledRejection', (err) => { console.error('⚠️ Unhandled:', err?.message || err); });
@@ -417,6 +418,22 @@ app.post('/api/nzbgeek/toggle', express.json(), (req, res) => {
   const user = config.getUser(token);
   if (!user) return res.status(404).json({ error: 'User not found' });
   user.nzbgeek_enabled = !!enabled;
+  config.saveUser(token, user);
+  res.json({ success: true });
+});
+
+// ===== SeaDex API =====
+app.get('/api/seadex/status/:token', (req, res) => {
+  const user = config.getUser(req.params.token);
+  if (!user) return res.json({ enabled: false });
+  res.json({ enabled: user.seadex_enabled || false });
+});
+
+app.post('/api/seadex/toggle', express.json(), (req, res) => {
+  const { token, enabled } = req.body;
+  const user = config.getUser(token);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  user.seadex_enabled = !!enabled;
   config.saveUser(token, user);
   res.json({ success: true });
 });
@@ -1197,6 +1214,55 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
     }
   }
 
+  // ===== SeaDex integration: search if user has SeaDex enabled =====
+  const hasSeadex = user?.seadex_enabled;
+  if (hasSeadex) {
+    // Resolve AniList ID from any source
+    let seadexAnilistId = null;
+    if (fullId.startsWith('at:')) {
+      seadexAnilistId = parseInt(fullId.split(':')[1]);
+    } else if (fullId.startsWith('anilist:')) {
+      seadexAnilistId = parseInt(fullId.split(':')[1]);
+    } else {
+      // Try to find AniList ID from offline-db via IMDb/Kitsu
+      if (fullId.startsWith('tt')) {
+        const imdbBase = fullId.split(':')[0];
+        for (const [alId, rec] of offlineDB.byAniList) {
+          if (rec.imdb === imdbBase) { seadexAnilistId = alId; break; }
+        }
+      } else if (fullId.startsWith('kitsu:')) {
+        const kitsuId = parseInt(fullId.split(':')[1]);
+        const rec = offlineDB.byKitsu.get(kitsuId);
+        if (rec?.anilist) seadexAnilistId = rec.anilist;
+      }
+    }
+
+    if (seadexAnilistId) {
+      const seadexResults = await seadexSearch(seadexAnilistId);
+      if (seadexResults.length) {
+        // Deduplicate by infohash
+        const existingHashes = new Set(
+          torrents.map(t => {
+            const h = t.infohash || t.magnet?.match(/btih:([a-zA-Z0-9]+)/i)?.[1];
+            return h?.toLowerCase();
+          }).filter(Boolean)
+        );
+
+        const newSeadex = seadexResults.filter(t => {
+          const h = t.infohash?.toLowerCase();
+          return h && !existingHashes.has(h);
+        });
+
+        if (newSeadex.length) {
+          torrents = [...torrents, ...newSeadex];
+          console.log(`  🏆 +${newSeadex.length} unique from SeaDex (${seadexResults.length - newSeadex.length} duplicates)`);
+        } else {
+          console.log(`  🏆 SeaDex: all ${seadexResults.length} results already present`);
+        }
+      }
+    }
+  }
+
   if (!torrents.length) {
     return res.json({ streams: [{ name: '❌ Nenalezeno', title: `Nenalezeno na AnimeTosho`, url: 'https://animetosho.org', behaviorHints: { notWebReady: true } }] });
   }
@@ -1215,28 +1281,34 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
     const quality = detectQuality(name);
     const epNum = isMovie ? 0 : episode;
 
-    // Unified format: "4K · [Group] · ⭐OTL\nTorrent Name\n👥 seeders | 📦 size"
-    const tags = [quality];
+    // Unified format: "🏆 SeaDex Best · 1080p · [Group]\nTorrent Name\n👥 seeders | 📦 size"
+    const tags = [];
+    if (t.seadex && t.isBest) tags.push('🏆 SeaDex Best');
+    else if (t.seadex) tags.push('🏆 SeaDex');
+    if (quality) tags.push(quality);
     if (t.nekobt && t.groups?.length) tags.push(`[${t.groups[0]}]`);
     if (t.nekobt && t.level >= 3) tags.push('⭐OTL');
     else if (t.nekobt && t.mtl) tags.push('⚠️MTL');
+    if (t.seadex && t.dualAudio) tags.push('Dual Audio');
     const line1 = tags.filter(Boolean).join(' · ');
     const title = `${line1 ? line1 + '\n' : ''}${name}\n👥 ${parseInt(t.seeders) || 0} seeders | 📦 ${t.filesize || '?'}`;
 
-    const nzbTitle = `${line1 ? line1 + '\n' : ''}${name}\n📡 Usenet | 📦 ${t.filesize || '?'}`;
+    // Stream name label
+    const streamName = t.seadex ? (t.isBest ? '🏆 Best' : '🏆 SD') :
+                       t.nekobt ? '🐱 NekoBT' : '🎌';
 
     if (hasRD) {
-      streams.push({ name: t.nekobt ? `🐱 RD` : `🎌 RD`, title,
+      streams.push({ name: `${streamName} RD`, title,
         url: `${BASE_URL}/${token}/play/${storeMagnet(t.magnet)}/${epNum}/video.mp4`,
-        behaviorHints: { bingeGroup: t.nekobt ? 'neko-rd' : 'nyaa-rd', notWebReady: true } });
+        behaviorHints: { bingeGroup: t.seadex ? 'seadex-rd' : t.nekobt ? 'neko-rd' : 'nyaa-rd', notWebReady: true } });
     }
     if (tbTorrents) {
-      streams.push({ name: t.nekobt ? `🐱 TB` : `📦 TB`, title,
+      streams.push({ name: `${streamName} TB`, title,
         url: `${BASE_URL}/${token}/play-tb/${storeMagnet(t.magnet)}/${epNum}/video.mp4`,
-        behaviorHints: { bingeGroup: t.nekobt ? 'neko-tb' : 'nyaa-tb', notWebReady: true } });
+        behaviorHints: { bingeGroup: t.seadex ? 'seadex-tb' : t.nekobt ? 'neko-tb' : 'nyaa-tb', notWebReady: true } });
     }
     if (!hasRD && !tbTorrents) {
-      streams.push({ name: t.nekobt ? `🐱 NekoBT` : `🧲 AT`, title, url: t.magnet, behaviorHints: { notWebReady: true } });
+      streams.push({ name: streamName, title, url: t.magnet, behaviorHints: { notWebReady: true } });
     }
   }
 
