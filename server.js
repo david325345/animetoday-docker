@@ -1142,21 +1142,18 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
     }
   }
 
-  // ===== NekoBT integration: search if user has NekoBT key =====
+  // ===== NekoBT + SeaDex: run in parallel =====
   const hasNekobt = user?.nekobt_api_key && user?.nekobt_enabled !== false;
-  let nekobtTorrents = [];
-  if (hasNekobt) {
-    // Collect anime names for NekoBT search
-    const nekobtNames = [];
+  const hasSeadex = user?.seadex_enabled;
 
-    // From today's anime schedule
+  // Prepare NekoBT names (sync, no await needed)
+  const nekobtNames = [];
+  if (hasNekobt) {
     if (todaySchedule?.media?.title) {
       const { romaji, english } = todaySchedule.media.title;
       if (romaji) nekobtNames.push(romaji);
       if (english && english !== romaji) nekobtNames.push(english);
     }
-
-    // From AniList ID (at: prefix)
     if (fullId.startsWith('at:')) {
       const anilistId = parseInt(fullId.split(':')[1]);
       const rec = offlineDB.byAniList.get(anilistId);
@@ -1168,130 +1165,142 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
         if (english && !nekobtNames.includes(english)) nekobtNames.push(english);
       }
     }
-
-    // From IMDb/Kitsu — try to get names from offline DB or Cinemeta
-    if (!nekobtNames.length) {
-      try {
-        const resolved = await resolveToAniDB(type, fullId);
-        if (resolved?.title) nekobtNames.push(resolved.title);
-      } catch {}
-    }
-    if (!nekobtNames.length && fullId.startsWith('tt')) {
-      try {
-        const cine = await axios.get(`https://v3-cinemeta.strem.io/meta/${type}/${fullId.split(':')[0]}.json`, { timeout: 5000 });
-        const meta = cine.data?.meta;
-        if (meta?.name) nekobtNames.push(meta.name);
-      } catch {}
-    }
-
-    if (nekobtNames.length) {
-      console.log(`  🐱 NekoBT search: [${nekobtNames.join(', ')}] S${season}E${episode}`);
-      nekobtTorrents = await searchNekobt(nekobtNames, user.nekobt_api_key, season, episode, isMovie);
-
-      // Deduplicate by infohash
-      if (nekobtTorrents.length) {
-        const existingHashes = new Set(
-          torrents.map(t => {
-            const h = t.infohash || t.magnet?.match(/btih:([a-zA-Z0-9]+)/i)?.[1];
-            return h?.toLowerCase();
-          }).filter(Boolean)
-        );
-
-        const newNekobt = nekobtTorrents.filter(t => {
-          const h = t.infohash?.toLowerCase();
-          return h && !existingHashes.has(h);
-        });
-
-        if (newNekobt.length) {
-          // Sort NekoBT results (prefer OTL level 3-4)
-          const sorted = sortNekobtResults(newNekobt);
-          torrents = [...torrents, ...sorted];
-          console.log(`  🐱 +${newNekobt.length} unique from NekoBT (${nekobtTorrents.length - newNekobt.length} duplicates)`);
-        } else {
-          console.log(`  🐱 NekoBT: all ${nekobtTorrents.length} results already in AnimeTosho`);
-        }
-      }
-    }
   }
 
-  // ===== SeaDex integration: search if user has SeaDex enabled =====
-  const hasSeadex = user?.seadex_enabled;
+  // Prepare SeaDex AniList ID (sync lookups first, async fallback in promise)
+  let seadexAnilistId = null;
   if (hasSeadex) {
-    // Resolve AniList ID from any source
-    let seadexAnilistId = null;
     if (fullId.startsWith('at:')) {
       seadexAnilistId = parseInt(fullId.split(':')[1]);
     } else if (fullId.startsWith('anilist:')) {
       seadexAnilistId = parseInt(fullId.split(':')[1]);
-    } else {
-      // Try to find AniList ID from offline-db via IMDb
-      if (fullId.startsWith('tt')) {
-        const imdbBase = fullId.split(':')[0];
-        // Method 1: scan offline-db for IMDb match
-        for (const [alId, rec] of offlineDB.byAniList) {
-          if (rec.imdb === imdbBase) { seadexAnilistId = alId; break; }
-        }
-        // Method 2: check todayAnimeCache
-        if (!seadexAnilistId) {
-          for (const s of todayAnimeCache) {
-            const rec = offlineDB.byAniList.get(s.media.id);
-            if (rec?.imdb === imdbBase || s.resolvedImdbId === imdbBase) {
-              seadexAnilistId = s.media.id;
-              break;
-            }
+    } else if (fullId.startsWith('tt')) {
+      const imdbBase = fullId.split(':')[0];
+      for (const [alId, rec] of offlineDB.byAniList) {
+        if (rec.imdb === imdbBase) { seadexAnilistId = alId; break; }
+      }
+      if (!seadexAnilistId) {
+        for (const s of todayAnimeCache) {
+          const rec = offlineDB.byAniList.get(s.media.id);
+          if (rec?.imdb === imdbBase || s.resolvedImdbId === imdbBase) {
+            seadexAnilistId = s.media.id; break;
           }
         }
-        // Method 3: resolve IMDb→AniDB via anime-lists, then AniDB→AniList via offline-db
-        if (!seadexAnilistId) {
+      }
+    } else if (fullId.startsWith('kitsu:')) {
+      const kitsuId = parseInt(fullId.split(':')[1]);
+      const rec = offlineDB.byKitsu.get(kitsuId);
+      if (rec?.anilist) seadexAnilistId = rec.anilist;
+    }
+  }
+
+  // Launch parallel searches
+  const parallelTasks = [];
+
+  // NekoBT task
+  if (hasNekobt && nekobtNames.length) {
+    console.log(`  🐱 NekoBT search: [${nekobtNames.join(', ')}] S${season}E${episode}`);
+    parallelTasks.push(
+      searchNekobt(nekobtNames, user.nekobt_api_key, season, episode, isMovie)
+        .then(results => ({ source: 'nekobt', results }))
+        .catch(() => ({ source: 'nekobt', results: [] }))
+    );
+  } else if (hasNekobt && !nekobtNames.length) {
+    // Need async name resolve for NekoBT
+    parallelTasks.push(
+      (async () => {
+        const names = [];
+        try {
+          const resolved = await resolveToAniDB(type, fullId);
+          if (resolved?.title) names.push(resolved.title);
+        } catch {}
+        if (!names.length && fullId.startsWith('tt')) {
           try {
-            const resolved = await resolveToAniDB('series', imdbBase);
+            const cine = await axios.get(`https://v3-cinemeta.strem.io/meta/${type}/${fullId.split(':')[0]}.json`, { timeout: 5000 });
+            if (cine.data?.meta?.name) names.push(cine.data.meta.name);
+          } catch {}
+        }
+        if (names.length) {
+          console.log(`  🐱 NekoBT search: [${names.join(', ')}] S${season}E${episode}`);
+          return { source: 'nekobt', results: await searchNekobt(names, user.nekobt_api_key, season, episode, isMovie) };
+        }
+        return { source: 'nekobt', results: [] };
+      })().catch(() => ({ source: 'nekobt', results: [] }))
+    );
+  }
+
+  // SeaDex task
+  if (hasSeadex) {
+    parallelTasks.push(
+      (async () => {
+        // Async fallback for AniList ID if sync lookups failed
+        let alId = seadexAnilistId;
+        if (!alId && fullId.startsWith('tt')) {
+          try {
+            const resolved = await resolveToAniDB('series', fullId.split(':')[0]);
             if (resolved?.anidb) {
               const rec = offlineDB.byAniDB.get(resolved.anidb);
-              if (rec?.anilist) seadexAnilistId = rec.anilist;
+              if (rec?.anilist) alId = rec.anilist;
             }
           } catch {}
         }
-      } else if (fullId.startsWith('kitsu:')) {
-        const kitsuId = parseInt(fullId.split(':')[1]);
-        const rec = offlineDB.byKitsu.get(kitsuId);
-        if (rec?.anilist) seadexAnilistId = rec.anilist;
+        if (alId) {
+          console.log(`  🏆 SeaDex: searching AniList ${alId}`);
+          return { source: 'seadex', results: await seadexSearch(alId) };
+        }
+        console.log(`  🏆 SeaDex: no AniList ID resolved`);
+        return { source: 'seadex', results: [] };
+      })().catch(() => ({ source: 'seadex', results: [] }))
+    );
+  }
+
+  // Wait for all parallel tasks
+  const parallelResults = await Promise.all(parallelTasks);
+
+  // Process NekoBT results
+  const nekobtResult = parallelResults.find(r => r.source === 'nekobt');
+  if (nekobtResult?.results?.length) {
+    const existingHashes = new Set(
+      torrents.map(t => {
+        const h = t.infohash || t.magnet?.match(/btih:([a-zA-Z0-9]+)/i)?.[1];
+        return h?.toLowerCase();
+      }).filter(Boolean)
+    );
+    const newNekobt = nekobtResult.results.filter(t => {
+      const h = t.infohash?.toLowerCase();
+      return h && !existingHashes.has(h);
+    });
+    if (newNekobt.length) {
+      const sorted = sortNekobtResults(newNekobt);
+      torrents = [...torrents, ...sorted];
+      console.log(`  🐱 +${newNekobt.length} unique from NekoBT (${nekobtResult.results.length - newNekobt.length} duplicates)`);
+    } else {
+      console.log(`  🐱 NekoBT: all ${nekobtResult.results.length} results already present`);
+    }
+  }
+
+  // Process SeaDex results — mark existing + add new
+  const seadexResult = parallelResults.find(r => r.source === 'seadex');
+  if (seadexResult?.results?.length) {
+    const seadexByHash = new Map();
+    for (const sr of seadexResult.results) {
+      if (sr.infohash) seadexByHash.set(sr.infohash.toLowerCase(), sr);
+    }
+    let marked = 0;
+    for (const t of torrents) {
+      const h = (t.infohash || t.magnet?.match(/btih:([a-zA-Z0-9]+)/i)?.[1] || '').toLowerCase();
+      const sr = h ? seadexByHash.get(h) : null;
+      if (sr) {
+        t.seadex = true;
+        t.isBest = sr.isBest;
+        t.dualAudio = sr.dualAudio;
+        seadexByHash.delete(h);
+        marked++;
       }
     }
-
-    console.log(`  🏆 SeaDex: enabled, AniList ID=${seadexAnilistId || 'none'} (from ${fullId.split(':')[0]})`);
-
-    if (seadexAnilistId) {
-      const seadexResults = await seadexSearch(seadexAnilistId);
-      if (seadexResults.length) {
-        // Build hash→seadex lookup
-        const seadexByHash = new Map();
-        for (const sr of seadexResults) {
-          if (sr.infohash) seadexByHash.set(sr.infohash.toLowerCase(), sr);
-        }
-
-        // Mark existing torrents that match SeaDex infohash
-        let marked = 0;
-        for (const t of torrents) {
-          const h = (t.infohash || t.magnet?.match(/btih:([a-zA-Z0-9]+)/i)?.[1] || '').toLowerCase();
-          const sr = h ? seadexByHash.get(h) : null;
-          if (sr) {
-            t.seadex = true;
-            t.isBest = sr.isBest;
-            t.dualAudio = sr.dualAudio;
-            seadexByHash.delete(h); // consumed
-            marked++;
-          }
-        }
-
-        // Add remaining SeaDex torrents not found in existing results
-        const remaining = [...seadexByHash.values()];
-        if (remaining.length) {
-          torrents = [...torrents, ...remaining];
-        }
-
-        console.log(`  🏆 SeaDex: ${marked} marked, +${remaining.length} new (${seadexResults.length} total)`);
-      }
-    }
+    const remaining = [...seadexByHash.values()];
+    if (remaining.length) torrents = [...torrents, ...remaining];
+    console.log(`  🏆 SeaDex: ${marked} marked, +${remaining.length} new (${seadexResult.results.length} total)`);
   }
 
   if (!torrents.length) {
