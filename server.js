@@ -1156,8 +1156,8 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
   const hasTB = !!user?.tb_api_key;
   const tbTorrents = hasTB && user.tb_use_torrents;
   const tbNZB = hasTB && user.tb_use_nzb;
-  // Use custom sort for today's anime, default sort otherwise
-  const sorted = isTodayAnime ? sortByGroupPriority(torrents, user) : sortByGroupPriority(torrents);
+  // Always use user sort preferences if available
+  const sorted = sortByGroupPriority(torrents, user || null);
   const maxResults = hasNekobt ? 30 : 20;
   const withMagnet = sorted.filter(t => t.magnet).slice(0, maxResults);
 
