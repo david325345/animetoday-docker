@@ -1316,7 +1316,7 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
 
       try {
         console.log(`  📦 Indexer: searching ${params.toString()}`);
-        const resp = await axios.get(`http://localhost:3003/search?${params.toString()}`, { timeout: 5000 });
+        const resp = await axios.get(`http://fksw8gcgggcgw8wkwok44gks.178.104.1.86.sslip.io/search?${params.toString()}`, { timeout: 5000 });
         const results = resp.data?.results || [];
         console.log(`  📦 Indexer: ${results.length} results`);
 
@@ -1391,24 +1391,10 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
     console.log(`  🏆 SeaDex: ${marked} marked, +${remaining.length} new (${seadexResults.length} total)`);
   }
 
-  // Merge Indexer results (always at the bottom)
+  // Merge Indexer results (always at the bottom, no dedup)
   if (indexerResults.length) {
-    const existingHashes = new Set(
-      torrents.map(t => {
-        const h = t.infohash || t.magnet?.match(/btih:([a-zA-Z0-9]+)/i)?.[1];
-        return h?.toLowerCase();
-      }).filter(Boolean)
-    );
-    const newIndexer = indexerResults.filter(t => {
-      const h = (t.infohash || t.magnet?.match(/btih:([a-zA-Z0-9]+)/i)?.[1] || '').toLowerCase();
-      return h && !existingHashes.has(h);
-    });
-    if (newIndexer.length) {
-      torrents = [...torrents, ...newIndexer];
-      console.log(`  📦 +${newIndexer.length} unique from Indexer (${indexerResults.length - newIndexer.length} duplicates)`);
-    } else if (indexerResults.length) {
-      console.log(`  📦 Indexer: all ${indexerResults.length} results already present`);
-    }
+    torrents = [...torrents, ...indexerResults];
+    console.log(`  📦 +${indexerResults.length} from Indexer`);
   }
 
   if (!torrents.length) {
