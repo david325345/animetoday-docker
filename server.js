@@ -438,6 +438,22 @@ app.post('/api/seadex/toggle', express.json(), (req, res) => {
   res.json({ success: true });
 });
 
+// ===== My Indexer API =====
+app.get('/api/indexer/status/:token', (req, res) => {
+  const user = config.getUser(req.params.token);
+  if (!user) return res.json({ enabled: false });
+  res.json({ enabled: user.indexer_enabled || false });
+});
+
+app.post('/api/indexer/toggle', express.json(), (req, res) => {
+  const { token, enabled } = req.body;
+  const user = config.getUser(token);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  user.indexer_enabled = !!enabled;
+  config.saveUser(token, user);
+  res.json({ success: true });
+});
+
 // ===== RD PLAY PROXY (shared by both addons) =====
 app.get('/:token/play/:hash/:episode/video.mp4', async (req, res) => {
   const user = config.getUser(req.params.token);
@@ -1050,9 +1066,10 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
     }
   }
 
-  // ===== PARALLEL SEARCH: AnimeTosho + NekoBT + SeaDex =====
+  // ===== PARALLEL SEARCH: AnimeTosho + NekoBT + SeaDex + My Indexer =====
   const hasNekobt = user?.nekobt_api_key && user?.nekobt_enabled !== false;
   const hasSeadex = user?.seadex_enabled;
+  const hasIndexer = user?.indexer_enabled;
 
   // AnimeTosho search task (complex flow with fallbacks)
   const atSearchTask = (async () => {
@@ -1284,8 +1301,49 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
     })().catch(() => []) :
     Promise.resolve([]);
 
-  // ===== Run all three in parallel =====
-  const [atResults, nekobtResults, seadexResults] = await Promise.all([atSearchTask, nekobtTask, seadexTask]);
+  // My Indexer task
+  const indexerTask = hasIndexer ?
+    (async () => {
+      const params = new URLSearchParams();
+      // Use best available ID
+      if (resolved.anilistId) params.set('anilist', resolved.anilistId);
+      else if (fullId.startsWith('tt')) params.set('imdb', fullId.split(':')[0]);
+      else if (resolved.tvdbId) params.set('tvdb', resolved.tvdbId);
+      if (season) params.set('season', season);
+      if (episode && !isMovie) params.set('episode', episode);
+
+      if (!params.toString()) return [];
+
+      try {
+        console.log(`  📦 Indexer: searching ${params.toString()}`);
+        const resp = await axios.get(`http://localhost:3003/search?${params.toString()}`, { timeout: 5000 });
+        const results = resp.data?.results || [];
+        console.log(`  📦 Indexer: ${results.length} results`);
+
+        return results
+          .filter(r => r.magnet || r.infohash)
+          .map(r => ({
+            name: r.name || 'Unknown',
+            magnet: r.magnet || (r.infohash ? `magnet:?xt=urn:btih:${r.infohash}` : null),
+            infohash: r.infohash || null,
+            seeders: String(r.seeders || 0),
+            filesize: r.filesize ? formatIndexerFilesize(r.filesize) : '?',
+            source: 'indexer',
+            indexer: true,
+            releaseGroup: r.group_name || '',
+            resolution: r.resolution || '',
+            dualAudio: !!r.dual_audio,
+            seadexBest: !!r.seadex_best,
+          }));
+      } catch (err) {
+        console.log(`  📦 Indexer error: ${err.message}`);
+        return [];
+      }
+    })().catch(() => []) :
+    Promise.resolve([]);
+
+  // ===== Run all four in parallel =====
+  const [atResults, nekobtResults, seadexResults, indexerResults] = await Promise.all([atSearchTask, nekobtTask, seadexTask, indexerTask]);
 
   let torrents = atResults;
 
@@ -1333,6 +1391,26 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
     console.log(`  🏆 SeaDex: ${marked} marked, +${remaining.length} new (${seadexResults.length} total)`);
   }
 
+  // Merge Indexer results (always at the bottom)
+  if (indexerResults.length) {
+    const existingHashes = new Set(
+      torrents.map(t => {
+        const h = t.infohash || t.magnet?.match(/btih:([a-zA-Z0-9]+)/i)?.[1];
+        return h?.toLowerCase();
+      }).filter(Boolean)
+    );
+    const newIndexer = indexerResults.filter(t => {
+      const h = (t.infohash || t.magnet?.match(/btih:([a-zA-Z0-9]+)/i)?.[1] || '').toLowerCase();
+      return h && !existingHashes.has(h);
+    });
+    if (newIndexer.length) {
+      torrents = [...torrents, ...newIndexer];
+      console.log(`  📦 +${newIndexer.length} unique from Indexer (${indexerResults.length - newIndexer.length} duplicates)`);
+    } else if (indexerResults.length) {
+      console.log(`  📦 Indexer: all ${indexerResults.length} results already present`);
+    }
+  }
+
   if (!torrents.length) {
     return res.json({ streams: [{ name: '❌ Nenalezeno', title: `Nenalezeno na AnimeTosho`, url: 'https://animetosho.org', behaviorHints: { notWebReady: true } }] });
   }
@@ -1351,14 +1429,15 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
     const quality = detectQuality(name);
     const epNum = isMovie ? 0 : episode;
 
-    // Unified format: "🏆 SeaDex Best · 1080p · [Group]\nTorrent Name\n👥 seeders | 📦 size"
+    // Unified format: "🏆 SeaDex · 1080p · [Group]\nTorrent Name\n👥 seeders | 📦 size"
     const tags = [];
     if (t.seadex) tags.push('🏆 SeaDex');
+    if (t.indexer) tags.push('📦 Indexer');
     if (quality) tags.push(quality);
     if (t.nekobt && t.groups?.length) tags.push(`[${t.groups[0]}]`);
     if (t.nekobt && t.level >= 3) tags.push('⭐OTL');
     else if (t.nekobt && t.mtl) tags.push('⚠️MTL');
-    if (t.seadex && t.dualAudio) tags.push('Dual Audio');
+    if ((t.seadex && t.dualAudio) || (t.indexer && t.dualAudio)) tags.push('Dual Audio');
     const line1 = tags.filter(Boolean).join(' · ');
     const statsLine = t.seadex
       ? `📦 ${t.filesize || '?'}`
@@ -1367,17 +1446,18 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
 
     // Stream name label
     const streamName = t.seadex ? '🏆' :
+                       t.indexer ? '📦' :
                        t.nekobt ? '🐱' : '🎌';
 
     if (hasRD) {
       streams.push({ name: `${streamName} RD`, title,
         url: `${BASE_URL}/${token}/play/${storeMagnet(t.magnet)}/${epNum}/video.mp4`,
-        behaviorHints: { bingeGroup: t.seadex ? 'seadex-rd' : t.nekobt ? 'neko-rd' : 'nyaa-rd', notWebReady: true } });
+        behaviorHints: { bingeGroup: t.seadex ? 'seadex-rd' : t.indexer ? 'indexer-rd' : t.nekobt ? 'neko-rd' : 'nyaa-rd', notWebReady: true } });
     }
     if (tbTorrents) {
       streams.push({ name: `${streamName} TB`, title,
         url: `${BASE_URL}/${token}/play-tb/${storeMagnet(t.magnet)}/${epNum}/video.mp4`,
-        behaviorHints: { bingeGroup: t.seadex ? 'seadex-tb' : t.nekobt ? 'neko-tb' : 'nyaa-tb', notWebReady: true } });
+        behaviorHints: { bingeGroup: t.seadex ? 'seadex-tb' : t.indexer ? 'indexer-tb' : t.nekobt ? 'neko-tb' : 'nyaa-tb', notWebReady: true } });
     }
     if (!hasRD && !tbTorrents) {
       streams.push({ name: streamName, title, url: t.magnet, behaviorHints: { notWebReady: true } });
@@ -1407,6 +1487,16 @@ app.get('/:token/nzb/manifest.json', (req, res) => {
 // ===== Language score helper for NZB sorting =====
 // Returns lowest index from langOrder found in item's language/subs/title
 // Lower = better match. Items with no match get langOrder.length (worst)
+// ===== Format filesize from indexer (bytes → human readable) =====
+function formatIndexerFilesize(bytes) {
+  if (!bytes) return '?';
+  const n = parseInt(bytes);
+  if (isNaN(n)) return '?';
+  if (n >= 1073741824) return (n / 1073741824).toFixed(1) + ' GB';
+  if (n >= 1048576) return (n / 1048576).toFixed(0) + ' MB';
+  return (n / 1024).toFixed(0) + ' KB';
+}
+
 function getLangScore(item, langOrder) {
   // Combine all language info: NZBgeek attrs + title keywords
   const langText = [
