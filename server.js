@@ -1392,25 +1392,24 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
   }
 
   // Merge Indexer results (always at the bottom, no dedup)
-  if (indexerResults.length) {
-    torrents = [...torrents, ...indexerResults];
-    console.log(`  📦 +${indexerResults.length} from Indexer`);
-  }
-
-  if (!torrents.length) {
+  // Don't add indexer to main torrents — keep separate for display at bottom
+  if (!torrents.length && !indexerResults.length) {
     return res.json({ streams: [{ name: '❌ Nenalezeno', title: `Nenalezeno na AnimeTosho`, url: 'https://animetosho.org', behaviorHints: { notWebReady: true } }] });
   }
 
   const hasRD = !!user?.rd_api_key;
   const hasTB = !!user?.tb_api_key;
   const tbTorrents = hasTB && user.tb_use_torrents;
-  // Always use user sort preferences if available
+  // Sort and limit main results (AT + NekoBT + SeaDex)
   const sorted = sortByGroupPriority(torrents, user || null);
   const maxResults = hasNekobt ? 30 : 20;
   const withMagnet = sorted.filter(t => t.magnet).slice(0, maxResults);
 
+  // Append ALL indexer results at the end (no limit, no sort)
+  const allResults = [...withMagnet, ...indexerResults.filter(t => t.magnet)];
+
   const streams = [];
-  for (const t of withMagnet) {
+  for (const t of allResults) {
     const name = t.name || '';
     const quality = detectQuality(name);
     const epNum = isMovie ? 0 : episode;
@@ -1450,7 +1449,8 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
     }
   }
 
-  console.log(`  📤 Streams: ${streams.length}${hasNekobt ? ' (NekoBT enabled)' : ''}`);
+  if (indexerResults.length) console.log(`  📦 +${indexerResults.length} from Indexer (appended at bottom)`);
+  console.log(`  📤 Streams: ${streams.length}${hasNekobt ? ' (NekoBT enabled)' : ''}${hasIndexer ? ' (Indexer enabled)' : ''}`);
   res.json({ streams });
 });
 
