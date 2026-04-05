@@ -434,17 +434,41 @@ async function loadAnime() {
         const vis=d.anime.filter(a=>!a.hidden).length;
         count.textContent=`(${vis}/${d.count})`;
         if(!d.anime?.length){list.innerHTML='<div style="text-align:center;color:var(--dim);padding:20px">Žádné anime</div>';return;}
-        list.innerHTML=d.anime.map(a=>{
+
+        // Sort by airing time
+        const sorted=[...d.anime].sort((a,b)=>new Date(a.airingAt)-new Date(b.airingAt));
+
+        // Day labels
+        const dayNames=['Dnes','Zítra','Pozítří'];
+        function getDayDate(offset){
+            const d=new Date(); d.setDate(d.getDate()+offset);
+            return d.toLocaleDateString('cs-CZ',{weekday:'long',day:'numeric',month:'numeric'});
+        }
+
+        let lastDay=-1;
+        let html='';
+        for(const a of sorted){
+            // Insert separator when day changes
+            if(a.dayOffset!==undefined && a.dayOffset!==lastDay){
+                const label=a.dayOffset===0?'Dnes':a.dayOffset===1?'Zítra · '+getDayDate(1):'Pozítří · '+getDayDate(2);
+                html+=`<div style="display:flex;align-items:center;gap:12px;padding:10px 14px;margin:${lastDay===-1?'0':'8px'} 0 4px">
+                    <div style="flex:1;height:1px;background:rgba(255,77,106,0.3)"></div>
+                    <span style="color:var(--accent);font-size:13px;font-weight:600;white-space:nowrap">${label}</span>
+                    <div style="flex:1;height:1px;background:rgba(255,77,106,0.3)"></div>
+                </div>`;
+            }
+            lastDay=a.dayOffset;
+
             const t=a.title||'Unknown';
             const p=a.poster||'';
             const g=(a.genres||[]).slice(0,3).join(', ');
             const sc=a.score?`${parseFloat(a.score).toFixed(1)}`:'';
             const time=a.airingAt?new Date(a.airingAt).toLocaleTimeString('cs-CZ',{timeZone:'Europe/Prague',hour:'2-digit',minute:'2-digit',hour12:false}):'';
-            const dayLabel=a.dayOffset===1?' · Zítra':a.dayOffset===2?' · Pozítří':'';
-            return `<div class="anime-item ${a.hidden?'hid':''}">${p?`<img src="${p}" class="anime-poster" loading="lazy" onerror="this.style.display='none'">`:'<div class="anime-poster"></div>'}
-                <div class="anime-info"><div class="anime-title">${t}</div><div class="anime-meta">${time?`<span style="color:var(--accent)">${time}</span>${dayLabel} · `:''}EP ${a.episode}${g?' · '+g:''}${sc?' · '+sc:''}</div></div>
+            html+=`<div class="anime-item ${a.hidden?'hid':''}">${p?`<img src="${p}" class="anime-poster" loading="lazy" onerror="this.style.display='none'">`:'<div class="anime-poster"></div>'}
+                <div class="anime-info"><div class="anime-title">${t}</div><div class="anime-meta">${time?`<span style="color:var(--accent)">${time}</span> · `:''}EP ${a.episode}${g?' · '+g:''}${sc?' · '+sc:''}</div></div>
                 <button class="toggle ${a.hidden?'off':'on'}" onclick="toggleAnime(${a.id},${a.hidden})"></button></div>`;
-        }).join('');
+        }
+        list.innerHTML=html;
     } catch { list.innerHTML='<div style="text-align:center;color:var(--dim);padding:20px">Chyba</div>'; }
 }
 
