@@ -1292,6 +1292,26 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
 
       if (!params.toString()) return [];
 
+      const mapResults = (results) => results
+        .filter(r => r.magnet || r.infohash)
+        .map(r => ({
+          name: r.name || 'Unknown',
+          magnet: r.magnet || (r.infohash ? `magnet:?xt=urn:btih:${r.infohash}` : null),
+          infohash: r.infohash || null,
+          seeders: String(r.seeders || 0),
+          leechers: String(r.leechers || 0),
+          filesize: r.filesize ? formatIndexerFilesize(r.filesize) : '?',
+          source: 'indexer',
+          indexer: true,
+          releaseGroup: r.group_name || '',
+          resolution: r.resolution || '',
+          dualAudio: !!r.dual_audio,
+          seadexBest: !!r.seadex_best,
+          batch: !!r.batch,
+          videoSource: r.video_source || '',
+          codec: r.codec || '',
+        }));
+
       try {
         console.log(`  📦 Indexer: searching ${params.toString()}`);
         const resp = await axios.get(`https://nimetodex.duckdns.org/search?${params.toString()}`, { timeout: 8000 });
@@ -1299,25 +1319,25 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
         const ms = Date.now() - t0;
         console.log(`  📦 Indexer: ${results.length} results (${ms}ms, searchedBy: ${resp.data?.searchedBy || '?'})`);
 
-        return results
-          .filter(r => r.magnet || r.infohash)
-          .map(r => ({
-            name: r.name || 'Unknown',
-            magnet: r.magnet || (r.infohash ? `magnet:?xt=urn:btih:${r.infohash}` : null),
-            infohash: r.infohash || null,
-            seeders: String(r.seeders || 0),
-            leechers: String(r.leechers || 0),
-            filesize: r.filesize ? formatIndexerFilesize(r.filesize) : '?',
-            source: 'indexer',
-            indexer: true,
-            releaseGroup: r.group_name || '',
-            resolution: r.resolution || '',
-            dualAudio: !!r.dual_audio,
-            seadexBest: !!r.seadex_best,
-            batch: !!r.batch,
-            videoSource: r.video_source || '',
-            codec: r.codec || '',
-          }));
+        if (results.length) return mapResults(results);
+
+        // Fallback: text search by name if ID search found nothing
+        const searchName = resolved.names[0] || resolved.title;
+        if (searchName) {
+          const qParams = new URLSearchParams();
+          qParams.set('q', searchName);
+          if (season && !isMovie) qParams.set('season', season);
+          if (episode && !isMovie) qParams.set('episode', episode);
+
+          console.log(`  📦 Indexer fallback: q="${searchName}"`);
+          const qResp = await axios.get(`https://nimetodex.duckdns.org/search?${qParams.toString()}`, { timeout: 8000 });
+          const qResults = qResp.data?.results || [];
+          const qMs = Date.now() - t0;
+          console.log(`  📦 Indexer fallback: ${qResults.length} results (${qMs}ms)`);
+          return mapResults(qResults);
+        }
+
+        return [];
       } catch (err) {
         const ms = Date.now() - t0;
         console.log(`  📦 Indexer error (${ms}ms): ${err.message}`);
