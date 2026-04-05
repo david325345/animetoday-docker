@@ -5,11 +5,12 @@ const crypto = require('crypto');
 const axios = require('axios');
 
 const config = require('./lib/config');
-const { getTodayAnime } = require('./lib/anilist');
+const { fetchAnimeSchedule, formatTimeCET: simklFormatTime, getDayLabel } = require('./lib/simkl');
 const { loadOfflineDB, loadAnimeLists, loadMappingCache, resolveToAniDB, resolveEpisode, resolveViaTVDB, parseEpisodeAndSeason, weeklyUpdate, offlineDB, getTVDBFromAniDB, getTVDBInfoFromAniDB } = require('./lib/idmap');
 const { searchByAniDBId, searchByText, detectQuality, sortByGroupPriority, loadEidCache, DEFAULT_GROUPS, DEFAULT_RESOLUTIONS } = require('./lib/search');
 const { getRDStream, rdInProgress, getCacheKey, serveLoadingVideo, DOWNLOADING_VIDEO_URL, checkInstantAvailability } = require('./lib/realdebrid');
-const { generateAllPosters, formatTimeCET } = require('./lib/posters');
+const { generateAllPosters } = require('./lib/posters');
+const { formatTimeCET } = require('./lib/simkl');
 const { startRssFetcher, clearRssIndex, searchRssIndex, getRssStats } = require('./lib/rss');
 const { getTBStatus, getTBStream, getTBNZBStream } = require('./lib/torbox');
 const { searchNekobt, validateApiKey: validateNekobtKey, sortNekobtResults } = require('./lib/nekobt');
@@ -36,28 +37,12 @@ async function updateCache() {
   console.log('🔄 Updating anime cache...');
   const t0 = Date.now();
   try {
-    const schedules = await getTodayAnime();
-    await generateAllPosters(schedules, offlineDB);
-
-    // Pre-resolve IMDb IDs for all anime via TMDB (for catalog + Fusion compatibility)
-    let resolved = 0;
-    for (const s of schedules) {
-      const offRec = offlineDB.byAniList.get(s.media.id);
-      if (offRec?.imdb) {
-        s.resolvedImdbId = offRec.imdb;
-        resolved++;
-      } else if (s.media.title) {
-        const names = [s.media.title.romaji, s.media.title.english, s.media.title.native].filter(Boolean);
-        if (names.length) {
-          const imdbId = await resolveIMDbViaTMDB(names, s.media.id);
-          if (imdbId) { s.resolvedImdbId = imdbId; resolved++; }
-        }
-      }
-    }
-    console.log(`🔗 IMDb resolved: ${resolved}/${schedules.length}`);
+    const schedules = await fetchAnimeSchedule();
+    await generateAllPosters(schedules);
 
     todayAnimeCache = schedules;
-    console.log(`✅ Cache: ${todayAnimeCache.length} anime (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
+    const withImdb = schedules.filter(s => s.imdbId).length;
+    console.log(`✅ Cache: ${todayAnimeCache.length} anime, ${withImdb} with IMDb (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
   } catch (err) { console.error('❌ Cache failed:', err.message); }
 }
 
@@ -227,10 +212,11 @@ app.get('/api/anime', (req, res) => {
   res.json({
     count: todayAnimeCache.length,
     anime: todayAnimeCache.map(s => ({
-      id: s.media.id, episode: s.episode, airingAt: s.airingAt,
-      title: s.media.title, genres: s.media.genres, score: s.media.averageScore,
-      poster: s.tmdbImages?.poster || s.media.coverImage?.extraLarge,
-      hidden: hidden.includes(s.media.id)
+      id: s.simklId, episode: s.episode, airingAt: s.airingAt,
+      title: s.title, genres: s.genres, score: s.anilistScore || s.malScore,
+      poster: s.generatedPoster ? `${BASE_URL}${s.generatedPoster}` : s.posterUrl,
+      hidden: hidden.includes(s.simklId),
+      dayOffset: s.dayOffset,
     }))
   });
 });
@@ -516,14 +502,14 @@ app.get('/:token/play-nzb/:hash/:episode/video.mp4', async (req, res) => {
 // ===== STREMIO: ANIME TODAY ADDON =====
 app.get('/:token/today/manifest.json', (req, res) => {
   res.json({
-    id: 'cz.nyaa.anime.today.v7',
-    version: '7.0.0',
+    id: 'cz.nyaa.anime.today.v8',
+    version: '8.0.0',
     name: 'Anime Today',
-    description: 'Dnešní anime z AniList — katalog s postery a epizodami.',
+    description: 'Anime schedule z SIMKL — dnes + 2 dny dopředu s postery a hodnocením.',
     logo: `${BASE_URL}/logo.png`,
     resources: ['catalog', 'meta'],
     types: ['series'],
-    catalogs: [{ type: 'series', id: 'anime-today', name: 'Dnešní Anime', extra: [{ name: 'skip', isRequired: false }] }],
+    catalogs: [{ type: 'series', id: 'anime-today', name: 'Anime Schedule', extra: [{ name: 'skip', isRequired: false }] }],
     idPrefixes: ['at:'],
     behaviorHints: { configurable: false, configurationRequired: false }
   });
@@ -535,31 +521,50 @@ app.get('/:token/today/catalog/:type/:id.json', (req, res) => {
   const user = config.getUser(req.params.token);
   const hidden = user?.hidden_anime || [];
 
+  // Sort by airing time
   const sorted = [...todayAnimeCache]
-    .filter(s => !hidden.includes(s.media.id))
-    .sort((a, b) => a.airingAt - b.airingAt);
+    .filter(s => !hidden.includes(s.simklId))
+    .sort((a, b) => new Date(a.airingAt) - new Date(b.airingAt));
 
-  res.json({
-    metas: sorted.map(s => {
-      const m = s.media;
-      let poster = s.generatedPoster ? `${BASE_URL}${s.generatedPoster}` : (s.tmdbImages?.poster || m.coverImage?.extraLarge || m.coverImage?.large);
-      if (!poster || poster === 'null') poster = 'https://via.placeholder.com/230x345/1a1a2e/ffffff?text=No+Image';
-      const bg = m.bannerImage || s.tmdbImages?.backdrop || poster;
-      const time = formatTimeCET(s.airingAt);
-      const offRec = offlineDB.byAniList.get(m.id);
-      // Use IMDb ID for maximum compatibility (Fusion, Cinemeta), at: only as fallback
-      const id = s.resolvedImdbId || `at:${m.id}`;
-      return {
-        id, type: 'series',
-        name: m.title.romaji || m.title.english || m.title.native,
-        poster, background: bg || poster,
-        description: `${time} · Epizoda ${s.episode}\n\n${(m.description || '').replace(/<[^>]*>/g, '')}`,
-        genres: m.genres || [],
-        releaseInfo: `${time} · ${m.season || ''} ${m.seasonYear || ''} · Ep ${s.episode}`.trim(),
-        imdbRating: m.averageScore ? (m.averageScore / 10).toFixed(1) : undefined
-      };
-    })
-  });
+  // Build metas with day separators
+  const metas = [];
+  let lastDay = -1;
+
+  for (const s of sorted) {
+    // Insert separator when day changes (skip for today = day 0)
+    if (s.dayOffset > 0 && s.dayOffset !== lastDay) {
+      const sepPoster = `${BASE_URL}/posters/sep_day${s.dayOffset}.jpg`;
+      metas.push({
+        id: `at:sep:${s.dayOffset}`,
+        type: 'series',
+        name: getDayLabel(s.dayOffset),
+        poster: sepPoster,
+        description: '',
+        behaviorHints: { defaultVideoId: 'none' }
+      });
+    }
+    lastDay = s.dayOffset;
+
+    // Anime entry
+    const poster = s.generatedPoster ? `${BASE_URL}${s.generatedPoster}` : s.posterUrl;
+    const bg = s.fanartUrl || poster;
+    const time = formatTimeCET(s.airingAt);
+    const id = s.imdbId || `at:${s.anilistId || s.simklId}`;
+
+    metas.push({
+      id, type: 'series',
+      name: s.title,
+      poster: poster || 'https://via.placeholder.com/230x345/1a1a2e/ffffff?text=No+Image',
+      background: bg || poster,
+      description: `${time} · Epizoda ${s.episode}\n\n${(s.overview || '').replace(/<[^>]*>/g, '')}`,
+      genres: s.genres || [],
+      releaseInfo: `${time} · Ep ${s.episode}`,
+      imdbRating: s.anilistScore || (s.malScore ? parseFloat(s.malScore).toFixed(1) : undefined),
+      links: [{ name: 'SIMKL', category: 'simkl', url: `https://simkl.com/anime/${s.simklId}` }]
+    });
+  }
+
+  res.json({ metas });
 });
 
 // ===== STREMIO: ANIME TODAY META ENDPOINT =====
@@ -618,22 +623,18 @@ async function resolveIMDbViaTMDB(nameVariants, anilistId) {
           }
         } catch {}
       }
-      console.log(`  🔍 TMDB: TVDB ${tvdbId} → no IMDb found`);
-    } catch (err) {
-      console.log(`  🔍 TMDB find by TVDB error: ${err.message}`);
-    }
+    } catch {}
   }
 
-  // === Step 2: Name search with cleaned variants ===
-  // Always clean names first — never search with "Season 3", "Part 2", etc.
+  // === Step 2: Name search ===
   function cleanAnimeName(name) {
     if (!name) return '';
     return name
-      .replace(/\s*(\d+(?:st|nd|rd|th))?\s*(Season|Part|Cour|Series|Phase|Chapter|Arc)\s*\d*\s*$/i, '') // "X Season 3" → "X"
-      .replace(/\s+\d+$/, '') // trailing number: "Shingeki no Kyojin 3" → "Shingeki no Kyojin"
-      .replace(/\s+[IVXLC]+$/, '') // roman numerals: "Title III" → "Title"
-      .replace(/[!?♪♫★☆~※♥❤.,;'"`(){}[\]]/g, '') // strip special chars: "Title!" → "Title"
-      .replace(/\s{2,}/g, ' ') // collapse double spaces
+      .replace(/\s*(\d+(?:st|nd|rd|th))?\s*(Season|Part|Cour|Series|Phase|Chapter|Arc)\s*\d*\s*$/i, '')
+      .replace(/\s+\d+$/, '')
+      .replace(/\s+[IVXLC]+$/, '')
+      .replace(/[!?♪♫★☆~※♥❤.,;'"`(){}[\]]/g, '')
+      .replace(/\s{2,}/g, ' ')
       .trim();
   }
 
@@ -642,85 +643,64 @@ async function resolveIMDbViaTMDB(nameVariants, anilistId) {
     if (!name) continue;
     const clean = cleanAnimeName(name);
     if (clean && clean.length >= 3 && !searchNames.includes(clean)) searchNames.push(clean);
-
-    // Also try without subtitle after colon/dash
     const noSubtitle = clean.split(/[:\-–—]/)[0].trim();
-    if (noSubtitle && noSubtitle !== clean && noSubtitle.length >= 3 && !searchNames.includes(noSubtitle)) {
-      searchNames.push(noSubtitle);
-    }
+    if (noSubtitle && noSubtitle !== clean && noSubtitle.length >= 3 && !searchNames.includes(noSubtitle)) searchNames.push(noSubtitle);
   }
 
   for (const searchName of searchNames) {
     try {
       const searchResp = await axios.get('https://api.themoviedb.org/3/search/tv', {
-        params: { api_key: tmdbKey, query: searchName, language: 'en-US' },
-        timeout: 5000
+        params: { api_key: tmdbKey, query: searchName, language: 'en-US' }, timeout: 5000
       });
       const results = searchResp.data?.results;
-      if (!results?.length) {
-        console.log(`  🔍 TMDB: no results for "${searchName}"`);
-        continue;
-      }
-
-      // Prefer animation genre (16)
+      if (!results?.length) continue;
       const sorted = [...results].sort((a, b) => {
         const aAnim = (a.genre_ids || []).includes(16) ? 1 : 0;
         const bAnim = (b.genre_ids || []).includes(16) ? 1 : 0;
         return bAnim - aAnim || (b.popularity || 0) - (a.popularity || 0);
       });
-
       for (const result of sorted.slice(0, 3)) {
         try {
           const extResp = await axios.get(`https://api.themoviedb.org/3/tv/${result.id}/external_ids`, {
-            params: { api_key: tmdbKey },
-            timeout: 5000
+            params: { api_key: tmdbKey }, timeout: 5000
           });
           const imdbId = extResp.data?.imdb_id;
           if (imdbId && imdbId.startsWith('tt')) {
-            console.log(`  🔍 TMDB: "${searchName}" → TMDB ${result.id} "${result.name}" → ${imdbId}`);
             tmdbImdbCache.set(cacheKey, imdbId);
             if (offRec && !offRec.imdb) offRec.imdb = imdbId;
             return imdbId;
           }
         } catch {}
       }
-      console.log(`  🔍 TMDB: "${searchName}" found ${results.length} results but no IMDb ID`);
-    } catch (err) {
-      console.log(`  🔍 TMDB search error for "${searchName}": ${err.message}`);
-    }
+    } catch {}
   }
 
-  console.log(`  🔍 TMDB: all variants failed for AniList ${anilistId}`);
   tmdbImdbCache.set(cacheKey, null);
   return null;
 }
 
 app.get('/:token/today/meta/:type/:id.json', async (req, res) => {
-  const atId = req.params.id; // at:187941
+  const atId = req.params.id;
   const type = req.params.type;
   console.log(`=== META === type=${type} id=${atId}`);
 
+  // Separator items — return empty meta
+  if (atId.startsWith('at:sep:')) return res.json({ meta: null });
+
   if (!atId.startsWith('at:')) return res.json({ meta: null });
 
-  const anilistId = parseInt(atId.split(':')[1]);
-  if (!anilistId) return res.json({ meta: null });
+  const parsedId = parseInt(atId.split(':')[1]);
+  if (!parsedId) return res.json({ meta: null });
 
-  const schedule = todayAnimeCache.find(s => s.media.id === anilistId);
-  const m = schedule?.media;
-  const offRec = offlineDB.byAniList.get(anilistId);
-  let imdbId = offRec?.imdb;
+  // Find in cache — by anilistId or simklId
+  const schedule = todayAnimeCache.find(s => s.anilistId === parsedId || s.simklId === parsedId);
 
-  console.log(`  🔍 AniList: ${anilistId}, IMDb: ${imdbId || 'none'}, schedule: ${schedule ? 'yes' : 'no'}`);
+  // Try IMDb from SIMKL data first
+  let imdbId = schedule?.imdbId;
 
-  // If no IMDb, try TMDB search with multiple name variants
-  if (!imdbId && m?.title) {
-    const names = [m.title.romaji, m.title.english, m.title.native].filter(Boolean);
-    if (names.length) {
-      imdbId = await resolveIMDbViaTMDB(names, anilistId);
-    }
-  }
+  console.log(`  🔍 ID: ${parsedId}, IMDb: ${imdbId || 'none'}, schedule: ${schedule ? 'yes' : 'no'}`);
 
-  // === Strategy 1: IMDb exists → full Cinemeta proxy, only swap id ===
+  // === Strategy 1: IMDb exists → full Cinemeta proxy ===
   if (imdbId) {
     const cinemeta = await getCinemetaMeta(imdbId);
     if (cinemeta) {
@@ -732,8 +712,8 @@ app.get('/:token/today/meta/:type/:id.json', async (req, res) => {
   }
 
   // === Strategy 2: No IMDb → generate episodes with at: IDs ===
-  const currentEp = schedule?.episode || offRec?.episodes || 1;
-  const totalEp = m?.episodes || currentEp;
+  const currentEp = schedule?.episode || 1;
+  const totalEp = schedule?.totalEpisodes || currentEp;
   const epCount = Math.max(currentEp, totalEp);
 
   console.log(`  📺 Generating ${epCount} episodes (no IMDb, using at: IDs)`);
@@ -741,30 +721,29 @@ app.get('/:token/today/meta/:type/:id.json', async (req, res) => {
   const videos = [];
   for (let ep = 1; ep <= epCount; ep++) {
     videos.push({
-      id: `at:${anilistId}:1:${ep}`,
+      id: `at:${parsedId}:1:${ep}`,
       title: `Episode ${ep}`,
       season: 1,
       episode: ep,
-      released: schedule ? new Date((schedule.airingAt - (currentEp - ep) * 7 * 24 * 3600) * 1000).toISOString() : undefined,
     });
   }
 
-  let poster = schedule?.generatedPoster ? `${BASE_URL}${schedule.generatedPoster}` : (schedule?.tmdbImages?.poster || m?.coverImage?.extraLarge || m?.coverImage?.large);
-  if (!poster || poster === 'null') poster = 'https://via.placeholder.com/230x345/1a1a2e/ffffff?text=No+Image';
-  const bg = m?.bannerImage || schedule?.tmdbImages?.backdrop || poster;
+  const poster = schedule?.generatedPoster ? `${BASE_URL}${schedule.generatedPoster}` : (schedule?.posterUrl || 'https://via.placeholder.com/230x345/1a1a2e/ffffff?text=No+Image');
+  const bg = schedule?.fanartUrl || poster;
   const time = schedule ? formatTimeCET(schedule.airingAt) : '';
 
   const meta = {
     id: atId,
     type: 'series',
-    name: m?.title?.romaji || m?.title?.english || m?.title?.native || offRec?.title || 'Unknown',
+    name: schedule?.title || 'Unknown',
     poster,
     background: bg || poster,
-    description: schedule ? `${time} · Epizoda ${schedule.episode}\n\n${(m?.description || '').replace(/<[^>]*>/g, '')}` : (offRec?.title || ''),
-    genres: m?.genres || [],
-    releaseInfo: schedule ? `${time} · ${m?.season || ''} ${m?.seasonYear || ''} · Ep ${schedule.episode}`.trim() : '',
-    imdbRating: m?.averageScore ? (m.averageScore / 10).toFixed(1) : undefined,
+    description: schedule ? `${time} · Epizoda ${schedule.episode}\n\n${(schedule.overview || '').replace(/<[^>]*>/g, '')}` : '',
+    genres: schedule?.genres || [],
+    releaseInfo: schedule ? `${time} · Ep ${schedule.episode}` : '',
+    imdbRating: schedule?.anilistScore || (schedule?.malScore ? parseFloat(schedule.malScore).toFixed(1) : undefined),
     videos,
+    links: schedule ? [{ name: 'SIMKL', category: 'simkl', url: `https://simkl.com/anime/${schedule.simklId}` }] : []
   };
 
   console.log(`  📤 Meta (fallback): ${meta.name} — ${videos.length} videos with at: IDs`);
@@ -810,15 +789,14 @@ app.get('/:token/nyaa/meta/:type/:id.json', async (req, res) => {
     const anilistId = parseInt(fullId.split(':')[1]);
     if (!anilistId) return res.json({ meta: null });
 
-    const schedule = todayAnimeCache.find(s => s.media.id === anilistId);
-    const m = schedule?.media;
+    const schedule = todayAnimeCache.find(s => s.anilistId === anilistId || s.simklId === anilistId);
     const offRec = offlineDB.byAniList.get(anilistId);
-    let imdbId = offRec?.imdb;
+    let imdbId = schedule?.imdbId || offRec?.imdb;
 
     console.log(`  🔍 AT: AniList ${anilistId}, IMDb: ${imdbId || 'none'}`);
 
-    if (!imdbId && m?.title) {
-      const names = [m.title.romaji, m.title.english, m.title.native].filter(Boolean);
+    if (!imdbId && schedule) {
+      const names = [schedule.title, schedule.enTitle].filter(Boolean);
       if (names.length) imdbId = await resolveIMDbViaTMDB(names, anilistId);
     }
 
@@ -833,7 +811,7 @@ app.get('/:token/nyaa/meta/:type/:id.json', async (req, res) => {
 
     // Fallback: generate episodes
     const currentEp = schedule?.episode || offRec?.episodes || 1;
-    const totalEp = m?.episodes || currentEp;
+    const totalEp = schedule?.totalEpisodes || currentEp;
     const epCount = Math.max(currentEp, totalEp);
     const videos = [];
     for (let ep = 1; ep <= epCount; ep++) {
@@ -841,9 +819,9 @@ app.get('/:token/nyaa/meta/:type/:id.json', async (req, res) => {
     }
     const meta = {
       id: fullId, type: 'series',
-      name: m?.title?.romaji || m?.title?.english || offRec?.title || 'Unknown',
-      description: m?.description ? m.description.replace(/<[^>]*>/g, '') : '',
-      genres: m?.genres || [],
+      name: schedule?.title || offRec?.title || 'Unknown',
+      description: schedule?.overview ? schedule.overview.replace(/<[^>]*>/g, '') : '',
+      genres: schedule?.genres || [],
       videos,
     };
     console.log(`  📤 AT Meta (fallback): ${meta.name} — ${videos.length} videos`);
@@ -939,7 +917,7 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
     if (imdbBase) {
       // 1. Try direct IMDb match in offline-db
       for (const s of todayAnimeCache) {
-        const rec = offlineDB.byAniList.get(s.media.id);
+        const rec = offlineDB.byAniList.get(s.anilistId);
         if (rec?.imdb === imdbBase) { episode = s.episode; season = 1; matchedByImdb = true; console.log(`  📅 Today (imdb): ${imdbBase} → ep${episode}`); break; }
       }
       // 2. Fallback: resolve IMDb → AniDB via anime-lists, then match AniDB in cache
@@ -948,7 +926,7 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
           const resolved = await resolveToAniDB('series', imdbBase);
           if (resolved?.anidb) {
             for (const s of todayAnimeCache) {
-              const rec = offlineDB.byAniList.get(s.media.id);
+              const rec = offlineDB.byAniList.get(s.anilistId);
               if (rec?.anidb === resolved.anidb) { episode = s.episode; season = 1; matchedByImdb = true; console.log(`  📅 Today (anidb): ${imdbBase} → AniDB ${resolved.anidb} → ep${episode}`); break; }
             }
           }
@@ -957,9 +935,9 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
     }
     if (!matchedByImdb) {
       for (const s of todayAnimeCache) {
-        const rec = offlineDB.byAniList.get(s.media.id);
+        const rec = offlineDB.byAniList.get(s.anilistId);
         if (kitsuId && rec?.kitsu === kitsuId) { episode = s.episode; season = 1; console.log(`  📅 Today: kitsu:${kitsuId} → ep${episode}`); break; }
-        if (anilistIdNum && s.media.id === anilistIdNum) { episode = s.episode; season = 1; console.log(`  📅 Today: anilist:${anilistIdNum} → ep${episode}`); break; }
+        if (anilistIdNum && s.anilistId === anilistIdNum) { episode = s.episode; season = 1; console.log(`  📅 Today: anilist:${anilistIdNum} → ep${episode}`); break; }
       }
     }
   }
@@ -977,11 +955,10 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
       resolved.title = rec.title || null;
       if (rec.title) resolved.names.push(rec.title);
     }
-    const sched = todayAnimeCache.find(s => s.media.id === alId);
-    if (sched?.media?.title) {
-      const { romaji, english } = sched.media.title;
-      if (romaji && !resolved.names.includes(romaji)) resolved.names.push(romaji);
-      if (english && !resolved.names.includes(english)) resolved.names.push(english);
+    const sched = todayAnimeCache.find(s => s.anilistId === alId);
+    if (sched) {
+      if (sched.title && !resolved.names.includes(sched.title)) resolved.names.push(sched.title);
+      if (sched.enTitle && !resolved.names.includes(sched.enTitle)) resolved.names.push(sched.enTitle);
     }
   } else if (fullId.startsWith('anilist:')) {
     const alId = parseInt(fullId.split(':')[1]);
@@ -1032,15 +1009,15 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
     // Fallback: todayAnimeCache
     if (!resolved.anilistId) {
       for (const s of todayAnimeCache) {
-        const rec = offlineDB.byAniList.get(s.media.id);
-        if (rec?.imdb === imdbBase || s.resolvedImdbId === imdbBase) {
-          resolved.anilistId = s.media.id;
+        const rec = offlineDB.byAniList.get(s.anilistId);
+        if (rec?.imdb === imdbBase || s.imdbId === imdbBase) {
+          resolved.anilistId = s.anilistId;
           resolved.anidbId = rec?.anidb || null;
           resolved.tvdbId = rec?.tvdb || null;
           resolved.title = rec?.title || null;
           if (rec?.title && !resolved.names.includes(rec.title)) resolved.names.push(rec.title);
-          if (s.media?.title?.romaji && !resolved.names.includes(s.media.title.romaji)) resolved.names.push(s.media.title.romaji);
-          if (s.media?.title?.english && !resolved.names.includes(s.media.title.english)) resolved.names.push(s.media.title.english);
+          if (s.media?.title?.romaji && !resolved.names.includes(s.title)) resolved.names.push(s.title);
+          if (s.media?.title?.english && !resolved.names.includes(s.enTitle)) resolved.names.push(s.enTitle);
           break;
         }
       }
@@ -1054,15 +1031,14 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
   let todaySchedule = null;
   if (!isMovie) {
     for (const s of todayAnimeCache) {
-      const rec = offlineDB.byAniList.get(s.media.id);
-      if (resolved.anilistId && s.media.id === resolved.anilistId) { isTodayAnime = true; todaySchedule = s; break; }
+      const rec = offlineDB.byAniList.get(s.anilistId);
+      if (resolved.anilistId && s.anilistId === resolved.anilistId) { isTodayAnime = true; todaySchedule = s; break; }
       if (rec?.imdb && fullId.startsWith(rec.imdb)) { isTodayAnime = true; todaySchedule = s; break; }
     }
     // Add today schedule names to resolved
-    if (todaySchedule?.media?.title) {
-      const { romaji, english } = todaySchedule.media.title;
-      if (romaji && !resolved.names.includes(romaji)) resolved.names.push(romaji);
-      if (english && !resolved.names.includes(english)) resolved.names.push(english);
+    if (todaySchedule) {
+      if (todaySchedule.title && !resolved.names.includes(todaySchedule.title)) resolved.names.push(todaySchedule.title);
+      if (todaySchedule.enTitle && !resolved.names.includes(todaySchedule.enTitle)) resolved.names.push(todaySchedule.enTitle);
     }
   }
 
@@ -1113,11 +1089,10 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
     if (!torrents.length) {
       const names = [];
       if (rec?.title) names.push(rec.title);
-      const schedule = todayAnimeCache.find(s => s.media.id === anilistId);
-      if (schedule?.media?.title) {
-        const { romaji, english } = schedule.media.title;
-        if (romaji && !names.includes(romaji)) names.push(romaji);
-        if (english && !names.includes(english)) names.push(english);
+      const schedule = todayAnimeCache.find(s => s.anilistId === anilistId);
+      if (schedule) {
+        if (schedule.title && !names.includes(schedule.title)) names.push(schedule.title);
+        if (schedule.enTitle && !names.includes(schedule.enTitle)) names.push(schedule.enTitle);
       }
       if (names.length) {
         console.log(`  🔄 Fallback text search: [${names.join(', ')}]`);
@@ -1229,7 +1204,7 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
 
     // Add RSS for today's anime
     if (isTodayAnime && todaySchedule) {
-      const rssNames = [todaySchedule.media.title.romaji, todaySchedule.media.title.english].filter(Boolean);
+      const rssNames = [todaySchedule.title, todaySchedule.enTitle].filter(Boolean);
       const rssResults = searchRssIndex(rssNames, episode);
       if (rssResults.length) {
         const existingHashes = new Set(torrents.map(t => t.magnet?.match(/btih:([a-zA-Z0-9]+)/i)?.[1]?.toLowerCase()).filter(Boolean));
@@ -1609,13 +1584,13 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
     const imdbBase = fullId.startsWith('tt') ? idParts[0] : null;
     if (imdbBase) {
       for (const s of todayAnimeCache) {
-        const rec = offlineDB.byAniList.get(s.media.id);
+        const rec = offlineDB.byAniList.get(s.anilistId);
         if (rec?.imdb === imdbBase) { episode = s.episode; season = 1; break; }
       }
     }
     if (fullId.startsWith('at:')) {
       const alId = parseInt(idParts[1]);
-      const sched = todayAnimeCache.find(s => s.media.id === alId);
+      const sched = todayAnimeCache.find(s => s.anilistId === alId);
       if (sched) { episode = sched.episode; season = 1; }
     }
   }
@@ -1636,8 +1611,8 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
     const anilistId = parseInt(idParts[1]);
     const rec = offlineDB.byAniList.get(anilistId);
     if (rec?.tvdb) tvdbId = rec.tvdb;
-    const sched = todayAnimeCache.find(s => s.media.id === anilistId);
-    animeName = sched?.media?.title?.romaji || rec?.title;
+    const sched = todayAnimeCache.find(s => s.anilistId === anilistId);
+    animeName = sched?.title || rec?.title;
   }
   // From tvdb: ID
   else if (fullId.startsWith('tvdb:')) {
