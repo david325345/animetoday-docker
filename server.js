@@ -1301,24 +1301,28 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
     })().catch(() => []) :
     Promise.resolve([]);
 
-  // My Indexer task
+  // My Indexer task (NimeToDex)
   const indexerTask = hasIndexer ?
     (async () => {
+      const t0 = Date.now();
       const params = new URLSearchParams();
-      // Use best available ID
+
+      // Send all IDs we already have — API has its own fallback chain
+      if (fullId.startsWith('tt')) params.set('imdb', fullId.split(':')[0]);
       if (resolved.anilistId) params.set('anilist', resolved.anilistId);
-      else if (fullId.startsWith('tt')) params.set('imdb', fullId.split(':')[0]);
-      else if (resolved.tvdbId) params.set('tvdb', resolved.tvdbId);
-      if (season) params.set('season', season);
+      if (resolved.tvdbId) params.set('tvdb', resolved.tvdbId);
+      if (resolved.anidbId) params.set('anidb', resolved.anidbId);
+      if (season && !isMovie) params.set('season', season);
       if (episode && !isMovie) params.set('episode', episode);
 
       if (!params.toString()) return [];
 
       try {
         console.log(`  📦 Indexer: searching ${params.toString()}`);
-        const resp = await axios.get(`http://fksw8gcgggcgw8wkwok44gks.178.104.1.86.sslip.io/search?${params.toString()}`, { timeout: 5000 });
+        const resp = await axios.get(`https://nimetodex.duckdns.org/search?${params.toString()}`, { timeout: 8000 });
         const results = resp.data?.results || [];
-        console.log(`  📦 Indexer: ${results.length} results`);
+        const ms = Date.now() - t0;
+        console.log(`  📦 Indexer: ${results.length} results (${ms}ms, searchedBy: ${resp.data?.searchedBy || '?'})`);
 
         return results
           .filter(r => r.magnet || r.infohash)
@@ -1327,6 +1331,7 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
             magnet: r.magnet || (r.infohash ? `magnet:?xt=urn:btih:${r.infohash}` : null),
             infohash: r.infohash || null,
             seeders: String(r.seeders || 0),
+            leechers: String(r.leechers || 0),
             filesize: r.filesize ? formatIndexerFilesize(r.filesize) : '?',
             source: 'indexer',
             indexer: true,
@@ -1334,9 +1339,13 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
             resolution: r.resolution || '',
             dualAudio: !!r.dual_audio,
             seadexBest: !!r.seadex_best,
+            batch: !!r.batch,
+            videoSource: r.video_source || '',
+            codec: r.codec || '',
           }));
       } catch (err) {
-        console.log(`  📦 Indexer error: ${err.message}`);
+        const ms = Date.now() - t0;
+        console.log(`  📦 Indexer error (${ms}ms): ${err.message}`);
         return [];
       }
     })().catch(() => []) :
