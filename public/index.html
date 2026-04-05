@@ -435,13 +435,14 @@ async function loadAnime() {
         count.textContent=`(${vis}/${d.count})`;
         if(!d.anime?.length){list.innerHTML='<div style="text-align:center;color:var(--dim);padding:20px">Žádné anime</div>';return;}
         list.innerHTML=d.anime.map(a=>{
-            const t=a.title.romaji||a.title.english||a.title.native;
+            const t=a.title||'Unknown';
             const p=a.poster||'';
             const g=(a.genres||[]).slice(0,3).join(', ');
-            const sc=a.score?`${(a.score/10).toFixed(1)}`:'';
-            const time=a.airingAt?new Date(a.airingAt*1000).toLocaleTimeString('cs-CZ',{timeZone:'Europe/Prague',hour:'2-digit',minute:'2-digit',hour12:false}):'';
+            const sc=a.score?`${parseFloat(a.score).toFixed(1)}`:'';
+            const time=a.airingAt?new Date(a.airingAt).toLocaleTimeString('cs-CZ',{timeZone:'Europe/Prague',hour:'2-digit',minute:'2-digit',hour12:false}):'';
+            const dayLabel=a.dayOffset===1?' · Zítra':a.dayOffset===2?' · Pozítří':'';
             return `<div class="anime-item ${a.hidden?'hid':''}">${p?`<img src="${p}" class="anime-poster" loading="lazy" onerror="this.style.display='none'">`:'<div class="anime-poster"></div>'}
-                <div class="anime-info"><div class="anime-title">${t}</div><div class="anime-meta">${time?`<span style="color:var(--accent)">${time}</span> · `:''}EP ${a.episode}${g?' · '+g:''}${sc?' · '+sc:''}</div></div>
+                <div class="anime-info"><div class="anime-title">${t}</div><div class="anime-meta">${time?`<span style="color:var(--accent)">${time}</span>${dayLabel} · `:''}EP ${a.episode}${g?' · '+g:''}${sc?' · '+sc:''}</div></div>
                 <button class="toggle ${a.hidden?'off':'on'}" onclick="toggleAnime(${a.id},${a.hidden})"></button></div>`;
         }).join('');
     } catch { list.innerHTML='<div style="text-align:center;color:var(--dim);padding:20px">Chyba</div>'; }
