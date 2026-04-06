@@ -22,12 +22,14 @@ process.on('unhandledRejection', (err) => { console.error('⚠️ Unhandled:', e
 
 const PORT = process.env.PORT || 3002;
 const BASE_URL = (process.env.APP_URL || `http://localhost:${PORT}`).replace(/\/$/, '');
+const INDEXER_URL = (process.env.INDEXER_URL || 'https://nimetodex.duckdns.org').replace(/\/$/, '');
 
 console.log('═══════════════════════════════════════════');
 console.log('  🎬 Nyaa + Anime Today v5.0');
 console.log('═══════════════════════════════════════════');
 console.log(`  PORT: ${PORT}`);
 console.log(`  URL:  ${BASE_URL}`);
+console.log(`  IDX:  ${INDEXER_URL}`);
 
 // ===== State =====
 let todayAnimeCache = [];
@@ -1314,7 +1316,7 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
 
       try {
         console.log(`  📦 Indexer: searching ${params.toString()}`);
-        const resp = await axios.get(`https://nimetodex.duckdns.org/search?${params.toString()}`, { timeout: 8000 });
+        const resp = await axios.get(`${INDEXER_URL}/search?${params.toString()}`, { timeout: 8000 });
         const results = resp.data?.results || [];
         const ms = Date.now() - t0;
         console.log(`  📦 Indexer: ${results.length} results (${ms}ms, searchedBy: ${resp.data?.searchedBy || '?'})`);
@@ -1329,11 +1331,11 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
           if (season && !isMovie) qParams.set('season', season);
           if (episode && !isMovie) qParams.set('episode', episode);
 
+          const ft0 = Date.now();
           console.log(`  📦 Indexer fallback: q="${searchName}"`);
-          const qResp = await axios.get(`https://nimetodex.duckdns.org/search?${qParams.toString()}`, { timeout: 8000 });
+          const qResp = await axios.get(`${INDEXER_URL}/search?${qParams.toString()}`, { timeout: 8000 });
           const qResults = qResp.data?.results || [];
-          const qMs = Date.now() - t0;
-          console.log(`  📦 Indexer fallback: ${qResults.length} results (${qMs}ms)`);
+          console.log(`  📦 Indexer fallback: ${qResults.length} results (${Date.now() - ft0}ms)`);
           return mapResults(qResults);
         }
 
