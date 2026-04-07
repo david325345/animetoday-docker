@@ -23,6 +23,7 @@ process.on('unhandledRejection', (err) => { console.error('⚠️ Unhandled:', e
 const PORT = process.env.PORT || 3002;
 const BASE_URL = (process.env.APP_URL || `http://localhost:${PORT}`).replace(/\/$/, '');
 const INDEXER_URL = (process.env.INDEXER_URL || 'https://nimetodex.duckdns.org').replace(/\/$/, '');
+const ONDEMAND_VIDEO_URL = process.env.ONDEMAND_VIDEO_URL || 'https://raw.githubusercontent.com/david325345/animetoday-docker/main/public/search-ondemand.mp4';
 
 console.log('═══════════════════════════════════════════');
 console.log('  🎬 Nyaa + Anime Today v5.0');
@@ -442,7 +443,59 @@ app.post('/api/indexer/toggle', express.json(), (req, res) => {
   res.json({ success: true });
 });
 
-// ===== RD PLAY PROXY (shared by both addons) =====
+// ===== ON-DEMAND SEARCH TRIGGER =====
+app.get('/:token/ondemand/:type/:id/video.mp4', async (req, res) => {
+  const { token, type, id: fullId } = req.params;
+  const user = config.getUser(token);
+  const isMovie = type === 'movie';
+
+  // Parse IDs from fullId
+  const params = {};
+  if (fullId.startsWith('tt')) params.imdb = fullId.split(':')[0];
+
+  // Try to resolve more IDs from offline-db
+  const { season, episode } = parseEpisodeAndSeason(fullId);
+  if (fullId.startsWith('tt')) {
+    const imdbBase = fullId.split(':')[0];
+    for (const [, rec] of offlineDB.byAniList) {
+      if (rec.imdb === imdbBase) {
+        if (rec.anilist) params.anilist = rec.anilist;
+        if (rec.anidb) params.anidb = rec.anidb;
+        if (rec.tvdb) params.tvdb = rec.tvdb;
+        break;
+      }
+    }
+  } else if (fullId.startsWith('anilist:')) {
+    const alId = parseInt(fullId.split(':')[1]);
+    params.anilist = alId;
+    const rec = offlineDB.byAniList.get(alId);
+    if (rec) {
+      if (rec.anidb) params.anidb = rec.anidb;
+      if (rec.tvdb) params.tvdb = rec.tvdb;
+    }
+  } else if (fullId.startsWith('at:')) {
+    const alId = parseInt(fullId.split(':')[1]);
+    params.anilist = alId;
+    const rec = offlineDB.byAniList.get(alId);
+    if (rec) {
+      if (rec.anidb) params.anidb = rec.anidb;
+      if (rec.tvdb) params.tvdb = rec.tvdb;
+    }
+  }
+
+  if (season && !isMovie) params.season = season;
+  if (episode && !isMovie) params.episode = episode;
+
+  // Fire on-demand search in background (don't await)
+  const searchParams = new URLSearchParams(params);
+  console.log(`  🔍 On-demand trigger: ${searchParams.toString()}`);
+  axios.post(`${INDEXER_URL}/api/ondemand-search`, params, { timeout: 30000 })
+    .then(r => console.log(`  🔍 On-demand done: ${r.data?.added || 0} added`))
+    .catch(err => console.log(`  🔍 On-demand error: ${err.message}`));
+
+  // Redirect to placeholder video immediately
+  res.redirect(302, ONDEMAND_VIDEO_URL);
+});
 app.get('/:token/play/:hash/:episode/video.mp4', async (req, res) => {
   const user = config.getUser(req.params.token);
   if (!user?.rd_api_key) return serveLoadingVideo(res);
@@ -1456,6 +1509,17 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
   }
 
   if (indexerResults.length) console.log(`  📦 +${indexerResults.length} from Indexer (appended at bottom)`);
+
+  // Add "Search on demand" as last stream (only if indexer is enabled)
+  if (hasIndexer) {
+    streams.push({
+      name: '🔍 Search',
+      title: 'Search on demand\nSearches Nyaa + trackers for new results.\nClose video and reopen episode after ~30s.',
+      url: `${BASE_URL}/${token}/ondemand/${type}/${fullId}/video.mp4`,
+      behaviorHints: { bingeGroup: 'ondemand', notWebReady: true }
+    });
+  }
+
   console.log(`  📤 Streams: ${streams.length}${hasNekobt ? ' (NekoBT enabled)' : ''}${hasIndexer ? ' (Indexer enabled)' : ''}`);
   res.json({ streams });
 });
