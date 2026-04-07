@@ -489,7 +489,7 @@ app.get('/:token/ondemand/:type/:id/video.mp4', async (req, res) => {
   // Fire on-demand search in background (don't await)
   const searchParams = new URLSearchParams(params);
   console.log(`  🔍 On-demand trigger: ${searchParams.toString()}`);
-  axios.post(`${INDEXER_URL}/api/ondemand-search`, params, { timeout: 30000 })
+  axios.post(`${INDEXER_URL}/api/ondemand-search-by-imdb`, params, { timeout: 30000 })
     .then(r => console.log(`  🔍 On-demand done: ${r.data?.added || 0} added`))
     .catch(err => console.log(`  🔍 On-demand error: ${err.message}`));
 
