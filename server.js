@@ -215,7 +215,7 @@ app.get('/api/anime', (req, res) => {
   res.json({
     count: todayAnimeCache.length,
     anime: todayAnimeCache.map(s => ({
-      id: s.simklId, episode: s.episode, airingAt: s.airingAt,
+      id: s.simklId, anilistId: s.anilistId, episode: s.episode, airingAt: s.airingAt,
       title: s.title, genres: s.genres, score: s.anilistScore || s.malScore,
       poster: s.generatedPoster ? `${BASE_URL}${s.generatedPoster}` : s.posterUrl,
       hidden: hidden.includes(s.simklId),
