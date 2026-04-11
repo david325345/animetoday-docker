@@ -306,7 +306,7 @@ app.get('/api/torbox/status/:token', async (req, res) => {
   if (!user?.tb_api_key) return res.json({ connected: false });
   const status = await getTBStatus(user.tb_api_key);
   if (!status) return res.json({ connected: false });
-  res.json({ connected: true, ...status, tb_use_torrents: user.tb_use_torrents ?? false, tb_use_nzb: user.tb_use_nzb ?? true });
+  res.json({ connected: true, ...status, tb_use_torrents: user.tb_use_torrents ?? false, tb_use_nzb: user.tb_use_nzb ?? true, tb_cache_check: user.tb_cache_check !== false });
 });
 
 app.post('/api/torbox/disconnect/:token', (req, res) => {
@@ -321,6 +321,7 @@ app.post('/api/torbox/toggle', express.json(), (req, res) => {
   if (!user) return res.status(404).json({ error: 'User not found' });
   if (field === 'tb_use_torrents') user.tb_use_torrents = !!value;
   if (field === 'tb_use_nzb') user.tb_use_nzb = !!value;
+  if (field === 'tb_cache_check') user.tb_cache_check = !!value;
   config.saveUser(token, user);
   res.json({ success: true });
 });
@@ -1515,7 +1516,8 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
 
   // TorBox cache check — batch all hashes in one request
   let tbCacheMap = {};
-  if (tbTorrents && allResults.length) {
+  const tbCacheCheck = tbTorrents && user?.tb_cache_check !== false;
+  if (tbCacheCheck && allResults.length) {
     const hashes = allResults
       .map(t => (t.infohash || t.magnet?.match(/btih:([a-zA-Z0-9]+)/i)?.[1] || '').toLowerCase())
       .filter(h => h && h.length >= 32);
@@ -1593,8 +1595,10 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
         behaviorHints: { bingeGroup: t.seadex ? 'seadex-rd' : t.indexer ? 'indexer-rd' : t.nekobt ? 'neko-rd' : 'nyaa-rd', notWebReady: true } });
     }
     if (tbTorrents) {
-      const tbName = isTBCached ? `⚡${streamName} TB` : `${streamName} TB`;
-      streams.push({ name: tbName, title: isTBCached ? `⚡ Cached\n${title}` : title,
+      const cacheIcon = tbCacheCheck ? (isTBCached ? '⚡' : '⏳') : '';
+      const tbName = cacheIcon ? `${cacheIcon}${streamName} TB` : `${streamName} TB`;
+      const tbTitle = tbCacheCheck ? (isTBCached ? `⚡ Cached\n${title}` : `⏳ Not cached\n${title}`) : title;
+      streams.push({ name: tbName, title: tbTitle,
         url: `${BASE_URL}/${token}/play-tb/${storeMagnet(t.magnet)}/${epNum}/video.mp4`,
         behaviorHints: { bingeGroup: t.seadex ? 'seadex-tb' : t.indexer ? 'indexer-tb' : t.nekobt ? 'neko-tb' : 'nyaa-tb', notWebReady: true } });
     }
