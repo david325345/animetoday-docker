@@ -306,6 +306,10 @@
                     <button class="toggle on" id="sort-seeders-toggle" onclick="toggleSortSeeders()"></button>
                     <label>Řadit podle seeders</label>
                 </div>
+                <div class="switch-row">
+                    <button class="toggle off" id="sort-cached-toggle" onclick="toggleCachedFirst()"></button>
+                    <label>⚡ Cached první <span style="color:var(--dim);font-size:11px">(TorBox cache nahoře)</span></label>
+                </div>
 
                 <div class="sort-row" style="margin-top:16px;">
                     <div class="sort-col">
@@ -674,7 +678,7 @@ async function toggleIndexerOnly() {
 }
 
 // Sort Preferences
-let sortPrefs = { customSortEnabled:false, groupPriority:[], resPriority:[], langPriority:[], excludedResolutions:[], sortBySeeders:true, defaultGroups:[], defaultResolutions:[], defaultLangs:[] };
+let sortPrefs = { customSortEnabled:false, groupPriority:[], resPriority:[], langPriority:[], excludedResolutions:[], sortBySeeders:true, cachedFirst:false, defaultGroups:[], defaultResolutions:[], defaultLangs:[] };
 
 async function loadSortPrefs() {
     try {
@@ -694,6 +698,10 @@ function renderSortPrefs() {
     // Seeders toggle
     const stog = document.getElementById('sort-seeders-toggle');
     stog.className = sortPrefs.sortBySeeders !== false ? 'toggle on' : 'toggle off';
+
+    // Cached first toggle
+    const ctog = document.getElementById('sort-cached-toggle');
+    ctog.className = sortPrefs.cachedFirst ? 'toggle on' : 'toggle off';
 
     // Group list
     renderSortList('group-list', sortPrefs.groupPriority, 'group');
@@ -750,6 +758,12 @@ function toggleCustomSort() {
 
 function toggleSortSeeders() {
     sortPrefs.sortBySeeders = !sortPrefs.sortBySeeders;
+    saveSortPrefs();
+    renderSortPrefs();
+}
+
+function toggleCachedFirst() {
+    sortPrefs.cachedFirst = !sortPrefs.cachedFirst;
     saveSortPrefs();
     renderSortPrefs();
 }
