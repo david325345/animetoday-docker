@@ -181,6 +181,10 @@
                     <button class="toggle off" id="tb-nzb-toggle" onclick="toggleTB('tb_use_nzb')"></button>
                     <label>Používat pro NZB/Usenet</label>
                 </div>
+                <div class="switch-row">
+                    <button class="toggle on" id="tb-cache-toggle" onclick="toggleTB('tb_cache_check')"></button>
+                    <label>Instant cache check <span style="color:var(--dim);font-size:11px">(⚡/⏳ u streamů)</span></label>
+                </div>
             </div>
             <div id="tb-login">
                 <p style="font-size:12px;color:var(--dim);margin-bottom:6px">API klíč z <a href="https://torbox.app/settings" target="_blank" style="color:var(--green)">torbox.app/settings</a>:</p>
@@ -510,10 +514,9 @@ async function checkTB() {
             const plans = ['Free','Essential','Standard','Pro'];
             document.getElementById('tb-name').textContent = d.username || 'TorBox User';
             document.getElementById('tb-meta').textContent = (plans[d.plan] || 'Unknown') + (d.expiration ? ' · do ' + new Date(d.expiration).toLocaleDateString('cs') : '');
-            const ttog = document.getElementById('tb-torrent-toggle');
-            const ntog = document.getElementById('tb-nzb-toggle');
-            ttog.className = d.tb_use_torrents ? 'toggle on' : 'toggle off';
-            ntog.className = d.tb_use_nzb ? 'toggle on' : 'toggle off';
+            document.getElementById('tb-torrent-toggle').className = d.tb_use_torrents ? 'toggle on' : 'toggle off';
+            document.getElementById('tb-nzb-toggle').className = d.tb_use_nzb ? 'toggle on' : 'toggle off';
+            document.getElementById('tb-cache-toggle').className = d.tb_cache_check !== false ? 'toggle on' : 'toggle off';
         } else {
             b.className='badge off'; b.textContent='Nepřipojen';
             u.classList.remove('vis'); l.style.display='block'; t.style.display='none';
@@ -535,7 +538,8 @@ async function disconnectTB() {
 }
 
 async function toggleTB(field) {
-    const el = field === 'tb_use_torrents' ? document.getElementById('tb-torrent-toggle') : document.getElementById('tb-nzb-toggle');
+    const ids = { tb_use_torrents: 'tb-torrent-toggle', tb_use_nzb: 'tb-nzb-toggle', tb_cache_check: 'tb-cache-toggle' };
+    const el = document.getElementById(ids[field]);
     const newVal = el.className.includes('off');
     el.className = newVal ? 'toggle on' : 'toggle off';
     await fetch('/api/torbox/toggle', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({token:TOKEN, field, value:newVal}) });
