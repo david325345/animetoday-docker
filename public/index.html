@@ -44,7 +44,8 @@
         .anime-list { display:flex; flex-direction:column; gap:6px; }
         .anime-item { display:flex; align-items:center; gap:12px; background:var(--card); border:1px solid var(--border); border-radius:10px; padding:10px 14px; transition:all 0.2s; }
         .anime-item.hid { opacity:0.4; }
-        .anime-poster { width:42px; height:62px; border-radius:5px; object-fit:cover; flex-shrink:0; background:var(--surface); }
+        .anime-poster { width:56px; height:80px; border-radius:5px; object-fit:cover; flex-shrink:0; background:var(--surface); cursor:pointer; transition:opacity 0.2s; }
+        .anime-poster:hover { opacity:0.7; }
         .anime-info { flex:1; min-width:0; }
         .anime-title { font-size:13px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
         .anime-meta { font-size:11px; color:var(--dim); margin-top:2px; }
@@ -468,7 +469,7 @@ async function loadAnime() {
             const g=(a.genres||[]).slice(0,3).join(', ');
             const sc=a.score?`${parseFloat(a.score).toFixed(1)}`:'';
             const time=a.airingAt?new Date(a.airingAt).toLocaleTimeString('cs-CZ',{timeZone:'Europe/Prague',hour:'2-digit',minute:'2-digit',hour12:false}):'';
-            html+=`<div class="anime-item ${a.hidden?'hid':''}">${p?`<img src="${p}" class="anime-poster" loading="lazy" onerror="this.style.display='none'">`:'<div class="anime-poster"></div>'}
+            html+=`<div class="anime-item ${a.hidden?'hid':''}">${p?`<img src="${p}" class="anime-poster" loading="lazy" onerror="this.style.display='none'" onclick="window.open('https://anilist.co/anime/${a.anilistId||''}','_blank')" title="Otevřít na AniList">`:'<div class="anime-poster"></div>'}
                 <div class="anime-info"><div class="anime-title">${t}</div><div class="anime-meta">${time?`<span style="color:var(--accent)">${time}</span> · `:''}EP ${a.episode}${g?' · '+g:''}${sc?' · '+sc:''}</div></div>
                 <button class="toggle ${a.hidden?'off':'on'}" onclick="toggleAnime(${a.id},${a.hidden})"></button></div>`;
         }
