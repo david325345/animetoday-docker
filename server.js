@@ -1492,7 +1492,16 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
 
   // Merge Indexer results
   if (!torrents.length && !indexerResults.length) {
-    return res.json({ streams: [{ name: '❌ Nenalezeno', title: `Nenalezeno na AnimeTosho`, url: 'https://animetosho.org', behaviorHints: { notWebReady: true } }] });
+    const noResultStreams = [{ name: '❌ Nenalezeno', title: `Nenalezeno na NimeToDex`, url: 'https://nimetodex.duckdns.org', behaviorHints: { notWebReady: true } }];
+    if (hasIndexer) {
+      noResultStreams.push({
+        name: '🔍 Search',
+        title: 'Search on demand\nSearches Nyaa + trackers for new results.\nClose video and reopen episode after ~30s.',
+        url: `${BASE_URL}/${token}/ondemand/${type}/${fullId}/video.mp4`,
+        behaviorHints: { bingeGroup: 'ondemand', notWebReady: true }
+      });
+    }
+    return res.json({ streams: noResultStreams });
   }
 
   const hasRD = !!user?.rd_api_key && user?.rd_enabled !== false;
