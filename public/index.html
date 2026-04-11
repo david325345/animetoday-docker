@@ -249,10 +249,14 @@
         <!-- My Indexer -->
         <div class="section">
             <h2>📦 Můj Indexer</h2>
-            <p class="desc">Lokální torrent indexer — výsledky se zobrazí vždy dole ve Stremio.</p>
+            <p class="desc">Lokální torrent indexer — rychlé hledání přes interní databázi.</p>
             <div class="switch-row">
                 <button class="toggle off" id="indexer-toggle" onclick="toggleIndexer()"></button>
                 <label>Hledat v indexeru</label>
+            </div>
+            <div class="switch-row" id="indexer-only-row" style="display:none">
+                <button class="toggle off" id="indexer-only-toggle" onclick="toggleIndexerOnly()"></button>
+                <label>Pouze indexer <span style="color:var(--dim);font-size:11px">(vypne AnimeTosho, NekoBT, SeaDex)</span></label>
             </div>
         </div>
 
@@ -620,6 +624,10 @@ async function checkIndexer() {
         const r = await fetch(`/api/indexer/status/${TOKEN}`); const d = await r.json();
         const el = document.getElementById('indexer-toggle');
         el.className = d.enabled ? 'toggle on' : 'toggle off';
+        // Show/hide indexer-only row
+        document.getElementById('indexer-only-row').style.display = d.enabled ? 'flex' : 'none';
+        const olEl = document.getElementById('indexer-only-toggle');
+        olEl.className = d.indexer_only ? 'toggle on' : 'toggle off';
     } catch {}
 }
 
@@ -627,7 +635,21 @@ async function toggleIndexer() {
     const el = document.getElementById('indexer-toggle');
     const newVal = el.className.includes('off');
     el.className = newVal ? 'toggle on' : 'toggle off';
-    await fetch('/api/indexer/toggle', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({token:TOKEN, enabled:newVal}) });
+    document.getElementById('indexer-only-row').style.display = newVal ? 'flex' : 'none';
+    if (!newVal) {
+        // Turning off indexer also turns off indexer-only
+        document.getElementById('indexer-only-toggle').className = 'toggle off';
+        await fetch('/api/indexer/toggle', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({token:TOKEN, enabled:false, indexer_only:false}) });
+    } else {
+        await fetch('/api/indexer/toggle', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({token:TOKEN, enabled:true}) });
+    }
+}
+
+async function toggleIndexerOnly() {
+    const el = document.getElementById('indexer-only-toggle');
+    const newVal = el.className.includes('off');
+    el.className = newVal ? 'toggle on' : 'toggle off';
+    await fetch('/api/indexer/toggle', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({token:TOKEN, indexer_only:newVal}) });
 }
 
 // Sort Preferences
