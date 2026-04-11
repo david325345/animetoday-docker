@@ -138,6 +138,12 @@
                 <div style="flex:1"><div id="rd-name" style="font-weight:600;font-size:14px">—</div><div id="rd-meta" style="font-size:11px;color:var(--dim)">—</div></div>
                 <button class="btn btn-sm btn-d" onclick="disconnectRD()">Odpojit</button>
             </div>
+            <div id="rd-toggles" style="display:none;margin-top:14px">
+                <div class="switch-row">
+                    <button class="toggle on" id="rd-enabled-toggle" onclick="toggleRD()"></button>
+                    <label>Používat RealDebrid</label>
+                </div>
+            </div>
             <div id="rd-login">
                 <button id="rd-oauth-btn" class="btn btn-p btn-sm" onclick="startRDAuth()">Přihlásit přes RealDebrid</button>
                 <div id="rd-box" class="rd-box">
@@ -386,7 +392,10 @@ async function checkRD() {
             u.classList.add('vis'); l.style.display='none';
             document.getElementById('rd-name').textContent=d.username||'RD User';
             document.getElementById('rd-meta').textContent=(d.premium?'Premium':'Free')+(d.expiration?' · do '+new Date(d.expiration).toLocaleDateString('cs'):'');
-        } else { b.className='badge off'; b.textContent='Nepřipojen'; u.classList.remove('vis'); l.style.display='block'; }
+            document.getElementById('rd-toggles').style.display='block';
+            const toggle=document.getElementById('rd-enabled-toggle');
+            toggle.className=d.rd_enabled!==false?'toggle on':'toggle off';
+        } else { b.className='badge off'; b.textContent='Nepřipojen'; u.classList.remove('vis'); l.style.display='block'; document.getElementById('rd-toggles').style.display='none'; }
     } catch {}
 }
 
@@ -414,6 +423,13 @@ async function saveRDKey() {
 
 async function disconnectRD() {
     await fetch(`/api/rd/disconnect/${TOKEN}`,{method:'POST'}); toast('🔌 RD odpojeno'); checkRD();
+}
+
+async function toggleRD() {
+    const el = document.getElementById('rd-enabled-toggle');
+    const newVal = el.className.includes('off');
+    el.className = newVal ? 'toggle on' : 'toggle off';
+    await fetch('/api/rd/toggle', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({token:TOKEN, enabled:newVal}) });
 }
 
 // TMDB
