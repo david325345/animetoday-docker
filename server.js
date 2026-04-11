@@ -267,6 +267,7 @@ app.get('/api/sort-prefs/:token', (req, res) => {
     langPriority: user.langPriority || [],
     excludedResolutions: user.excludedResolutions || [],
     sortBySeeders: user.sortBySeeders !== false,
+    cachedFirst: user.cachedFirst || false,
     defaultGroups: DEFAULT_GROUPS,
     defaultResolutions: DEFAULT_RESOLUTIONS,
     defaultLangs: []
@@ -276,13 +277,14 @@ app.get('/api/sort-prefs/:token', (req, res) => {
 app.post('/api/sort-prefs/:token', express.json(), (req, res) => {
   const user = config.getUser(req.params.token);
   if (!user) return res.status(404).json({ error: 'User not found' });
-  const { customSortEnabled, groupPriority, resPriority, langPriority, excludedResolutions, sortBySeeders } = req.body;
+  const { customSortEnabled, groupPriority, resPriority, langPriority, excludedResolutions, sortBySeeders, cachedFirst } = req.body;
   if (typeof customSortEnabled === 'boolean') user.customSortEnabled = customSortEnabled;
   if (Array.isArray(groupPriority)) user.groupPriority = groupPriority;
   if (Array.isArray(resPriority)) user.resPriority = resPriority;
   if (Array.isArray(langPriority)) user.langPriority = langPriority;
   if (Array.isArray(excludedResolutions)) user.excludedResolutions = excludedResolutions;
   if (typeof sortBySeeders === 'boolean') user.sortBySeeders = sortBySeeders;
+  if (typeof cachedFirst === 'boolean') user.cachedFirst = cachedFirst;
   config.saveUser(req.params.token, user);
   res.json({ success: true });
 });
@@ -1535,6 +1537,14 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
     }
   }
 
+  // Sort cached first if enabled — each group keeps its own sort order
+  if (tbCacheCheck && user?.cachedFirst && Object.keys(tbCacheMap).length) {
+    const getHash = t => (t.infohash || t.magnet?.match(/btih:([a-zA-Z0-9]+)/i)?.[1] || '').toLowerCase();
+    const cached = allResults.filter(t => tbCacheMap[getHash(t)]);
+    const notCached = allResults.filter(t => !tbCacheMap[getHash(t)]);
+    allResults = [...cached, ...notCached];
+  }
+
   const streams = [];
   for (const t of allResults) {
     const name = t.name || '';
@@ -2090,7 +2100,7 @@ app.listen(PORT, '0.0.0.0', async () => {
   console.log(`  TMDB: ${config.getTMDBKey() ? '✅' : '❌ (web)'}`);
   console.log(`  Users: ${users.length}`);
   updateCache().catch(err => console.error('❌ Initial cache:', err.message));
-  startRssFetcher();
+  // startRssFetcher(); // disabled — using indexer instead
 });
 
 // Weekly update of anime-offline-database (Sundays at 5:00)
