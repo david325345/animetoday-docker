@@ -430,15 +430,16 @@ app.post('/api/seadex/toggle', express.json(), (req, res) => {
 // ===== My Indexer API =====
 app.get('/api/indexer/status/:token', (req, res) => {
   const user = config.getUser(req.params.token);
-  if (!user) return res.json({ enabled: false });
-  res.json({ enabled: user.indexer_enabled || false });
+  if (!user) return res.json({ enabled: false, indexer_only: false });
+  res.json({ enabled: user.indexer_enabled || false, indexer_only: user.indexer_only || false });
 });
 
 app.post('/api/indexer/toggle', express.json(), (req, res) => {
-  const { token, enabled } = req.body;
+  const { token, enabled, indexer_only } = req.body;
   const user = config.getUser(token);
   if (!user) return res.status(404).json({ error: 'User not found' });
-  user.indexer_enabled = !!enabled;
+  if (enabled !== undefined) user.indexer_enabled = !!enabled;
+  if (indexer_only !== undefined) user.indexer_only = !!indexer_only;
   config.saveUser(token, user);
   res.json({ success: true });
 });
@@ -1101,9 +1102,10 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
   const hasNekobt = user?.nekobt_api_key && user?.nekobt_enabled !== false;
   const hasSeadex = user?.seadex_enabled;
   const hasIndexer = user?.indexer_enabled;
+  const indexerOnly = hasIndexer && user?.indexer_only;
 
   // AnimeTosho search task (complex flow with fallbacks)
-  const atSearchTask = (async () => {
+  const atSearchTask = indexerOnly ? Promise.resolve([]) : (async () => {
     let torrents = [];
     // Handle at: ID format from Anime Today: at:187941:1:5 or at:187941:5
   if (fullId.startsWith('at:')) {
@@ -1278,7 +1280,8 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
   })().catch(err => { console.error(`  AT search error: ${err.message}`); return []; });
 
   // NekoBT search task
-  const nekobtTask = (hasNekobt && resolved.names.length) ?
+  const nekobtTask = indexerOnly ? Promise.resolve([]) :
+    ((hasNekobt && resolved.names.length) ?
     (async () => {
       console.log(`  🐱 NekoBT search: [${resolved.names.join(', ')}] S${season}E${episode}`);
       return await searchNekobt(resolved.names, user.nekobt_api_key, season, episode, isMovie);
@@ -1306,10 +1309,11 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
         return [];
       })().catch(() => []) :
       Promise.resolve([])
-    );
+    ));
 
   // SeaDex search task
-  const seadexTask = hasSeadex ?
+  const seadexTask = indexerOnly ? Promise.resolve([]) :
+    (hasSeadex ?
     (async () => {
       let alId = resolved.anilistId;
       // Async fallback if no AniList ID yet
@@ -1329,7 +1333,7 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
       console.log(`  🏆 SeaDex: no AniList ID resolved`);
       return [];
     })().catch(() => []) :
-    Promise.resolve([]);
+    Promise.resolve([]));
 
   // My Indexer task (NimeToDex)
   const indexerTask = hasIndexer ?
@@ -1349,23 +1353,49 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
 
       const mapResults = (results) => results
         .filter(r => r.magnet || r.infohash)
-        .map(r => ({
-          name: r.name || 'Unknown',
-          magnet: r.magnet || (r.infohash ? `magnet:?xt=urn:btih:${r.infohash}` : null),
-          infohash: r.infohash || null,
-          seeders: String(r.seeders || 0),
-          leechers: String(r.leechers || 0),
-          filesize: r.filesize ? formatIndexerFilesize(r.filesize) : '?',
-          source: 'indexer',
-          indexer: true,
-          releaseGroup: r.group_name || '',
-          resolution: r.resolution || '',
-          dualAudio: !!r.dual_audio,
-          seadexBest: !!r.seadex_best,
-          batch: !!r.batch,
-          videoSource: r.video_source || '',
-          codec: r.codec || '',
-        }));
+        .map(r => {
+          // Find matching episode file in batch
+          let matchedFile = null;
+          if (r.batch && r.file_list && episode) {
+            try {
+              const files = typeof r.file_list === 'string' ? JSON.parse(r.file_list) : r.file_list;
+              if (Array.isArray(files)) {
+                const epPad = String(episode).padStart(2, '0');
+                const sPad = String(season || 0).padStart(2, '0');
+                matchedFile = files.find(f => {
+                  const n = f.name || '';
+                  if (new RegExp(`S${sPad}E${epPad}(?:\\b|[^\\d])`, 'i').test(n)) return true;
+                  if (new RegExp(`\\s-\\s${epPad}(?:\\s|\\[|\\(|v\\d|\\.|$)`).test(n)) return true;
+                  if (new RegExp(`E${epPad}(?:\\b|[^\\d])`, 'i').test(n)) return true;
+                  return false;
+                });
+              }
+            } catch {}
+          }
+
+          return {
+            name: r.name || 'Unknown',
+            magnet: r.magnet || (r.infohash ? `magnet:?xt=urn:btih:${r.infohash}` : null),
+            infohash: r.infohash || null,
+            seeders: String(r.seeders || 0),
+            leechers: String(r.leechers || 0),
+            filesize: r.filesize ? formatIndexerFilesize(r.filesize) : '?',
+            source: 'indexer',
+            indexer: true,
+            releaseGroup: r.group_name || '',
+            resolution: r.resolution || '',
+            dualAudio: !!r.dual_audio,
+            seadexBest: !!r.seadex_best,
+            batch: !!r.batch,
+            videoSource: r.video_source || '',
+            codec: r.codec || '',
+            audioLangs: r.audio_langs || '',
+            subtitleLangs: r.subtitle_langs || '',
+            audioCodec: r.audio_codec || '',
+            fileCount: r.file_count || 0,
+            matchedFile: matchedFile ? { name: matchedFile.name, size: matchedFile.size, idx: matchedFile.idx } : null,
+          };
+        });
 
       try {
         console.log(`  📦 Indexer: searching ${params.toString()}`);
@@ -1450,8 +1480,7 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
     console.log(`  🏆 SeaDex: ${marked} marked, +${remaining.length} new (${seadexResults.length} total)`);
   }
 
-  // Merge Indexer results (always at the bottom, no dedup)
-  // Don't add indexer to main torrents — keep separate for display at bottom
+  // Merge Indexer results
   if (!torrents.length && !indexerResults.length) {
     return res.json({ streams: [{ name: '❌ Nenalezeno', title: `Nenalezeno na AnimeTosho`, url: 'https://animetosho.org', behaviorHints: { notWebReady: true } }] });
   }
@@ -1459,13 +1488,21 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
   const hasRD = !!user?.rd_api_key;
   const hasTB = !!user?.tb_api_key;
   const tbTorrents = hasTB && user.tb_use_torrents;
-  // Sort and limit main results (AT + NekoBT + SeaDex)
-  const sorted = sortByGroupPriority(torrents, user || null);
-  const maxResults = hasNekobt ? 30 : 20;
-  const withMagnet = sorted.filter(t => t.magnet).slice(0, maxResults);
 
-  // Append ALL indexer results at the end (no limit, no sort)
-  const allResults = [...withMagnet, ...indexerResults.filter(t => t.magnet)];
+  let allResults;
+  if (indexerOnly) {
+    // Indexer-only mode: indexer results are the main results, sort them
+    const indexerWithMagnet = indexerResults.filter(t => t.magnet);
+    allResults = sortByGroupPriority(indexerWithMagnet, user || null);
+    if (indexerWithMagnet.length) console.log(`  📦 Indexer-only: ${indexerWithMagnet.length} results`);
+  } else {
+    // Normal mode: sort main sources, append indexer at bottom
+    const sorted = sortByGroupPriority(torrents, user || null);
+    const maxResults = hasNekobt ? 30 : 20;
+    const withMagnet = sorted.filter(t => t.magnet).slice(0, maxResults);
+    allResults = [...withMagnet, ...indexerResults.filter(t => t.magnet)];
+    if (indexerResults.length) console.log(`  📦 +${indexerResults.length} from Indexer (appended at bottom)`);
+  }
 
   const streams = [];
   for (const t of allResults) {
@@ -1473,25 +1510,58 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
     const quality = detectQuality(name);
     const epNum = isMovie ? 0 : episode;
 
-    // Unified format: "🏆 SeaDex · 1080p · [Group]\nTorrent Name\n👥 seeders | 📦 size"
-    const tags = [];
-    if (t.seadex) tags.push('🏆 SeaDex');
-    if (t.indexer) tags.push('📦 Indexer');
-    if (quality) tags.push(quality);
-    if (t.nekobt && t.groups?.length) tags.push(`[${t.groups[0]}]`);
-    if (t.nekobt && t.level >= 3) tags.push('⭐OTL');
-    else if (t.nekobt && t.mtl) tags.push('⚠️MTL');
-    if ((t.seadex && t.dualAudio) || (t.indexer && t.dualAudio)) tags.push('Dual Audio');
-    const line1 = tags.filter(Boolean).join(' · ');
-    const statsLine = t.seadex
-      ? `📦 ${t.filesize || '?'}`
-      : `👥 ${parseInt(t.seeders) || 0} seeders | 📦 ${t.filesize || '?'}`;
-    const title = `${line1 ? line1 + '\n' : ''}${name}\n${statsLine}`;
+    let title, streamName;
 
-    // Stream name label
-    const streamName = t.seadex ? '🏆' :
-                       t.indexer ? '📦' :
-                       t.nekobt ? '🐱' : '🎌';
+    if (t.indexer) {
+      // === Indexer result: custom formatting ===
+      const tags = [];
+      if (t.seadexBest) tags.push('🏆 Best');
+      if (t.resolution) tags.push(t.resolution);
+      // Language flags
+      const langFlags = langToFlags(t.audioLangs);
+      const subFlags = langToFlags(t.subtitleLangs);
+      if (langFlags) tags.push(langFlags);
+      if (subFlags) tags.push(`💬${subFlags}`);
+      if (t.dualAudio) tags.push('Dual Audio');
+      if (t.videoSource) tags.push(t.videoSource);
+      if (t.codec) tags.push(t.codec);
+      if (t.audioCodec) tags.push(t.audioCodec);
+      const line1 = tags.filter(Boolean).join(' · ');
+
+      // Batch: show matched file on line 3
+      let fileLine = '';
+      if (t.batch && t.matchedFile) {
+        const fName = t.matchedFile.name.replace(/\.mkv$|\.mp4$/i, '');
+        const fSize = t.matchedFile.size ? formatIndexerFilesize(t.matchedFile.size) : '';
+        fileLine = `\n📂 ${fName}${fSize ? ' (' + fSize + ')' : ''}`;
+      }
+
+      // Stats line
+      const statsParts = [];
+      statsParts.push(`👥 ${parseInt(t.seeders) || 0}`);
+      statsParts.push(`📦 ${t.filesize || '?'}`);
+      if (t.batch && t.fileCount) statsParts.push(`${t.fileCount} files`);
+      const statsLine = statsParts.join(' · ');
+
+      title = `${line1 ? line1 + '\n' : ''}${name}${fileLine}\n${statsLine}`;
+      streamName = t.seadexBest ? '🏆' : (t.resolution || '📦');
+    } else {
+      // === Non-indexer result: original formatting ===
+      const tags = [];
+      if (t.seadex) tags.push(t.isBest ? '🏆 Best' : '🏆 SeaDex');
+      if (quality) tags.push(quality);
+      if (t.nekobt && t.groups?.length) tags.push(`[${t.groups[0]}]`);
+      if (t.nekobt && t.level >= 3) tags.push('⭐OTL');
+      else if (t.nekobt && t.mtl) tags.push('⚠️MTL');
+      if (t.dualAudio) tags.push('Dual Audio');
+      const line1 = tags.filter(Boolean).join(' · ');
+
+      const statsLine = t.seadex
+        ? `📦 ${t.filesize || '?'}`
+        : `👥 ${parseInt(t.seeders) || 0} | 📦 ${t.filesize || '?'}`;
+      title = `${line1 ? line1 + '\n' : ''}${name}\n${statsLine}`;
+      streamName = t.seadex ? '🏆' : t.nekobt ? '🐱' : '🎌';
+    }
 
     if (hasRD) {
       streams.push({ name: `${streamName} RD`, title,
@@ -1508,8 +1578,6 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
     }
   }
 
-  if (indexerResults.length) console.log(`  📦 +${indexerResults.length} from Indexer (appended at bottom)`);
-
   // Add "Search on demand" as last stream (only if indexer is enabled)
   if (hasIndexer) {
     streams.push({
@@ -1520,7 +1588,7 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
     });
   }
 
-  console.log(`  📤 Streams: ${streams.length}${hasNekobt ? ' (NekoBT enabled)' : ''}${hasIndexer ? ' (Indexer enabled)' : ''}`);
+  console.log(`  📤 Streams: ${streams.length}${hasNekobt && !indexerOnly ? ' (NekoBT enabled)' : ''}${hasIndexer ? ' (Indexer enabled)' : ''}${indexerOnly ? ' (INDEXER ONLY)' : ''}`);
   res.json({ streams });
 });
 
@@ -1551,6 +1619,49 @@ function formatIndexerFilesize(bytes) {
   if (n >= 1073741824) return (n / 1073741824).toFixed(1) + ' GB';
   if (n >= 1048576) return (n / 1048576).toFixed(0) + ' MB';
   return (n / 1024).toFixed(0) + ' KB';
+}
+
+const LANG_FLAGS = {
+  ja: '🇯🇵', jp: '🇯🇵', japanese: '🇯🇵',
+  en: '🇬🇧', eng: '🇬🇧', english: '🇬🇧',
+  cs: '🇨🇿', cz: '🇨🇿', czech: '🇨🇿',
+  de: '🇩🇪', ger: '🇩🇪', german: '🇩🇪',
+  fr: '🇫🇷', fre: '🇫🇷', french: '🇫🇷',
+  es: '🇪🇸', spa: '🇪🇸', spanish: '🇪🇸',
+  pt: '🇧🇷', por: '🇧🇷', portuguese: '🇧🇷',
+  it: '🇮🇹', ita: '🇮🇹', italian: '🇮🇹',
+  ko: '🇰🇷', kor: '🇰🇷', korean: '🇰🇷',
+  zh: '🇨🇳', chi: '🇨🇳', chinese: '🇨🇳',
+  ru: '🇷🇺', rus: '🇷🇺', russian: '🇷🇺',
+  ar: '🇸🇦', ara: '🇸🇦', arabic: '🇸🇦',
+  pl: '🇵🇱', pol: '🇵🇱', polish: '🇵🇱',
+  nl: '🇳🇱', dut: '🇳🇱', dutch: '🇳🇱',
+  sv: '🇸🇪', swe: '🇸🇪', swedish: '🇸🇪',
+  no: '🇳🇴', nor: '🇳🇴', norwegian: '🇳🇴',
+  da: '🇩🇰', dan: '🇩🇰', danish: '🇩🇰',
+  fi: '🇫🇮', fin: '🇫🇮', finnish: '🇫🇮',
+  hu: '🇭🇺', hun: '🇭🇺', hungarian: '🇭🇺',
+  ro: '🇷🇴', rum: '🇷🇴', romanian: '🇷🇴',
+  th: '🇹🇭', tha: '🇹🇭', thai: '🇹🇭',
+  vi: '🇻🇳', vie: '🇻🇳', vietnamese: '🇻🇳',
+  id: '🇮🇩', ind: '🇮🇩', indonesian: '🇮🇩',
+  ms: '🇲🇾', may: '🇲🇾', malay: '🇲🇾',
+  tr: '🇹🇷', tur: '🇹🇷', turkish: '🇹🇷',
+  hi: '🇮🇳', hin: '🇮🇳', hindi: '🇮🇳',
+  he: '🇮🇱', heb: '🇮🇱', hebrew: '🇮🇱',
+  el: '🇬🇷', gre: '🇬🇷', greek: '🇬🇷',
+  uk: '🇺🇦', ukr: '🇺🇦', ukrainian: '🇺🇦',
+  bg: '🇧🇬', bul: '🇧🇬', bulgarian: '🇧🇬',
+  hr: '🇭🇷', hrv: '🇭🇷', croatian: '🇭🇷',
+  sk: '🇸🇰', slo: '🇸🇰', slovak: '🇸🇰',
+  sr: '🇷🇸', srp: '🇷🇸', serbian: '🇷🇸',
+};
+
+function langToFlags(langStr) {
+  if (!langStr) return '';
+  const codes = langStr.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+  const flags = codes.map(c => LANG_FLAGS[c] || c).join('');
+  return flags;
 }
 
 function getLangScore(item, langOrder) {
