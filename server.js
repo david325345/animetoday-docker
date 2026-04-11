@@ -12,7 +12,7 @@ const { getRDStream, rdInProgress, getCacheKey, serveLoadingVideo, DOWNLOADING_V
 const { generateAllPosters } = require('./lib/posters');
 const { formatTimeCET } = require('./lib/simkl');
 const { startRssFetcher, clearRssIndex, searchRssIndex, getRssStats } = require('./lib/rss');
-const { getTBStatus, getTBStream, getTBNZBStream } = require('./lib/torbox');
+const { getTBStatus, getTBStream, getTBNZBStream, checkTBCached } = require('./lib/torbox');
 const { searchNekobt, validateApiKey: validateNekobtKey, sortNekobtResults } = require('./lib/nekobt');
 const { searchByTVDB: nzbgeekSearch, searchByIMDb: nzbgeekMovieSearch, validateApiKey: validateNzbgeekKey } = require('./lib/nzbgeek');
 const { searchByAniListId: seadexSearch, findEpisodeFile: seadexFindEpisode } = require('./lib/seadex');
@@ -164,7 +164,7 @@ app.get('/api/rd/status/:token', async (req, res) => {
     const resp = await axios.get('https://api.real-debrid.com/rest/1.0/user', {
       headers: { 'Authorization': `Bearer ${user.rd_api_key}` }, timeout: 10000
     });
-    res.json({ connected: true, username: resp.data.username, premium: resp.data.premium > 0, expiration: resp.data.expiration });
+    res.json({ connected: true, rd_enabled: user.rd_enabled !== false, username: resp.data.username, premium: resp.data.premium > 0, expiration: resp.data.expiration });
   } catch {
     // Try refresh
     if (user.rd_refresh_token && user.rd_client_id && user.rd_client_secret) {
@@ -177,7 +177,7 @@ app.get('/api/rd/status/:token', async (req, res) => {
         config.saveUser(req.params.token, user);
         const retry = await axios.get('https://api.real-debrid.com/rest/1.0/user', {
           headers: { 'Authorization': `Bearer ${user.rd_api_key}` }, timeout: 10000 });
-        return res.json({ connected: true, username: retry.data.username, premium: retry.data.premium > 0, expiration: retry.data.expiration });
+        return res.json({ connected: true, rd_enabled: user.rd_enabled !== false, username: retry.data.username, premium: retry.data.premium > 0, expiration: retry.data.expiration });
       } catch {}
     }
     res.json({ connected: false });
@@ -189,6 +189,15 @@ app.post('/api/rd/disconnect/:token', (req, res) => {
   if (!user) return res.status(404).json({ error: 'User not found' });
   user.rd_api_key = ''; user.rd_refresh_token = ''; user.rd_client_id = ''; user.rd_client_secret = '';
   config.saveUser(req.params.token, user);
+  res.json({ success: true });
+});
+
+app.post('/api/rd/toggle', express.json(), (req, res) => {
+  const { token, enabled } = req.body;
+  const user = config.getUser(token);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  user.rd_enabled = !!enabled;
+  config.saveUser(token, user);
   res.json({ success: true });
 });
 
@@ -1485,7 +1494,7 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
     return res.json({ streams: [{ name: '❌ Nenalezeno', title: `Nenalezeno na AnimeTosho`, url: 'https://animetosho.org', behaviorHints: { notWebReady: true } }] });
   }
 
-  const hasRD = !!user?.rd_api_key;
+  const hasRD = !!user?.rd_api_key && user?.rd_enabled !== false;
   const hasTB = !!user?.tb_api_key;
   const tbTorrents = hasTB && user.tb_use_torrents;
 
@@ -1502,6 +1511,17 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
     const withMagnet = sorted.filter(t => t.magnet).slice(0, maxResults);
     allResults = [...withMagnet, ...indexerResults.filter(t => t.magnet)];
     if (indexerResults.length) console.log(`  📦 +${indexerResults.length} from Indexer (appended at bottom)`);
+  }
+
+  // TorBox cache check — batch all hashes in one request
+  let tbCacheMap = {};
+  if (tbTorrents && allResults.length) {
+    const hashes = allResults
+      .map(t => (t.infohash || t.magnet?.match(/btih:([a-zA-Z0-9]+)/i)?.[1] || '').toLowerCase())
+      .filter(h => h && h.length >= 32);
+    if (hashes.length) {
+      tbCacheMap = await checkTBCached(user.tb_api_key, hashes);
+    }
   }
 
   const streams = [];
@@ -1563,13 +1583,18 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
       streamName = t.seadex ? '🏆' : t.nekobt ? '🐱' : '🎌';
     }
 
+    // Check TB cache status for this torrent
+    const torrentHash = (t.infohash || t.magnet?.match(/btih:([a-zA-Z0-9]+)/i)?.[1] || '').toLowerCase();
+    const isTBCached = tbCacheMap[torrentHash];
+
     if (hasRD) {
       streams.push({ name: `${streamName} RD`, title,
         url: `${BASE_URL}/${token}/play/${storeMagnet(t.magnet)}/${epNum}/video.mp4`,
         behaviorHints: { bingeGroup: t.seadex ? 'seadex-rd' : t.indexer ? 'indexer-rd' : t.nekobt ? 'neko-rd' : 'nyaa-rd', notWebReady: true } });
     }
     if (tbTorrents) {
-      streams.push({ name: `${streamName} TB`, title,
+      const tbName = isTBCached ? `⚡${streamName} TB` : `${streamName} TB`;
+      streams.push({ name: tbName, title: isTBCached ? `⚡ Cached\n${title}` : title,
         url: `${BASE_URL}/${token}/play-tb/${storeMagnet(t.magnet)}/${epNum}/video.mp4`,
         behaviorHints: { bingeGroup: t.seadex ? 'seadex-tb' : t.indexer ? 'indexer-tb' : t.nekobt ? 'neko-tb' : 'nyaa-tb', notWebReady: true } });
     }
