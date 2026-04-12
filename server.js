@@ -1409,14 +1409,53 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
           };
         });
 
+      const mapToshoResults = (results) => results
+        .filter(r => r.magnet || r.infohash)
+        .map(r => ({
+          name: r.name || 'Unknown',
+          magnet: r.magnet || (r.infohash ? `magnet:?xt=urn:btih:${r.infohash}` : null),
+          infohash: r.infohash || null,
+          seeders: String(r.seeders || 0),
+          leechers: String(r.leechers || 0),
+          filesize: r.filesize ? formatIndexerFilesize(r.filesize) : '?',
+          source: 'tosho',
+          indexer: true,
+          tosho: true,
+          releaseGroup: r.group_name || '',
+          resolution: r.resolution || '',
+          dualAudio: !!r.dual_audio,
+          seadexBest: !!r.seadex_best,
+          batch: !!r.batch,
+          videoSource: r.video_source || '',
+          codec: r.codec || '',
+          audioLangs: r.audio_langs || '',
+          subtitleLangs: r.subtitle_langs || '',
+          audioCodec: r.audio_codec || '',
+          fileCount: r.file_count || 0,
+          matchedFile: null,
+        }));
+
       try {
         console.log(`  📦 Indexer: searching ${params.toString()}`);
         const resp = await axios.get(`${INDEXER_URL}/search?${params.toString()}`, { timeout: 8000 });
         const results = resp.data?.results || [];
+        const toshoResults = resp.data?.tosho_results || [];
         const ms = Date.now() - t0;
-        console.log(`  📦 Indexer: ${results.length} results (${ms}ms, searchedBy: ${resp.data?.searchedBy || '?'})`);
+        console.log(`  📦 Indexer: ${results.length} results + ${toshoResults.length} tosho (${ms}ms, searchedBy: ${resp.data?.searchedBy || '?'})`);
 
-        if (results.length) return mapResults(results);
+        const mapped = mapResults(results);
+        const mappedTosho = mapToshoResults(toshoResults);
+
+        // Deduplicate tosho by infohash against main results
+        const mainHashes = new Set(mapped.map(t => (t.infohash || '').toLowerCase()).filter(Boolean));
+        const uniqueTosho = mappedTosho.filter(t => {
+          const h = (t.infohash || '').toLowerCase();
+          return h && !mainHashes.has(h);
+        });
+        if (uniqueTosho.length && toshoResults.length) console.log(`  📡 AT: +${uniqueTosho.length} unique (${toshoResults.length - uniqueTosho.length} duplicates)`);
+
+        const combined = [...mapped, ...uniqueTosho];
+        if (combined.length) return combined;
 
         // Fallback: text search by name if ID search found nothing
         const searchName = resolved.names[0] || resolved.title;
@@ -1430,8 +1469,16 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
           console.log(`  📦 Indexer fallback: q="${searchName}"`);
           const qResp = await axios.get(`${INDEXER_URL}/search?${qParams.toString()}`, { timeout: 8000 });
           const qResults = qResp.data?.results || [];
-          console.log(`  📦 Indexer fallback: ${qResults.length} results (${Date.now() - ft0}ms)`);
-          return mapResults(qResults);
+          const qTosho = qResp.data?.tosho_results || [];
+          console.log(`  📦 Indexer fallback: ${qResults.length} results + ${qTosho.length} tosho (${Date.now() - ft0}ms)`);
+          const qMapped = mapResults(qResults);
+          const qMappedTosho = mapToshoResults(qTosho);
+          const qMainHashes = new Set(qMapped.map(t => (t.infohash || '').toLowerCase()).filter(Boolean));
+          const qUniqueTosho = qMappedTosho.filter(t => {
+            const h = (t.infohash || '').toLowerCase();
+            return h && !qMainHashes.has(h);
+          });
+          return [...qMapped, ...qUniqueTosho];
         }
 
         return [];
@@ -1556,6 +1603,7 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
     if (t.indexer) {
       // === Indexer result: custom formatting ===
       const tags = [];
+      if (t.tosho) tags.push('📡 AT');
       if (t.seadexBest) tags.push('🏆 Best');
       if (t.resolution) tags.push(t.resolution);
       // Language flags
@@ -1585,7 +1633,7 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
       const statsLine = statsParts.join(' · ');
 
       title = `${line1 ? line1 + '\n' : ''}${name}${fileLine}\n${statsLine}`;
-      streamName = t.seadexBest ? '🏆' : (t.resolution || '📦');
+      streamName = t.seadexBest ? '🏆' : t.tosho ? `📡${t.resolution || ''}` : (t.resolution || '📦');
     } else {
       // === Non-indexer result: original formatting ===
       const tags = [];
