@@ -863,6 +863,7 @@ app.get('/:token/nyaa/catalog/:type/:id.json', async (req, res) => {
         type: type,
         name: item.anime_title,
         poster: `https://images.metahub.space/poster/small/${item.imdb_id}/img`,
+        background: `https://img.anili.st/media/${item.anilist_id}`,
       }));
 
     console.log(`  📋 Today catalog (${type}): ${metas.length} items`);
