@@ -862,6 +862,7 @@ app.get('/:token/nyaa/catalog/:type/:id.json', async (req, res) => {
         id: item.imdb_id,
         type: type,
         name: item.anime_title,
+        poster: `https://img.anili.st/media/${item.anilist_id}`,
       }));
 
     console.log(`  📋 Today catalog (${type}): ${metas.length} items`);
