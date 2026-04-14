@@ -822,16 +822,50 @@ app.get('/:token/today/meta/:type/:id.json', async (req, res) => {
 app.get('/:token/nyaa/manifest.json', (req, res) => {
   res.json({
     id: 'cz.nyaa.search.v7',
-    version: '7.0.0',
-    name: 'Nyaa Search',
-    description: 'Anime z Nyaa.si + RealDebrid. Funguje s Cinemeta/Kitsu/Anime Today.',
+    version: '7.1.0',
+    name: 'NimeToDex',
+    description: 'Anime torrent indexer + RealDebrid/TorBox. Funguje s Cinemeta/Kitsu/Anime Today.',
     logo: `${BASE_URL}/logo-nyaa.png`,
     resources: ['stream', 'meta'],
     types: ['series', 'movie'],
-    catalogs: [],
+    catalogs: [
+      { type: 'series', id: 'nimetodex-today', name: 'NimeToDex — Dnes přidané', extra: [{ name: 'skip' }] },
+      { type: 'movie', id: 'nimetodex-today', name: 'NimeToDex — Dnes přidané', extra: [{ name: 'skip' }] }
+    ],
     idPrefixes: ['at:', 'kitsu:', 'tt', 'tvdb:', 'anilist:'],
     behaviorHints: { configurable: false, configurationRequired: false }
   });
+});
+
+// ===== NimeToDex: Today Added catalog =====
+app.get('/:token/nyaa/catalog/:type/:id.json', async (req, res) => {
+  const { type, id } = req.params;
+  if (id !== 'nimetodex-today') return res.json({ metas: [] });
+
+  try {
+    const resp = await axios.get(`${INDEXER_URL}/api/today-added`, { timeout: 8000 });
+    const items = resp.data?.items || [];
+
+    // Map type: Stremio uses 'series' and 'movie'
+    const typeMap = { TV: 'series', OVA: 'series', SPECIAL: 'series', MOVIE: 'movie' };
+
+    const metas = items
+      .filter(item => {
+        const stremioType = typeMap[item.type] || 'series';
+        return stremioType === type && item.imdb_id;
+      })
+      .map(item => ({
+        id: item.imdb_id,
+        type: type,
+        name: item.anime_title,
+      }));
+
+    console.log(`  📋 Today catalog (${type}): ${metas.length} items`);
+    res.json({ metas });
+  } catch (err) {
+    console.log(`  📋 Today catalog error: ${err.message}`);
+    res.json({ metas: [] });
+  }
 });
 
 app.get('/:token/nyaa/meta/:type/:id.json', async (req, res) => {
