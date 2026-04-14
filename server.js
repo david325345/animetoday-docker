@@ -442,16 +442,17 @@ app.post('/api/seadex/toggle', express.json(), (req, res) => {
 // ===== My Indexer API =====
 app.get('/api/indexer/status/:token', (req, res) => {
   const user = config.getUser(req.params.token);
-  if (!user) return res.json({ enabled: false, indexer_only: false });
-  res.json({ enabled: user.indexer_enabled || false, indexer_only: user.indexer_only || false });
+  if (!user) return res.json({ enabled: false, indexer_only: false, indexer_catalog: false });
+  res.json({ enabled: user.indexer_enabled || false, indexer_only: user.indexer_only || false, indexer_catalog: user.indexer_catalog || false });
 });
 
 app.post('/api/indexer/toggle', express.json(), (req, res) => {
-  const { token, enabled, indexer_only } = req.body;
+  const { token, enabled, indexer_only, indexer_catalog } = req.body;
   const user = config.getUser(token);
   if (!user) return res.status(404).json({ error: 'User not found' });
   if (enabled !== undefined) user.indexer_enabled = !!enabled;
   if (indexer_only !== undefined) user.indexer_only = !!indexer_only;
+  if (indexer_catalog !== undefined) user.indexer_catalog = !!indexer_catalog;
   config.saveUser(token, user);
   res.json({ success: true });
 });
@@ -839,8 +840,11 @@ app.get('/:token/nyaa/manifest.json', (req, res) => {
 
 // ===== NimeToDex: Today Added catalog =====
 app.get('/:token/nyaa/catalog/:type/:id.json', async (req, res) => {
-  const { type, id } = req.params;
+  const { token, type, id } = req.params;
   if (id !== 'nimetodex-today') return res.json({ metas: [] });
+
+  const user = config.getUser(token);
+  if (!user?.indexer_catalog) return res.json({ metas: [] });
 
   try {
     const resp = await axios.get(`${INDEXER_URL}/api/today-added`, { timeout: 8000 });
