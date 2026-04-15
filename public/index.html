@@ -273,6 +273,10 @@
                 <button class="toggle off" id="indexer-catalog-toggle" onclick="toggleIndexerCatalog()"></button>
                 <label>Katalog — Dnes přidané <span style="color:var(--dim);font-size:11px">(nové torrenty na indexeru)</span></label>
             </div>
+            <div class="switch-row" id="indexer-subs-row" style="display:none">
+                <button class="toggle off" id="indexer-subs-toggle" onclick="toggleSubtitles()"></button>
+                <label>💬 Titulky <span style="color:var(--dim);font-size:11px">(vyžaduje reinstalaci addonu)</span></label>
+            </div>
         </div>
 
         <!-- TMDB -->
@@ -653,13 +657,13 @@ async function checkIndexer() {
         const r = await fetch(`/api/indexer/status/${TOKEN}`); const d = await r.json();
         const el = document.getElementById('indexer-toggle');
         el.className = d.enabled ? 'toggle on' : 'toggle off';
-        // Show/hide indexer-only and catalog rows
+        // Show/hide sub-rows
         document.getElementById('indexer-only-row').style.display = d.enabled ? 'flex' : 'none';
         document.getElementById('indexer-catalog-row').style.display = d.enabled ? 'flex' : 'none';
-        const olEl = document.getElementById('indexer-only-toggle');
-        olEl.className = d.indexer_only ? 'toggle on' : 'toggle off';
-        const catEl = document.getElementById('indexer-catalog-toggle');
-        catEl.className = d.indexer_catalog ? 'toggle on' : 'toggle off';
+        document.getElementById('indexer-subs-row').style.display = d.enabled ? 'flex' : 'none';
+        document.getElementById('indexer-only-toggle').className = d.indexer_only ? 'toggle on' : 'toggle off';
+        document.getElementById('indexer-catalog-toggle').className = d.indexer_catalog ? 'toggle on' : 'toggle off';
+        document.getElementById('indexer-subs-toggle').className = d.subtitles_enabled ? 'toggle on' : 'toggle off';
     } catch {}
 }
 
@@ -669,10 +673,12 @@ async function toggleIndexer() {
     el.className = newVal ? 'toggle on' : 'toggle off';
     document.getElementById('indexer-only-row').style.display = newVal ? 'flex' : 'none';
     document.getElementById('indexer-catalog-row').style.display = newVal ? 'flex' : 'none';
+    document.getElementById('indexer-subs-row').style.display = newVal ? 'flex' : 'none';
     if (!newVal) {
         document.getElementById('indexer-only-toggle').className = 'toggle off';
         document.getElementById('indexer-catalog-toggle').className = 'toggle off';
-        await fetch('/api/indexer/toggle', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({token:TOKEN, enabled:false, indexer_only:false, indexer_catalog:false}) });
+        document.getElementById('indexer-subs-toggle').className = 'toggle off';
+        await fetch('/api/indexer/toggle', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({token:TOKEN, enabled:false, indexer_only:false, indexer_catalog:false, subtitles_enabled:false}) });
     } else {
         await fetch('/api/indexer/toggle', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({token:TOKEN, enabled:true}) });
     }
@@ -690,6 +696,13 @@ async function toggleIndexerCatalog() {
     const newVal = el.className.includes('off');
     el.className = newVal ? 'toggle on' : 'toggle off';
     await fetch('/api/indexer/toggle', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({token:TOKEN, indexer_catalog:newVal}) });
+}
+
+async function toggleSubtitles() {
+    const el = document.getElementById('indexer-subs-toggle');
+    const newVal = el.className.includes('off');
+    el.className = newVal ? 'toggle on' : 'toggle off';
+    await fetch('/api/indexer/toggle', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({token:TOKEN, subtitles_enabled:newVal}) });
 }
 
 // Sort Preferences
