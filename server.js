@@ -442,17 +442,18 @@ app.post('/api/seadex/toggle', express.json(), (req, res) => {
 // ===== My Indexer API =====
 app.get('/api/indexer/status/:token', (req, res) => {
   const user = config.getUser(req.params.token);
-  if (!user) return res.json({ enabled: false, indexer_only: false, indexer_catalog: false });
-  res.json({ enabled: user.indexer_enabled || false, indexer_only: user.indexer_only || false, indexer_catalog: user.indexer_catalog || false });
+  if (!user) return res.json({ enabled: false, indexer_only: false, indexer_catalog: false, subtitles_enabled: false });
+  res.json({ enabled: user.indexer_enabled || false, indexer_only: user.indexer_only || false, indexer_catalog: user.indexer_catalog || false, subtitles_enabled: user.subtitles_enabled || false });
 });
 
 app.post('/api/indexer/toggle', express.json(), (req, res) => {
-  const { token, enabled, indexer_only, indexer_catalog } = req.body;
+  const { token, enabled, indexer_only, indexer_catalog, subtitles_enabled } = req.body;
   const user = config.getUser(token);
   if (!user) return res.status(404).json({ error: 'User not found' });
   if (enabled !== undefined) user.indexer_enabled = !!enabled;
   if (indexer_only !== undefined) user.indexer_only = !!indexer_only;
   if (indexer_catalog !== undefined) user.indexer_catalog = !!indexer_catalog;
+  if (subtitles_enabled !== undefined) user.subtitles_enabled = !!subtitles_enabled;
   config.saveUser(token, user);
   res.json({ success: true });
 });
@@ -821,13 +822,18 @@ app.get('/:token/today/meta/:type/:id.json', async (req, res) => {
 
 // ===== STREMIO: NYAA SEARCH ADDON =====
 app.get('/:token/nyaa/manifest.json', (req, res) => {
+  const user = config.getUser(req.params.token);
+  const resources = ['stream', 'meta'];
+  if (user?.subtitles_enabled) {
+    resources.push({ name: 'subtitles', types: ['series', 'movie'], idPrefixes: ['tt'] });
+  }
   res.json({
     id: 'cz.nyaa.search.v7',
-    version: '7.1.0',
+    version: '7.2.0',
     name: 'NimeToDex',
     description: 'Anime torrent indexer + RealDebrid/TorBox. Funguje s Cinemeta/Kitsu/Anime Today.',
     logo: `${BASE_URL}/logo-nyaa.png`,
-    resources: ['stream', 'meta'],
+    resources,
     types: ['series', 'movie'],
     catalogs: [
       { type: 'series', id: 'nimetodex-today', name: 'NimeToDex — Dnes přidané', extra: [{ name: 'skip' }] },
@@ -871,6 +877,23 @@ app.get('/:token/nyaa/catalog/:type/:id.json', async (req, res) => {
   } catch (err) {
     console.log(`  📋 Today catalog error: ${err.message}`);
     res.json({ metas: [] });
+  }
+});
+
+// ===== NimeToDex: Subtitles proxy =====
+app.get('/:token/nyaa/subtitles/:type/:id.json', async (req, res) => {
+  const { token, type, id } = req.params;
+  const user = config.getUser(token);
+  if (!user?.subtitles_enabled) return res.json({ subtitles: [] });
+
+  try {
+    const resp = await axios.get(`${INDEXER_URL}/subtitles/${type}/${id}.json`, { timeout: 8000 });
+    const subs = resp.data?.subtitles || [];
+    if (subs.length) console.log(`  💬 Subtitles: ${subs.length} for ${type}/${id}`);
+    res.json({ subtitles: subs });
+  } catch (err) {
+    console.log(`  💬 Subtitles error: ${err.message}`);
+    res.json({ subtitles: [] });
   }
 });
 
