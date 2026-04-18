@@ -24,6 +24,8 @@ const PORT = process.env.PORT || 3002;
 const BASE_URL = (process.env.APP_URL || `http://localhost:${PORT}`).replace(/\/$/, '');
 const INDEXER_URL = (process.env.INDEXER_URL || 'https://nimetodex.duckdns.org').replace(/\/$/, '');
 const ONDEMAND_VIDEO_URL = process.env.ONDEMAND_VIDEO_URL || 'https://raw.githubusercontent.com/david325345/animetoday-docker/main/public/search-ondemand.mp4';
+const R2_NZB_BASE = process.env.R2_NZB_BASE || 'https://pub-4a78ba5831734d77a4c5c6762c14d4a2.r2.dev';
+const NZB_REFRESH_TOKEN = process.env.NZB_REFRESH_TOKEN || '';
 
 console.log('═══════════════════════════════════════════');
 console.log('  🎬 Nyaa + Anime Today v5.0');
@@ -567,6 +569,25 @@ app.get('/:token/play-nzb/:hash/:episode/video.mp4', async (req, res) => {
   const url = await getTBNZBStream(nzb.url, user.tb_api_key, episode, nzb.name);
   if (url) return res.redirect(302, url);
   serveLoadingVideo(res);
+});
+
+// ===== NZB REFRESH TRIGGER =====
+app.get('/:token/nzb-refresh/:imdb/:season/:episode/video.mp4', async (req, res) => {
+  const { imdb, season, episode } = req.params;
+
+  const params = { imdb };
+  if (season && season !== '0') params.season = parseInt(season);
+  if (episode && episode !== '0') params.episode = parseInt(episode);
+
+  console.log(`  📰 NZB refresh trigger: ${imdb} S${season}E${episode}`);
+  axios.post(`${INDEXER_URL}/api/nzb/refresh-by-imdb`, params, {
+    headers: { Authorization: `Bearer ${NZB_REFRESH_TOKEN}` },
+    timeout: 30000
+  })
+    .then(r => console.log(`  📰 NZB refresh done: ${r.data?.found || 0} found, ${r.data?.uploaded || 0} uploaded`))
+    .catch(err => console.log(`  📰 NZB refresh error: ${err.message}`));
+
+  res.redirect(302, ONDEMAND_VIDEO_URL);
 });
 
 // ===== STREMIO: ANIME TODAY ADDON =====
@@ -1751,13 +1772,13 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
   res.json({ streams });
 });
 
-// ===== STREMIO: NYAA NZB SEARCH ADDON =====
+// ===== STREMIO: NIMETODEX NZB ADDON =====
 app.get('/:token/nzb/manifest.json', (req, res) => {
   res.json({
-    id: 'cz.nzb.search.v1',
-    version: '1.0.0',
-    name: 'NZB Search',
-    description: 'NZB z NZBgeek + AnimeTosho — Usenet streaming přes TorBox. Anime, seriály, filmy.',
+    id: 'cz.nzb.search.v2',
+    version: '2.0.0',
+    name: 'NimeToDex NZB',
+    description: 'Anime NZB z NimeToDex indexeru — Usenet streaming přes TorBox.',
     logo: `${BASE_URL}/logo-nzb.png`,
     resources: ['stream'],
     types: ['series', 'movie'],
@@ -1928,29 +1949,6 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
   let { season, episode } = parseEpisodeAndSeason(fullId);
   const idParts = fullId.split(':');
 
-  // Detect if episode was explicitly provided
-  const hasExplicitEpisode = fullId.startsWith('at:') ? idParts.length >= 3 :
-    fullId.startsWith('kitsu:') ? idParts.length >= 4 :
-    fullId.startsWith('tt') ? idParts.length >= 3 :
-    fullId.startsWith('anilist:') ? idParts.length >= 4 :
-    fullId.startsWith('tvdb:') ? idParts.length >= 4 : idParts.length >= 3;
-
-  // If no explicit episode, check todayAnimeCache
-  if (!hasExplicitEpisode && !isMovie) {
-    const imdbBase = fullId.startsWith('tt') ? idParts[0] : null;
-    if (imdbBase) {
-      for (const s of todayAnimeCache) {
-        const rec = offlineDB.byAniList.get(s.anilistId);
-        if (rec?.imdb === imdbBase) { episode = s.episode; season = 1; break; }
-      }
-    }
-    if (fullId.startsWith('at:')) {
-      const alId = parseInt(idParts[1]);
-      const sched = todayAnimeCache.find(s => s.anilistId === alId);
-      if (sched) { episode = sched.episode; season = 1; }
-    }
-  }
-
   // Parse at: IDs
   if (fullId.startsWith('at:')) {
     const parts = fullId.split(':');
@@ -1958,219 +1956,90 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
     else { season = 1; episode = parseInt(parts[2]) || 1; }
   }
 
-  // ===== Resolve TVDB ID =====
-  let tvdbId = null;
-  let animeName = null;
+  // Resolve IMDb for indexer query
+  let imdbId = null;
+  let anilistId = null;
+  let anidbId = null;
 
-  // From at: ID → AniList → offline-db → TVDB
-  if (fullId.startsWith('at:')) {
-    const anilistId = parseInt(idParts[1]);
-    const rec = offlineDB.byAniList.get(anilistId);
-    if (rec?.tvdb) tvdbId = rec.tvdb;
-    const sched = todayAnimeCache.find(s => s.anilistId === anilistId);
-    animeName = sched?.title || rec?.title;
-  }
-  // From tvdb: ID
-  else if (fullId.startsWith('tvdb:')) {
-    tvdbId = idParts[1];
-  }
-  // From anilist: ID
-  else if (fullId.startsWith('anilist:')) {
-    const anilistId = parseInt(idParts[1]);
-    season = parseInt(idParts[2]) || 1;
-    episode = parseInt(idParts[3]) || 1;
-    const rec = offlineDB.byAniList.get(anilistId);
-    if (rec?.tvdb) tvdbId = rec.tvdb;
-    animeName = rec?.title;
-  }
-  // From tt (IMDb) → resolve via anime-lists
-  else if (fullId.startsWith('tt')) {
-    const imdbId = idParts[0];
-    try {
-      const resolved = await resolveToAniDB(type, imdbId);
-      if (resolved?.tvdbId) tvdbId = resolved.tvdbId;
-      animeName = resolved?.title;
-      // Also try Cinemeta for TVDB
-      if (!tvdbId) {
-        const cine = await axios.get(`https://v3-cinemeta.strem.io/meta/${type}/${imdbId}.json`, { timeout: 5000 });
-        tvdbId = cine.data?.meta?.tvdb_id;
-        if (!animeName) animeName = cine.data?.meta?.name;
-      }
-    } catch {}
-  }
-  // From kitsu: → resolve
-  else if (fullId.startsWith('kitsu:')) {
+  if (fullId.startsWith('tt')) {
+    imdbId = idParts[0];
+  } else if (fullId.startsWith('at:') || fullId.startsWith('anilist:')) {
+    const alId = parseInt(idParts[1]);
+    anilistId = alId;
+    const rec = offlineDB.byAniList.get(alId);
+    if (rec) {
+      anidbId = rec.anidb;
+      if (rec.imdb) imdbId = rec.imdb;
+    }
+  } else if (fullId.startsWith('kitsu:')) {
     const kitsuId = parseInt(idParts[1]);
     const rec = offlineDB.byKitsu.get(kitsuId);
-    if (rec?.tvdb) tvdbId = rec.tvdb;
-    animeName = rec?.title;
+    if (rec) {
+      anilistId = rec.anilist;
+      anidbId = rec.anidb;
+      if (rec.imdb) imdbId = rec.imdb;
+    }
+  } else if (fullId.startsWith('tvdb:')) {
+    const tvdbResolved = resolveViaTVDB(idParts[1], season, episode);
+    if (tvdbResolved?.anidbId) {
+      anidbId = tvdbResolved.anidbId;
+      const rec = offlineDB.byAniDB.get(tvdbResolved.anidbId);
+      if (rec) { anilistId = rec.anilist; if (rec.imdb) imdbId = rec.imdb; }
+    }
   }
 
-  console.log(`  📰 NZB: TVDB=${tvdbId || 'none'}, S${season}E${episode}, name="${animeName || '?'}"`);
+  // Build indexer search params
+  const params = new URLSearchParams();
+  if (imdbId) params.set('imdb', imdbId);
+  if (anilistId) params.set('anilist', anilistId);
+  if (anidbId) params.set('anidb', anidbId);
+  if (season && !isMovie) params.set('season', season);
+  if (episode && !isMovie) params.set('episode', episode);
+
+  console.log(`  📰 NZB: searching indexer ${params.toString()}`);
 
   let nzbResults = [];
-
-  // ===== Source 1: AnimeTosho NZB (from existing torrent search) =====
-  // Reuse existing search logic to find AnimeTosho results with nzb_url
-  let atNzbResults = [];
-  if (fullId.startsWith('at:') || fullId.startsWith('tt') || fullId.startsWith('kitsu:') || fullId.startsWith('anilist:') || fullId.startsWith('tvdb:')) {
-    // Quick AniDB-based search for AnimeTosho NZBs
-    let anidbId = null;
-    if (fullId.startsWith('at:')) {
-      const rec = offlineDB.byAniList.get(parseInt(idParts[1]));
-      anidbId = rec?.anidb;
-    } else {
-      try {
-        const resolved = await resolveToAniDB(type, fullId);
-        anidbId = resolved?.anidb;
-      } catch {}
-    }
-    if (anidbId) {
-      const { searchByAniDBId } = require('./lib/search');
-      const torrents = await searchByAniDBId(anidbId, isMovie ? null : episode, isMovie, false);
-      atNzbResults = torrents.filter(t => t.nzb_url).map(t => ({
-        name: t.name,
-        nzb_url: t.nzb_url,
-        filesize: t.filesize,
-        seeders: t.seeders,
-        source: 'animetosho',
-      }));
-      if (atNzbResults.length) console.log(`  📰 AnimeTosho NZB: ${atNzbResults.length} results`);
-    }
-  }
-  nzbResults = [...atNzbResults];
-
-  // ===== Source 2: NZBgeek =====
-  const hasNzbgeek = user.nzbgeek_api_key && user.nzbgeek_enabled !== false;
-  if (hasNzbgeek) {
-    let geekResults = [];
-
-    // Determine if this is anime (from offline-db)
-    let isAnime = false;
-    if (fullId.startsWith('at:') || fullId.startsWith('kitsu:') || fullId.startsWith('anilist:')) {
-      isAnime = true;
-    } else if (fullId.startsWith('tt')) {
-      // Check if IMDb ID is in anime offline-db
-      const imdbBase = fullId.split(':')[0];
-      for (const [, rec] of offlineDB.byAniList) {
-        if (rec.imdb === imdbBase) { isAnime = true; break; }
-      }
-    }
-
-    const cat = isAnime ? '5070' : null; // anime cat or all
-
-    if (isMovie && fullId.startsWith('tt')) {
-      // Movie: search by IMDb ID
-      const imdbId = fullId.split(':')[0];
-      geekResults = await nzbgeekMovieSearch(imdbId, user.nzbgeek_api_key);
-    } else if (tvdbId) {
-      // Series: search by TVDB ID
-      geekResults = await nzbgeekSearch(tvdbId, season, episode, user.nzbgeek_api_key, cat);
-    }
-
-    if (geekResults.length) {
-      // Deduplicate by name similarity (rough)
-      const existingNames = new Set(nzbResults.map(r => r.name.toLowerCase().replace(/[^a-z0-9]/g, '')));
-      const newGeek = geekResults.filter(r => {
-        const norm = r.name.toLowerCase().replace(/[^a-z0-9]/g, '');
-        return !existingNames.has(norm);
-      });
-      nzbResults = [...nzbResults, ...newGeek];
-      console.log(`  📰 NZBgeek: +${newGeek.length} unique (${geekResults.length - newGeek.length} duplicates)`);
-    }
+  try {
+    const resp = await axios.get(`${INDEXER_URL}/search?${params.toString()}`, { timeout: 8000 });
+    nzbResults = resp.data?.nzb_results || [];
+    console.log(`  📰 NZB: ${nzbResults.length} results from indexer (${resp.data?.searchedBy || '?'})`);
+  } catch (err) {
+    console.log(`  📰 NZB indexer error: ${err.message}`);
   }
 
-  if (!nzbResults.length) {
-    return res.json({ streams: [] });
-  }
-
-  // ===== Sort NZB using user preferences (without magnet filter) =====
-  let sorted = nzbResults;
-  if (user?.customSortEnabled) {
-    const resOrder = user.resPriority || DEFAULT_RESOLUTIONS;
-    const langOrder = (user.langPriority || []).map(l => l.toLowerCase());
-    const excludedRes = new Set((user.excludedResolutions || []).map(r => r.toLowerCase()));
-
-    // Filter excluded resolutions
-    sorted = sorted.filter(t => {
-      const res = detectQuality(t.name);
-      if (res && excludedRes.has(res.toLowerCase())) return false;
-      return true;
-    });
-
-    // Sort by: language priority → resolution priority → grabs/seeders
-    sorted.sort((a, b) => {
-      // Language priority (from NZBgeek language/subs attrs + title)
-      if (langOrder.length) {
-        const aLangScore = getLangScore(a, langOrder);
-        const bLangScore = getLangScore(b, langOrder);
-        if (aLangScore !== bLangScore) return aLangScore - bLangScore;
-      }
-
-      // Resolution priority
-      const aRes = detectQuality(a.name);
-      const bRes = detectQuality(b.name);
-      const aResIdx = aRes ? resOrder.indexOf(aRes) : -1;
-      const bResIdx = bRes ? resOrder.indexOf(bRes) : -1;
-      const aResPri = aResIdx >= 0 ? aResIdx : resOrder.length;
-      const bResPri = bResIdx >= 0 ? bResIdx : resOrder.length;
-      if (aResPri !== bResPri) return aResPri - bResPri;
-
-      // By grabs or seeders
-      return (parseInt(b.grabs) || parseInt(b.seeders) || 0) - (parseInt(a.grabs) || parseInt(a.seeders) || 0);
-    });
-  }
-  const topResults = sorted.slice(0, 20);
-
-  // ===== Generate TorBox NZB streams =====
+  // Build streams
   const streams = [];
   const epNum = isMovie ? 0 : episode;
 
-  for (const t of topResults) {
-    const name = t.name || '';
+  for (const t of nzbResults) {
+    const name = t.title || t.name || 'Unknown';
     const quality = detectQuality(name);
-    const tags = [quality].filter(Boolean);
-    const line1 = tags.join(' · ');
+    const size = t.size ? formatIndexerFilesize(t.size) : '?';
     const sourceLabel = t.source === 'nzbgeek' ? '📰 NZBgeek' : '📡 AT';
 
-    // Build info line: source | 🔊 lang | 💬 subs | 📦 size | 📅 date
-    const infoParts = [sourceLabel];
+    const tags = [quality, sourceLabel, `📦 ${size}`].filter(Boolean);
+    const title = `${tags.join(' · ')}\n${name}`;
 
-    // Filter languages based on user's langPriority (show only matching languages)
-    const userLangs = (user?.langPriority || []).map(l => l.toLowerCase());
-    if (t.language) {
-      const filtered = filterLangString(t.language, userLangs);
-      if (filtered) infoParts.push(`🔊 ${filtered}`);
-    }
-    if (t.subs) {
-      const filtered = filterLangString(t.subs, userLangs);
-      if (filtered) infoParts.push(`💬 ${filtered}`);
-    }
-    infoParts.push(`📦 ${t.filesize || '?'}`);
-    if (t.usenetdate) {
-      try {
-        const d = new Date(t.usenetdate);
-        if (!isNaN(d)) {
-          const days = Math.floor((Date.now() - d.getTime()) / 86400000);
-          const age = days < 1 ? '<1d' : days < 30 ? `${days}d` : days < 365 ? `${Math.floor(days / 7)}w` : `${Math.floor(days / 365)}y`;
-          infoParts.push(`📅 ${age}`);
-        }
-      } catch {}
-    }
-    const infoLine = infoParts.join(' | ');
-    const title = `${line1 ? line1 + '\n' : ''}${name}\n${infoLine}`;
-
-    // Use nzb_url directly — AnimeTosho and NZBgeek both provide working URLs
-    const nzbUrl = t.nzb_url;
-
-    if (nzbUrl) {
+    if (t.r2_key) {
+      // R2 URL available — direct NZB stream via TorBox
+      const nzbUrl = `${R2_NZB_BASE}/${t.r2_key}`;
       streams.push({
-        name: `📡 NZB`,
+        name: `📰 NZB`,
         title,
-        url: `${BASE_URL}/${token}/play-nzb/${storeNZB(nzbUrl, t.name)}/${epNum}/video.mp4`,
-        behaviorHints: { bingeGroup: 'nzb-search', notWebReady: true }
+        url: `${BASE_URL}/${token}/play-nzb/${storeNZB(nzbUrl, name)}/${epNum}/video.mp4`,
+        behaviorHints: { bingeGroup: 'nzb-indexer', notWebReady: true }
       });
     }
+  }
+
+  // Always add "Refresh NZB" at the bottom
+  if (imdbId) {
+    streams.push({
+      name: '🔍 NZB',
+      title: 'Refresh NZB\nSearches NZBGeek for new NZB files.\nClose video and reopen episode after ~30s.',
+      url: `${BASE_URL}/${token}/nzb-refresh/${imdbId}/${season || 0}/${episode || 0}/video.mp4`,
+      behaviorHints: { bingeGroup: 'nzb-refresh', notWebReady: true }
+    });
   }
 
   console.log(`  📤 NZB Streams: ${streams.length}`);
