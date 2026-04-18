@@ -2007,11 +2007,39 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
     console.log(`  📰 NZB indexer error: ${err.message}`);
   }
 
+  // Filter and sort NZB results using user preferences
+  let sorted = nzbResults;
+  if (user?.customSortEnabled) {
+    const resOrder = user.resPriority || DEFAULT_RESOLUTIONS;
+    const excludedRes = new Set((user.excludedResolutions || []).map(r => r.toLowerCase()));
+
+    // Filter excluded resolutions
+    sorted = sorted.filter(t => {
+      const name = t.title || t.name || '';
+      const res = detectQuality(name);
+      if (res && excludedRes.has(res.toLowerCase())) return false;
+      return true;
+    });
+
+    // Sort by resolution priority → size
+    sorted.sort((a, b) => {
+      const aRes = detectQuality(a.title || a.name || '');
+      const bRes = detectQuality(b.title || b.name || '');
+      const aResIdx = aRes ? resOrder.indexOf(aRes) : -1;
+      const bResIdx = bRes ? resOrder.indexOf(bRes) : -1;
+      const aResPri = aResIdx >= 0 ? aResIdx : resOrder.length;
+      const bResPri = bResIdx >= 0 ? bResIdx : resOrder.length;
+      if (aResPri !== bResPri) return aResPri - bResPri;
+      return (parseInt(b.size) || 0) - (parseInt(a.size) || 0);
+    });
+  }
+  const topNzb = sorted.slice(0, 20);
+
   // Build streams
   const streams = [];
   const epNum = isMovie ? 0 : episode;
 
-  for (const t of nzbResults) {
+  for (const t of topNzb) {
     const name = t.title || t.name || 'Unknown';
     const quality = detectQuality(name);
     const size = t.size ? formatIndexerFilesize(t.size) : '?';
