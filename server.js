@@ -1452,19 +1452,33 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
         .map(r => {
           // Find matching episode file in batch
           let matchedFile = null;
-          if (r.batch && r.file_list && episode) {
+          if (r.batch && r.file_list) {
             try {
               const files = typeof r.file_list === 'string' ? JSON.parse(r.file_list) : r.file_list;
               if (Array.isArray(files)) {
-                const epPad = String(episode).padStart(2, '0');
-                const sPad = String(season || 0).padStart(2, '0');
-                matchedFile = files.find(f => {
-                  const n = f.name || '';
-                  if (new RegExp(`S${sPad}E${epPad}(?:\\b|[^\\d])`, 'i').test(n)) return true;
-                  if (new RegExp(`\\s-\\s${epPad}(?:\\s|\\[|\\(|v\\d|\\.|$)`).test(n)) return true;
-                  if (new RegExp(`E${epPad}(?:\\b|[^\\d])`, 'i').test(n)) return true;
-                  return false;
-                });
+                // Priority 1: Use fileIdx from indexer (multi-AL batch support)
+                if (r.fileIdx != null || r.file_index != null) {
+                  const idx = r.fileIdx != null ? r.fileIdx : r.file_index;
+                  const file = files.find(f => f.idx === idx);
+                  if (file) {
+                    matchedFile = { name: (file.name || '').split('/').pop(), size: file.size, idx: file.idx };
+                  }
+                }
+                // Priority 2: Regex match by episode number
+                if (!matchedFile && episode) {
+                  const epPad = String(episode).padStart(2, '0');
+                  const sPad = String(season || 0).padStart(2, '0');
+                  const found = files.find(f => {
+                    const n = f.name || '';
+                    if (new RegExp(`S${sPad}E${epPad}(?:\\b|[^\\d])`, 'i').test(n)) return true;
+                    if (new RegExp(`\\s-\\s${epPad}(?:\\s|\\[|\\(|v\\d|\\.|$)`).test(n)) return true;
+                    if (new RegExp(`E${epPad}(?:\\b|[^\\d])`, 'i').test(n)) return true;
+                    return false;
+                  });
+                  if (found) {
+                    matchedFile = { name: (found.name || '').split('/').pop(), size: found.size, idx: found.idx };
+                  }
+                }
               }
             } catch {}
           }
@@ -1472,12 +1486,13 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
           return {
             name: r.name || 'Unknown',
             magnet: r.magnet || (r.infohash ? `magnet:?xt=urn:btih:${r.infohash}` : null),
-            infohash: r.infohash || null,
+            infohash: (r.infohash || '').toLowerCase() || null,
             seeders: String(r.seeders || 0),
             leechers: String(r.leechers || 0),
             filesize: r.filesize ? formatIndexerFilesize(r.filesize) : '?',
             source: 'indexer',
             indexer: true,
+            indexerId: r.id || null,
             releaseGroup: r.group_name || '',
             resolution: r.resolution || '',
             dualAudio: !!r.dual_audio,
@@ -1489,7 +1504,8 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
             subtitleLangs: r.subtitle_langs || '',
             audioCodec: r.audio_codec || '',
             fileCount: r.file_count || 0,
-            matchedFile: matchedFile ? { name: matchedFile.name, size: matchedFile.size, idx: matchedFile.idx } : null,
+            matchedFile: matchedFile,
+            fileIdx: matchedFile?.idx != null ? matchedFile.idx : (r.fileIdx != null ? r.fileIdx : null),
           };
         });
 
@@ -1741,20 +1757,48 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
     const isTBCached = tbCacheMap[torrentHash];
 
     if (hasRD) {
-      streams.push({ name: `${streamName} RD`, title,
-        url: `${BASE_URL}/${token}/play/${storeMagnet(t.magnet)}/${epNum}/video.mp4`,
-        behaviorHints: { bingeGroup: t.seadex ? 'seadex-rd' : t.indexer ? 'indexer-rd' : t.nekobt ? 'neko-rd' : 'nyaa-rd', notWebReady: true } });
+      const rdStream = { name: `${streamName} RD`, title,
+        behaviorHints: { bingeGroup: t.indexer && t.indexerId ? `nimetodex-${t.indexerId}-s${season || 1}` : t.seadex ? 'seadex-rd' : t.nekobt ? 'neko-rd' : 'nyaa-rd', notWebReady: true } };
+      // Multi-file batch with fileIdx: use infoHash + fileIdx for direct file selection
+      if (t.indexer && t.fileIdx != null && t.infohash) {
+        rdStream.infoHash = t.infohash;
+        rdStream.fileIdx = t.fileIdx;
+        if (t.matchedFile) {
+          rdStream.behaviorHints.videoSize = t.matchedFile.size || undefined;
+          rdStream.behaviorHints.filename = t.matchedFile.name || undefined;
+        }
+      } else {
+        rdStream.url = `${BASE_URL}/${token}/play/${storeMagnet(t.magnet)}/${epNum}/video.mp4`;
+      }
+      streams.push(rdStream);
     }
     if (tbTorrents) {
       const cacheIcon = tbCacheCheck ? (isTBCached ? '⚡' : '⏳') : '';
       const tbName = cacheIcon ? `${cacheIcon}${streamName} TB` : `${streamName} TB`;
       const tbTitle = tbCacheCheck ? (isTBCached ? `⚡ Cached\n${title}` : `⏳ Not cached\n${title}`) : title;
-      streams.push({ name: tbName, title: tbTitle,
-        url: `${BASE_URL}/${token}/play-tb/${storeMagnet(t.magnet)}/${epNum}/video.mp4`,
-        behaviorHints: { bingeGroup: t.seadex ? 'seadex-tb' : t.indexer ? 'indexer-tb' : t.nekobt ? 'neko-tb' : 'nyaa-tb', notWebReady: true } });
+      const tbStream = { name: tbName, title: tbTitle,
+        behaviorHints: { bingeGroup: t.indexer && t.indexerId ? `nimetodex-${t.indexerId}-s${season || 1}-tb` : t.seadex ? 'seadex-tb' : t.nekobt ? 'neko-tb' : 'nyaa-tb', notWebReady: true } };
+      if (t.indexer && t.fileIdx != null && t.infohash) {
+        tbStream.infoHash = t.infohash;
+        tbStream.fileIdx = t.fileIdx;
+        if (t.matchedFile) {
+          tbStream.behaviorHints.videoSize = t.matchedFile.size || undefined;
+          tbStream.behaviorHints.filename = t.matchedFile.name || undefined;
+        }
+      } else {
+        tbStream.url = `${BASE_URL}/${token}/play-tb/${storeMagnet(t.magnet)}/${epNum}/video.mp4`;
+      }
+      streams.push(tbStream);
     }
     if (!hasRD && !tbTorrents) {
-      streams.push({ name: streamName, title, url: t.magnet, behaviorHints: { notWebReady: true } });
+      const plainStream = { name: streamName, title, behaviorHints: { notWebReady: true } };
+      if (t.indexer && t.fileIdx != null && t.infohash) {
+        plainStream.infoHash = t.infohash;
+        plainStream.fileIdx = t.fileIdx;
+      } else {
+        plainStream.url = t.magnet;
+      }
+      streams.push(plainStream);
     }
   }
 
