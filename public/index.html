@@ -3,365 +3,332 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Nyaa + Anime Today — Stremio Addon</title>
-    <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <title>NimeToDex — Anime Torrent Usenet Indexer</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <style>
-        :root { --bg:#06060e; --card:#0d0d1a; --surface:#13132a; --accent:#ff4d6a; --green:#00e5a0; --text:#e8e8f0; --dim:#7a7a9e; --border:rgba(255,255,255,0.06); --r:12px; }
+        :root { --bg:#0a0a14; --card:#12121e; --surface:#0d0d18; --accent:#E84363; --accent-dim:rgba(232,67,99,0.15); --green:#00e5a0; --green-dim:rgba(0,229,160,0.12); --blue:#378ADD; --blue-dim:rgba(55,138,221,0.12); --text:#e0e0ee; --dim:#8888aa; --hint:#555570; --border:#1e1e30; --border-light:#2a2a3a; --r:10px; }
         * { margin:0; padding:0; box-sizing:border-box; }
         body { font-family:'Outfit',sans-serif; background:var(--bg); color:var(--text); min-height:100vh; }
-        .bg-grid { position:fixed; inset:0; background-image:linear-gradient(rgba(255,77,106,0.03) 1px,transparent 1px),linear-gradient(90deg,rgba(255,77,106,0.03) 1px,transparent 1px); background-size:60px 60px; pointer-events:none; }
-        .container { position:relative; z-index:1; max-width:960px; margin:0 auto; padding:40px 24px; }
-        .header { text-align:center; margin-bottom:50px; }
-        h1 { font-size:clamp(40px,8vw,64px); font-weight:800; line-height:1; margin-bottom:12px; letter-spacing:-2px; }
-        h1 .a { color:var(--accent); } h1 .g { color:var(--green); }
-        .tag { font-size:16px; color:var(--dim); font-weight:300; max-width:500px; margin:0 auto 30px; line-height:1.6; }
-        .btn { display:inline-flex; align-items:center; gap:8px; padding:12px 24px; font-family:'Outfit',sans-serif; font-size:14px; font-weight:600; border:none; border-radius:var(--r); cursor:pointer; transition:all 0.2s; text-decoration:none; }
-        .btn-p { background:var(--accent); color:white; box-shadow:0 0 30px rgba(255,77,106,0.3); }
-        .btn-p:hover { transform:translateY(-2px); }
-        .btn-s { background:var(--surface); color:var(--text); border:1px solid var(--border); }
-        .btn-s:hover { border-color:var(--accent); }
-        .btn-sm { padding:10px 16px; font-size:13px; }
-        .btn-d { background:rgba(255,77,106,0.15); color:var(--accent); border:1px solid rgba(255,77,106,0.2); }
-        .section { background:var(--card); border:1px solid var(--border); border-radius:var(--r); padding:28px; margin:30px 0; }
-        .section h2 { font-size:20px; font-weight:700; margin-bottom:6px; display:flex; align-items:center; gap:8px; }
-        .section .desc { color:var(--dim); font-size:13px; margin-bottom:20px; }
-        .input-row { display:flex; gap:10px; }
-        .input { flex:1; background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:11px 14px; font-family:'Space Mono',monospace; font-size:13px; color:var(--text); outline:none; }
+        .wrap { max-width:700px; margin:0 auto; padding:0 16px 40px; }
+
+        /* Banner */
+        .banner { width:100%; border-radius:0 0 var(--r) var(--r); display:block; }
+
+        /* Login */
+        #login-section { display:none; max-width:400px; margin:80px auto; text-align:center; }
+        #login-section h2 { font-size:22px; font-weight:600; margin-bottom:8px; }
+        #login-section p { color:var(--dim); font-size:13px; margin-bottom:20px; }
+
+        /* Sections */
+        .section { background:var(--card); border:1px solid var(--border); border-radius:var(--r); padding:20px; margin-top:14px; }
+        .section-title { font-size:14px; font-weight:600; margin-bottom:14px; display:flex; align-items:center; gap:8px; }
+        .section-title img { width:24px; height:24px; border-radius:4px; }
+
+        /* Rows */
+        .row { display:flex; align-items:center; justify-content:space-between; padding:9px 0; }
+        .row + .row { border-top:1px solid var(--border); }
+        .row-label { font-size:13px; color:#b0b0c8; }
+        .row-label small { font-size:11px; color:var(--hint); display:block; margin-top:1px; }
+
+        /* Toggle */
+        .toggle { width:38px; height:20px; border-radius:10px; position:relative; border:none; flex-shrink:0; cursor:pointer; transition:background 0.2s; }
+        .toggle.on { background:var(--accent); }
+        .toggle.off { background:var(--border-light); }
+        .toggle::after { content:''; position:absolute; width:14px; height:14px; border-radius:50%; background:#fff; top:3px; transition:left 0.15s; }
+        .toggle.on::after { left:21px; }
+        .toggle.off::after { left:3px; }
+
+        /* Badge */
+        .badge { display:inline-block; font-size:10px; padding:2px 8px; border-radius:10px; font-weight:500; margin-left:6px; }
+        .badge.on { background:var(--green-dim); color:var(--green); }
+        .badge.off { background:var(--accent-dim); color:var(--accent); }
+
+        /* User row */
+        .user-row { display:flex; align-items:center; gap:12px; padding:10px 0; }
+        .user-row.vis { display:flex; }
+        .avatar { width:34px; height:34px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:600; flex-shrink:0; }
+        .user-info { flex:1; }
+        .user-name { font-size:13px; font-weight:500; }
+        .user-meta { font-size:11px; color:var(--hint); }
+
+        /* Buttons */
+        .btn { display:inline-flex; align-items:center; justify-content:center; gap:6px; padding:8px 16px; font-family:'Outfit',sans-serif; font-size:12px; font-weight:500; border:none; border-radius:8px; cursor:pointer; transition:all 0.15s; text-decoration:none; }
+        .btn-p { background:var(--accent); color:#fff; }
+        .btn-p:hover { filter:brightness(1.15); }
+        .btn-s { background:transparent; color:#b0b0c8; border:1px solid var(--border-light); }
+        .btn-s:hover { border-color:var(--accent); color:var(--accent); }
+        .btn-d { background:var(--accent-dim); color:var(--accent); }
+        .btn-sm { padding:5px 12px; font-size:11px; }
+
+        /* Inputs */
+        .input { width:100%; height:34px; border-radius:8px; border:1px solid var(--border); padding:0 10px; font-size:12px; background:var(--surface); color:var(--text); font-family:'JetBrains Mono',monospace; outline:none; }
         .input:focus { border-color:var(--accent); }
-        .badge { display:inline-flex; align-items:center; gap:5px; padding:5px 12px; border-radius:100px; font-size:12px; font-weight:600; }
-        .badge.on { background:rgba(0,229,160,0.1); color:var(--green); border:1px solid rgba(0,229,160,0.2); }
-        .badge.off { background:rgba(255,77,106,0.1); color:var(--accent); border:1px solid rgba(255,77,106,0.2); }
-        .manifest-box { font-family:'Space Mono',monospace; font-size:12px; color:var(--dim); background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:10px 14px; word-break:break-all; cursor:pointer; margin:8px 0; }
-        .manifest-box:hover { border-color:var(--accent); }
-        .install-row { display:flex; gap:10px; flex-wrap:wrap; margin:12px 0; }
-        .rd-code { font-family:'Space Mono',monospace; font-size:28px; font-weight:700; letter-spacing:5px; color:var(--accent); margin:12px 0; }
-        .rd-box { background:var(--surface); border:1px solid var(--border); border-radius:var(--r); padding:20px; text-align:center; display:none; }
+        .input-row { display:flex; gap:8px; margin-top:8px; }
+
+        /* Manifest URL */
+        .manifest-url { background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:10px 12px; font-size:11px; color:var(--accent); font-family:'JetBrains Mono',monospace; word-break:break-all; margin-top:8px; cursor:pointer; transition:border-color 0.15s; }
+        .manifest-url:hover { border-color:var(--accent); }
+        .install-btns { display:flex; gap:8px; margin-top:8px; }
+        .install-btns .btn { flex:1; }
+        .addon-label { font-size:11px; color:var(--hint); margin-top:14px; font-weight:500; }
+
+        /* RD box */
+        .rd-box { background:var(--surface); border:1px solid var(--border); border-radius:var(--r); padding:20px; text-align:center; display:none; margin-top:10px; }
         .rd-box.vis { display:block; }
-        .rd-user { display:none; align-items:center; gap:14px; background:var(--surface); border:1px solid rgba(0,229,160,0.15); border-radius:var(--r); padding:14px 18px; }
+        .rd-code { font-family:'JetBrains Mono',monospace; font-size:28px; font-weight:700; letter-spacing:5px; color:var(--accent); margin:12px 0; }
+        .rd-user { display:none; align-items:center; gap:12px; }
         .rd-user.vis { display:flex; }
-        .spinner { display:inline-block; width:14px; height:14px; border:2px solid var(--border); border-top-color:var(--accent); border-radius:50%; animation:spin .8s linear infinite; }
-        @keyframes spin { to { transform:rotate(360deg); } }
-        .anime-list { display:flex; flex-direction:column; gap:6px; }
-        .anime-item { display:flex; align-items:center; gap:12px; background:var(--card); border:1px solid var(--border); border-radius:10px; padding:10px 14px; transition:all 0.2s; }
-        .anime-item.hid { opacity:0.4; }
-        .anime-poster { width:56px; height:80px; border-radius:5px; object-fit:cover; flex-shrink:0; background:var(--surface); cursor:pointer; transition:opacity 0.2s; }
+
+        /* Divider */
+        .divider { height:1px; background:var(--border); margin:14px 0; }
+
+        /* Sort */
+        .sort-grid { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-top:12px; }
+        .sort-col-title { font-size:11px; color:var(--hint); font-weight:500; margin-bottom:6px; text-transform:uppercase; letter-spacing:0.5px; }
+        .sort-list { list-style:none; }
+        .sort-list li { display:flex; align-items:center; gap:6px; padding:5px 8px; background:var(--surface); border-radius:6px; margin-bottom:3px; font-size:12px; color:#b0b0c8; cursor:grab; }
+        .sort-list li.dragging { opacity:0.4; }
+        .sort-list .drag-handle { color:var(--hint); font-size:12px; }
+        .sort-list .remove-btn { margin-left:auto; color:var(--hint); cursor:pointer; font-size:11px; }
+        .sort-list .remove-btn:hover { color:var(--accent); }
+        .sort-list .item-name { flex:1; }
+        .add-group-row { display:flex; gap:6px; margin-top:6px; }
+        .add-group-row .input { font-size:11px; padding:6px 8px; height:30px; }
+        .add-group-row .btn { padding:6px 10px; font-size:11px; }
+        .excl-row { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
+        .excl-item { font-size:11px; padding:3px 10px; border-radius:6px; border:1px solid var(--border-light); color:var(--hint); cursor:pointer; }
+        .excl-item:has(input:checked) { border-color:var(--accent); color:var(--accent); background:var(--accent-dim); }
+        .excl-item input { display:none; }
+        #res-exclude { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
+        #res-exclude label { font-size:11px; padding:3px 10px; border-radius:6px; border:1px solid var(--border-light); color:var(--hint); cursor:pointer; display:flex; align-items:center; gap:4px; }
+        #res-exclude label:has(input:checked) { border-color:var(--accent); color:var(--accent); background:var(--accent-dim); }
+
+        /* Anime list */
+        .anime-list { display:flex; flex-direction:column; gap:0; }
+        .anime-item { display:flex; align-items:center; gap:10px; padding:8px 0; }
+        .anime-item + .anime-item { border-top:1px solid var(--border); }
+        .anime-item.hid { opacity:0.35; }
+        .anime-poster { width:48px; height:68px; border-radius:5px; object-fit:cover; flex-shrink:0; background:var(--surface); cursor:pointer; transition:opacity 0.2s; }
         .anime-poster:hover { opacity:0.7; }
         .anime-info { flex:1; min-width:0; }
-        .anime-title { font-size:13px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        .anime-title { font-size:13px; font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
         .anime-meta { font-size:11px; color:var(--dim); margin-top:2px; }
-        .toggle { width:40px; height:24px; border-radius:12px; border:none; cursor:pointer; position:relative; transition:background 0.2s; flex-shrink:0; }
-        .toggle.on { background:var(--green); } .toggle.off { background:#333; }
-        .toggle::after { content:''; position:absolute; width:18px; height:18px; border-radius:50%; background:white; top:3px; transition:left 0.2s; }
-        .toggle.on::after { left:19px; } .toggle.off::after { left:3px; }
-        .toast { position:fixed; bottom:20px; left:50%; transform:translateX(-50%) translateY(100px); background:var(--surface); border:1px solid var(--border); border-radius:var(--r); padding:12px 22px; font-size:13px; z-index:100; transition:transform 0.3s; pointer-events:none; }
-        .toast.show { transform:translateX(-50%) translateY(0); }
-        #login-section { display:none; }
-        #app-section { display:none; }
-        .footer { text-align:center; padding:30px 0; color:var(--dim); font-size:12px; border-top:1px solid var(--border); margin-top:40px; }
+
+        /* Toast */
+        .toast { position:fixed; bottom:30px; left:50%; transform:translateX(-50%) translateY(80px); background:var(--card); border:1px solid var(--border); color:var(--text); padding:12px 24px; border-radius:var(--r); font-size:13px; opacity:0; transition:all 0.3s; z-index:999; pointer-events:none; }
+        .toast.show { opacity:1; transform:translateX(-50%) translateY(0); }
+
+        /* Footer */
+        .footer { text-align:center; padding:20px 0 8px; font-size:10px; color:var(--hint); }
         .footer a { color:var(--accent); text-decoration:none; }
-        /* Sort preferences */
-        .sort-list { list-style:none; padding:0; margin:8px 0; }
-        .sort-list li { display:flex; align-items:center; gap:10px; background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:8px 12px; margin:4px 0; cursor:grab; font-size:13px; font-weight:500; user-select:none; transition:border-color 0.2s; }
-        .sort-list li:active { cursor:grabbing; }
-        .sort-list li.dragging { opacity:0.5; border-color:var(--accent); }
-        .sort-list li .drag-handle { color:var(--dim); font-size:16px; flex-shrink:0; }
-        .sort-list li .item-name { flex:1; }
-        .sort-list li .remove-btn { color:var(--dim); cursor:pointer; font-size:16px; padding:0 4px; }
-        .sort-list li .remove-btn:hover { color:var(--accent); }
-        .sort-row { display:flex; gap:12px; flex-wrap:wrap; }
-        .sort-col { flex:1; min-width:250px; }
-        .sort-col h3 { font-size:14px; font-weight:600; margin-bottom:8px; color:var(--dim); }
-        .switch-row { display:flex; align-items:center; gap:12px; margin:8px 0; }
-        .switch-row label { font-size:13px; color:var(--text); }
-        .res-exclude { display:flex; flex-wrap:wrap; gap:8px; margin:8px 0; }
-        .res-exclude label { display:flex; align-items:center; gap:6px; font-size:12px; color:var(--dim); cursor:pointer; }
-        .res-exclude input { accent-color:var(--accent); }
-        .add-group-row { display:flex; gap:8px; margin-top:8px; }
-        .add-group-row input { flex:1; }
-        @media(max-width:640px) { .container{padding:20px 14px;} .input-row{flex-direction:column;} .install-row{flex-direction:column;} .rd-user{flex-direction:column;text-align:center;} }
+
+        /* Token display */
+        .token-display { font-family:'JetBrains Mono',monospace; font-size:12px; color:var(--dim); background:var(--surface); border:1px solid var(--border); border-radius:6px; padding:6px 10px; display:inline-block; margin-top:8px; }
+
+        /* Responsive */
+        @media (max-width:500px) {
+            .sort-grid { grid-template-columns:1fr; }
+            .install-btns { flex-direction:column; }
+        }
+
+        /* Switch row compat */
+        .switch-row { display:flex; align-items:center; gap:12px; padding:9px 0; }
     </style>
 </head>
 <body>
-<div class="bg-grid"></div>
-<div class="container">
-    <header class="header">
-        <h1><span class="a">Nyaa</span> + Anime<span class="g">.</span>Today</h1>
-        <p class="tag">Dva Stremio addony v jednom. Dnešní anime z AniList + Nyaa.si search + RealDebrid streaming.</p>
-    </header>
+<div class="wrap">
+    <img src="/banner.png" class="banner" alt="NimeToDex" onerror="this.style.display='none'">
 
-    <!-- Login / Create account -->
+    <!-- LOGIN -->
     <div id="login-section">
-        <div class="section" style="text-align:center">
-            <h2 style="justify-content:center">Vítejte</h2>
-            <p class="desc">Každý uživatel má vlastní nastavení — RealDebrid účet, skryté anime.</p>
-            <button class="btn btn-p" onclick="createAccount()">Vytvořit účet</button>
-            <p style="color:var(--dim);font-size:13px;margin-top:16px">Máte už token?</p>
-            <div class="input-row" style="max-width:400px;margin:10px auto">
-                <input type="text" id="login-token" class="input" placeholder="Váš token">
-                <button class="btn btn-s btn-sm" onclick="loginWithToken()">Přihlásit</button>
-            </div>
+        <h2>NimeToDex</h2>
+        <p>Přihlášení</p>
+        <div style="display:flex;flex-direction:column;gap:8px;max-width:300px;margin:0 auto;">
+            <input type="text" id="login-user" class="input" placeholder="Uživatelské jméno" style="font-family:'Outfit',sans-serif;">
+            <input type="password" id="login-pass" class="input" placeholder="Heslo" style="font-family:'Outfit',sans-serif;">
+            <button class="btn btn-p" onclick="doLogin()" style="width:100%;margin-top:4px;">Přihlásit</button>
         </div>
     </div>
 
-    <!-- Main app -->
-    <div id="app-section">
-        <!-- Install -->
+    <!-- APP -->
+    <div id="app-section" style="display:none">
+
+        <!-- Addons -->
         <div class="section">
-            <h2>📦 Instalace do Stremio</h2>
-            <p class="desc">Tři addony — nainstalujte všechny které chcete.</p>
-            <p style="font-size:13px;font-weight:600;margin-bottom:4px">Anime Today (dnešní katalog):</p>
-            <div class="install-row">
-                <a id="install-today" href="#" class="btn btn-p btn-sm">🚀 Instalovat</a>
-                <div class="manifest-box" id="url-today" onclick="copy('url-today')"></div>
+            <div class="section-title">🔗 Stremio addony</div>
+
+            <div class="addon-label">NimeToDex — torrenty</div>
+            <div class="manifest-url" id="url-nyaa" onclick="copy('url-nyaa')"></div>
+            <div class="install-btns">
+                <a class="btn btn-p" id="install-nyaa" href="#">Nainstalovat</a>
+                <button class="btn btn-s" onclick="copy('url-nyaa')">Kopírovat</button>
             </div>
-            <p style="font-size:13px;font-weight:600;margin-bottom:4px;margin-top:14px">NimeToDex (torrenty):</p>
-            <div class="install-row">
-                <a id="install-nyaa" href="#" class="btn btn-p btn-sm">🚀 Instalovat</a>
-                <div class="manifest-box" id="url-nyaa" onclick="copy('url-nyaa')"></div>
+
+            <div class="addon-label">NimeToDex NZB — Usenet</div>
+            <div class="manifest-url" id="url-nzb" onclick="copy('url-nzb')"></div>
+            <div class="install-btns">
+                <a class="btn btn-p" id="install-nzb" href="#">Nainstalovat</a>
+                <button class="btn btn-s" onclick="copy('url-nzb')">Kopírovat</button>
             </div>
-            <p style="font-size:13px;font-weight:600;margin-bottom:4px;margin-top:14px">NimeToDex NZB (Usenet přes TorBox):</p>
-            <div class="install-row">
-                <a id="install-nzb" href="#" class="btn btn-p btn-sm">🚀 Instalovat</a>
-                <div class="manifest-box" id="url-nzb" onclick="copy('url-nzb')"></div>
+
+            <div class="addon-label">Anime Today — dnešní katalog</div>
+            <div class="manifest-url" id="url-today" onclick="copy('url-today')"></div>
+            <div class="install-btns">
+                <a class="btn btn-p" id="install-today" href="#">Nainstalovat</a>
+                <button class="btn btn-s" onclick="copy('url-today')">Kopírovat</button>
             </div>
-            <p style="color:var(--dim);font-size:12px;margin-top:10px">Token: <code id="show-token" style="color:var(--accent);cursor:pointer" onclick="copy('show-token')"></code> (klikněte pro kopírování)</p>
+
+            <div style="margin-top:14px; font-size:11px; color:var(--hint);">Token: <span class="token-display" id="show-token"></span></div>
+        </div>
+
+        <!-- NimeToDex -->
+        <div class="section">
+            <div class="section-title">📦 NimeToDex</div>
+            <div class="row">
+                <div class="row-label">Katalog — dnes přidané <small>Nové torrenty v Discover</small></div>
+                <button class="toggle off" id="indexer-catalog-toggle" onclick="toggleIndexerCatalog()"></button>
+            </div>
+            <div class="row">
+                <div class="row-label">Titulky <small>Vyžaduje reinstalaci addonu</small></div>
+                <button class="toggle off" id="indexer-subs-toggle" onclick="toggleSubtitles()"></button>
+            </div>
         </div>
 
         <!-- RealDebrid -->
         <div class="section">
-            <h2>⚡ RealDebrid</h2>
-            <p class="desc">Přihlaste se — klíč se uloží k vašemu účtu.</p>
-            <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
-                <span class="badge off" id="rd-badge">Nepřipojen</span>
-            </div>
-            <div id="rd-user" class="rd-user">
-                <div style="flex:1"><div id="rd-name" style="font-weight:600;font-size:14px">—</div><div id="rd-meta" style="font-size:11px;color:var(--dim)">—</div></div>
+            <div class="section-title">⚡ RealDebrid <span class="badge off" id="rd-badge">Nepřipojen</span></div>
+            <div class="rd-user" id="rd-user">
+                <div class="avatar" style="background:var(--accent-dim);color:var(--accent);">RD</div>
+                <div class="user-info">
+                    <div class="user-name" id="rd-name">—</div>
+                    <div class="user-meta" id="rd-meta">—</div>
+                </div>
                 <button class="btn btn-sm btn-d" onclick="disconnectRD()">Odpojit</button>
             </div>
-            <div id="rd-toggles" style="display:none;margin-top:14px">
-                <div class="switch-row">
+            <div id="rd-toggles" style="display:none">
+                <div class="row">
+                    <div class="row-label">Používat RealDebrid</div>
                     <button class="toggle on" id="rd-enabled-toggle" onclick="toggleRD()"></button>
-                    <label>Používat RealDebrid</label>
                 </div>
             </div>
             <div id="rd-login">
-                <button id="rd-oauth-btn" class="btn btn-p btn-sm" onclick="startRDAuth()">Přihlásit přes RealDebrid</button>
-                <div id="rd-box" class="rd-box">
-                    <p>Přejděte na: <a href="https://real-debrid.com/device" target="_blank" style="color:var(--green)">real-debrid.com/device</a></p>
-                    <div class="rd-code" id="rd-code">------</div>
-                    <p><span class="spinner"></span> Čekám na ověření...</p>
+                <button class="btn btn-p" id="rd-oauth-btn" onclick="startRDAuth()" style="margin-top:8px;">Přihlásit přes RealDebrid</button>
+                <div class="rd-box" id="rd-box">
+                    <p style="font-size:13px;color:var(--dim);">Zadejte kód na <a href="https://real-debrid.com/device" target="_blank" style="color:var(--accent)">real-debrid.com/device</a></p>
+                    <div class="rd-code" id="rd-code">—</div>
                 </div>
-                <div style="margin-top:14px">
-                    <p style="font-size:12px;color:var(--dim);margin-bottom:6px">Nebo API klíč:</p>
-                    <div class="input-row">
-                        <input type="password" id="rd-key" class="input" placeholder="API klíč z real-debrid.com/apitoken">
-                        <button class="btn btn-s btn-sm" onclick="saveRDKey()">Uložit</button>
-                    </div>
+                <div style="margin-top:10px;font-size:11px;color:var(--hint);">nebo zadejte API klíč:</div>
+                <div class="input-row">
+                    <input type="text" id="rd-key" class="input" placeholder="RD API klíč">
+                    <button class="btn btn-s btn-sm" onclick="saveRDKey()">Uložit</button>
                 </div>
             </div>
         </div>
 
         <!-- TorBox -->
         <div class="section">
-            <h2>📦 TorBox</h2>
-            <p class="desc">TorBox Pro — torrenty + Usenet/NZB streaming.</p>
-            <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
-                <span class="badge off" id="tb-badge">Nepřipojen</span>
-            </div>
-            <div id="tb-user" class="rd-user">
-                <div style="flex:1"><div id="tb-name" style="font-weight:600;font-size:14px">—</div><div id="tb-meta" style="font-size:11px;color:var(--dim)">—</div></div>
+            <div class="section-title">🔷 TorBox <span class="badge off" id="tb-badge">Nepřipojen</span></div>
+            <div class="rd-user" id="tb-user">
+                <div class="avatar" style="background:var(--blue-dim);color:var(--blue);">TB</div>
+                <div class="user-info">
+                    <div class="user-name" id="tb-name">—</div>
+                    <div class="user-meta" id="tb-meta">—</div>
+                </div>
                 <button class="btn btn-sm btn-d" onclick="disconnectTB()">Odpojit</button>
             </div>
-            <div id="tb-toggles" style="display:none;margin-top:14px">
-                <div class="switch-row">
+            <div id="tb-toggles" style="display:none">
+                <div class="row">
+                    <div class="row-label">Torrenty</div>
                     <button class="toggle off" id="tb-torrent-toggle" onclick="toggleTB('tb_use_torrents')"></button>
-                    <label>Používat pro torrenty</label>
                 </div>
-                <div class="switch-row">
+                <div class="row">
+                    <div class="row-label">NZB / Usenet</div>
                     <button class="toggle off" id="tb-nzb-toggle" onclick="toggleTB('tb_use_nzb')"></button>
-                    <label>Používat pro NZB/Usenet</label>
                 </div>
-                <div class="switch-row">
+                <div class="row">
+                    <div class="row-label">Instant cache check <small>⚡ / ⏳ u streamů</small></div>
                     <button class="toggle on" id="tb-cache-toggle" onclick="toggleTB('tb_cache_check')"></button>
-                    <label>Instant cache check <span style="color:var(--dim);font-size:11px">(⚡/⏳ u streamů)</span></label>
                 </div>
             </div>
             <div id="tb-login">
-                <p style="font-size:12px;color:var(--dim);margin-bottom:6px">API klíč z <a href="https://torbox.app/settings" target="_blank" style="color:var(--green)">torbox.app/settings</a>:</p>
-                <div class="input-row">
-                    <input type="password" id="tb-key" class="input" placeholder="TorBox API klíč">
+                <div class="input-row" style="margin-top:0;">
+                    <input type="text" id="tb-key" class="input" placeholder="TorBox API klíč">
                     <button class="btn btn-s btn-sm" onclick="saveTBKey()">Uložit</button>
                 </div>
             </div>
         </div>
 
-        <!-- NekoBT -->
+        <!-- Řazení -->
         <div class="section">
-            <h2>🐱 NekoBT</h2>
-            <p class="desc">NekoBT tracker — kvalitnější fansub torrenty. OTL (originální překlad) level 3-4 mají prioritu.</p>
-            <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
-                <span class="badge off" id="neko-badge">Nepřipojen</span>
-            </div>
-            <div id="neko-user" class="rd-user">
-                <div style="flex:1"><div id="neko-name" style="font-weight:600;font-size:14px">—</div><div id="neko-meta" style="font-size:11px;color:var(--dim)">NekoBT účet</div></div>
-                <button class="btn btn-sm btn-d" onclick="disconnectNeko()">Odpojit</button>
-            </div>
-            <div id="neko-toggles" style="display:none;margin-top:14px">
-                <div class="switch-row">
-                    <button class="toggle on" id="neko-enabled-toggle" onclick="toggleNeko()"></button>
-                    <label>Hledat na NekoBT</label>
-                </div>
-            </div>
-            <div id="neko-login">
-                <p style="font-size:12px;color:var(--dim);margin-bottom:6px">API klíč z <a href="https://nekobt.to/settings" target="_blank" style="color:var(--green)">nekobt.to/settings</a>:</p>
-                <div class="input-row">
-                    <input type="password" id="neko-key" class="input" placeholder="NekoBT API klíč">
-                    <button class="btn btn-s btn-sm" onclick="saveNekoKey()">Uložit</button>
-                </div>
-            </div>
-        </div>
-
-        <!-- NZBgeek -->
-        <div class="section">
-            <h2>📰 NZBgeek</h2>
-            <p class="desc">Usenet NZB indexer — hledá anime NZB přes TVDB ID. Vyžaduje TorBox pro streaming.</p>
-            <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
-                <span class="badge off" id="geek-badge">Nepřipojen</span>
-            </div>
-            <div id="geek-user" class="rd-user">
-                <div style="flex:1"><div id="geek-name" style="font-weight:600;font-size:14px">NZBgeek VIG</div><div id="geek-meta" style="font-size:11px;color:var(--dim)">Usenet indexer</div></div>
-                <button class="btn btn-sm btn-d" onclick="disconnectGeek()">Odpojit</button>
-            </div>
-            <div id="geek-toggles" style="display:none;margin-top:14px">
-                <div class="switch-row">
-                    <button class="toggle on" id="geek-enabled-toggle" onclick="toggleGeek()"></button>
-                    <label>Hledat na NZBgeek</label>
-                </div>
-            </div>
-            <div id="geek-login">
-                <p style="font-size:12px;color:var(--dim);margin-bottom:6px">API klíč z <a href="https://nzbgeek.info/dashboard" target="_blank" style="color:var(--green)">nzbgeek.info/dashboard</a>:</p>
-                <div class="input-row">
-                    <input type="password" id="geek-key" class="input" placeholder="NZBgeek API klíč">
-                    <button class="btn btn-s btn-sm" onclick="saveGeekKey()">Uložit</button>
-                </div>
-            </div>
-        </div>
-
-        <!-- SeaDex -->
-        <div class="section">
-            <h2>🏆 SeaDex</h2>
-            <p class="desc">Index nejkvalitnějších anime releases — automaticky označí a upřednostní nejlepší kvalitu videa a titulků.</p>
-            <div class="switch-row">
-                <button class="toggle off" id="seadex-toggle" onclick="toggleSeadex()"></button>
-                <label>Hledat na SeaDex</label>
-            </div>
-        </div>
-
-        <!-- My Indexer -->
-        <div class="section">
-            <h2>📦 Můj Indexer</h2>
-            <p class="desc">Lokální torrent indexer — rychlé hledání přes interní databázi.</p>
-            <div class="switch-row">
-                <button class="toggle off" id="indexer-toggle" onclick="toggleIndexer()"></button>
-                <label>Hledat v indexeru</label>
-            </div>
-            <div class="switch-row" id="indexer-only-row" style="display:none">
-                <button class="toggle off" id="indexer-only-toggle" onclick="toggleIndexerOnly()"></button>
-                <label>Pouze indexer <span style="color:var(--dim);font-size:11px">(vypne AnimeTosho, NekoBT, SeaDex)</span></label>
-            </div>
-            <div class="switch-row" id="indexer-catalog-row" style="display:none">
-                <button class="toggle off" id="indexer-catalog-toggle" onclick="toggleIndexerCatalog()"></button>
-                <label>Katalog — Dnes přidané <span style="color:var(--dim);font-size:11px">(nové torrenty na indexeru)</span></label>
-            </div>
-            <div class="switch-row" id="indexer-subs-row" style="display:none">
-                <button class="toggle off" id="indexer-subs-toggle" onclick="toggleSubtitles()"></button>
-                <label>💬 Titulky <span style="color:var(--dim);font-size:11px">(vyžaduje reinstalaci addonu)</span></label>
-            </div>
-        </div>
-
-        <!-- TMDB -->
-        <div class="section">
-            <h2>🖼️ TMDB</h2>
-            <p class="desc">Volitelné — lepší postery. Sdílené pro všechny uživatele.</p>
-            <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
-                <span class="badge off" id="tmdb-badge">Nenastaveno</span>
-            </div>
-            <div class="input-row">
-                <input type="text" id="tmdb-key" class="input" placeholder="TMDB API klíč (v3 auth)">
-                <button class="btn btn-s btn-sm" onclick="saveTMDB()">Uložit</button>
-            </div>
-        </div>
-
-        <!-- Anime list -->
-        <div class="section">
-            <h2>📺 Dnešní anime <span style="font-size:13px;color:var(--dim);font-weight:400" id="anime-count"></span></h2>
-            <p class="desc">Vypněte anime které nechcete ve Stremio.</p>
-            <div id="anime-list" class="anime-list"><div style="text-align:center;color:var(--dim);padding:20px">Načítám...</div></div>
-        </div>
-
-        <!-- Sort Preferences -->
-        <div class="section">
-            <h2>⚙️ Řazení výsledků</h2>
-            <p class="desc">Nastavte prioritu skupin a rozlišení pro řazení torrentů ve Stremio.</p>
-
-            <div class="switch-row">
+            <div class="section-title">⚙️ Řazení výsledků</div>
+            <div class="row">
+                <div class="row-label">Vlastní řazení</div>
                 <button class="toggle off" id="sort-enabled-toggle" onclick="toggleCustomSort()"></button>
-                <label>Vlastní řazení</label>
             </div>
 
-            <div id="sort-prefs-panel" style="display:none; margin-top:16px;">
-                <div class="switch-row">
+            <div id="sort-prefs-panel" style="display:none;">
+                <div class="row">
+                    <div class="row-label">Řadit podle seeders</div>
                     <button class="toggle on" id="sort-seeders-toggle" onclick="toggleSortSeeders()"></button>
-                    <label>Řadit podle seeders</label>
                 </div>
-                <div class="switch-row">
+                <div class="row">
+                    <div class="row-label">Cached první <small>TorBox cache nahoře</small></div>
                     <button class="toggle off" id="sort-cached-toggle" onclick="toggleCachedFirst()"></button>
-                    <label>⚡ Cached první <span style="color:var(--dim);font-size:11px">(TorBox cache nahoře)</span></label>
                 </div>
 
-                <div class="sort-row" style="margin-top:16px;">
-                    <div class="sort-col">
-                        <h3>📡 Priorita skupin</h3>
+                <div class="sort-grid">
+                    <div>
+                        <div class="sort-col-title">Priorita skupin</div>
                         <ul class="sort-list" id="group-list"></ul>
                         <div class="add-group-row">
-                            <input type="text" id="new-group-input" class="input" placeholder="Název skupiny" style="font-size:12px;padding:8px 10px;">
-                            <button class="btn btn-s btn-sm" onclick="addGroup()" style="padding:8px 14px;font-size:12px;">+</button>
+                            <input type="text" id="new-group-input" class="input" placeholder="Název skupiny">
+                            <button class="btn btn-s" onclick="addGroup()">+</button>
                         </div>
                     </div>
-                    <div class="sort-col">
-                        <h3>📺 Priorita rozlišení</h3>
+                    <div>
+                        <div class="sort-col-title">Priorita rozlišení</div>
                         <ul class="sort-list" id="res-list"></ul>
                         <div class="add-group-row">
-                            <input type="text" id="new-res-input" class="input" placeholder="Rozlišení (4K, 1080p, SeaDex, ...)" style="font-size:12px;padding:8px 10px;">
-                            <button class="btn btn-s btn-sm" onclick="addRes()" style="padding:8px 14px;font-size:12px;">+</button>
-                        </div>
-                        <h3 style="margin-top:16px;">🚫 Vyloučit rozlišení</h3>
-                        <div class="res-exclude" id="res-exclude"></div>
-                    </div>
-                    <div class="sort-col">
-                        <h3>🌐 Priorita jazyků</h3>
-                        <p style="font-size:11px;color:var(--dim);margin-bottom:8px">Pro NZB — řadí podle audio/titulků. Přetáhněte pro změnu pořadí.</p>
-                        <ul class="sort-list" id="lang-list"></ul>
-                        <div class="add-group-row">
-                            <input type="text" id="new-lang-input" class="input" placeholder="Jazyk (CZ, EN, ...)" style="font-size:12px;padding:8px 10px;">
-                            <button class="btn btn-s btn-sm" onclick="addLang()" style="padding:8px 14px;font-size:12px;">+</button>
+                            <input type="text" id="new-res-input" class="input" placeholder="Rozlišení (4K, 1080p,...)">
+                            <button class="btn btn-s" onclick="addRes()">+</button>
                         </div>
                     </div>
                 </div>
 
-                <button class="btn btn-s btn-sm" onclick="resetSortPrefs()" style="margin-top:16px;">Obnovit výchozí</button>
+                <div class="divider"></div>
+                <div class="sort-col-title">Vyloučit rozlišení</div>
+                <div id="res-exclude"></div>
+
+                <div class="divider"></div>
+                <div class="sort-col-title">Priorita jazyků</div>
+                <div style="max-width:50%;">
+                    <ul class="sort-list" id="lang-list"></ul>
+                    <div class="add-group-row">
+                        <input type="text" id="new-lang-input" class="input" placeholder="Jazyk (CZ, EN,...)">
+                        <button class="btn btn-s" onclick="addLang()">+</button>
+                    </div>
+                </div>
+                <div style="font-size:10px;color:var(--hint);margin-top:6px;">Pro NZB — řadí podle audio/titulků</div>
+
+                <button class="btn btn-s btn-sm" onclick="resetSortPrefs()" style="margin-top:14px;">Obnovit výchozí</button>
             </div>
         </div>
+
+        <!-- Anime Today -->
+        <div class="section">
+            <div class="section-title">📅 Anime today <span id="anime-count" style="font-size:11px;color:var(--hint);font-weight:400;margin-left:4px;"></span></div>
+            <div class="anime-list" id="anime-list"></div>
+        </div>
+
     </div>
 
-    <footer class="footer">
-        <p>Nyaa + Anime Today v5.1 · Data: <a href="https://anilist.co" target="_blank">AniList</a>, <a href="https://nyaa.si" target="_blank">Nyaa.si</a>, <a href="https://nekobt.to" target="_blank">NekoBT</a>, <a href="https://nzbgeek.info" target="_blank">NZBgeek</a>, <a href="https://www.themoviedb.org" target="_blank">TMDB</a></p>
-    </footer>
+    <div class="footer">NimeToDex v5.0 · アニメ索引</div>
 </div>
 <div id="toast" class="toast"></div>
 
 <script>
 let TOKEN = null;
+let USER_ROLE = null;
 const BASE = window.location.origin;
 
 function toast(msg, ms=3000) { const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),ms); }
@@ -382,20 +349,21 @@ function showApp() {
     document.getElementById('install-nyaa').href=`stremio://${nyaaUrl.replace(/^https?:\/\//,'')}`;
     document.getElementById('install-nzb').href=`stremio://${nzbUrl.replace(/^https?:\/\//,'')}`;
     document.getElementById('show-token').textContent=TOKEN;
-    checkRD(); checkTB(); checkNeko(); checkGeek(); checkSeadex(); checkIndexer(); checkTMDB(); loadAnime(); loadSortPrefs();
+    checkRD(); checkTB(); checkIndexer(); loadAnime(); loadSortPrefs();
 }
 
-async function createAccount() {
-    const r=await fetch('/api/user/create',{method:'POST'}); const d=await r.json();
-    TOKEN=d.token; setCookie('token',TOKEN); toast('✅ Účet vytvořen!'); showApp();
-}
-
-async function loginWithToken() {
-    const t=document.getElementById('login-token').value.trim();
-    if(!t){toast('❌ Zadejte token');return;}
-    const r=await fetch(`/api/user/${t}`);
-    if(!r.ok){toast('❌ Token nenalezen');return;}
-    TOKEN=t; setCookie('token',TOKEN); toast('✅ Přihlášeno!'); showApp();
+async function doLogin() {
+    const user=document.getElementById('login-user').value.trim();
+    const pass=document.getElementById('login-pass').value;
+    if(!user||!pass){toast('❌ Vyplňte jméno a heslo');return;}
+    try {
+        const r=await fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:user,password:pass})});
+        const d=await r.json();
+        if(!r.ok){toast('❌ '+(d.error||'Chyba přihlášení'));return;}
+        TOKEN=d.token; USER_ROLE=d.role;
+        setCookie('token',TOKEN); setCookie('role',d.role);
+        toast('✅ Přihlášeno!'); showApp();
+    } catch(e) { toast('❌ Chyba: '+e.message); }
 }
 
 // RD
@@ -448,72 +416,6 @@ async function toggleRD() {
     await fetch('/api/rd/toggle', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({token:TOKEN, enabled:newVal}) });
 }
 
-// TMDB
-async function checkTMDB() {
-    try { const r=await fetch('/api/tmdb/status'); const d=await r.json(); const b=document.getElementById('tmdb-badge');
-        if(d.configured){b.className='badge on';b.textContent='Nastaveno';}
-    } catch {}
-}
-
-async function saveTMDB() {
-    const key=document.getElementById('tmdb-key').value.trim(); if(!key){toast('❌ Zadejte klíč');return;}
-    const r=await fetch('/api/tmdb/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key})});
-    const d=await r.json();
-    if(d.valid){document.getElementById('tmdb-key').value='';document.getElementById('tmdb-badge').className='badge on';document.getElementById('tmdb-badge').textContent='Nastaveno';toast('✅ TMDB uloženo!');}
-    else toast('❌ Neplatný klíč');
-}
-
-// Anime
-async function loadAnime() {
-    const list=document.getElementById('anime-list'); const count=document.getElementById('anime-count');
-    try {
-        const r=await fetch(`/api/anime?token=${TOKEN}`); const d=await r.json();
-        const vis=d.anime.filter(a=>!a.hidden).length;
-        count.textContent=`(${vis}/${d.count})`;
-        if(!d.anime?.length){list.innerHTML='<div style="text-align:center;color:var(--dim);padding:20px">Žádné anime</div>';return;}
-
-        // Sort by airing time
-        const sorted=[...d.anime].sort((a,b)=>new Date(a.airingAt)-new Date(b.airingAt));
-
-        // Day labels
-        const dayNames=['Dnes','Zítra','Pozítří'];
-        function getDayDate(offset){
-            const d=new Date(); d.setDate(d.getDate()+offset);
-            return d.toLocaleDateString('cs-CZ',{weekday:'long',day:'numeric',month:'numeric'});
-        }
-
-        let lastDay=-1;
-        let html='';
-        for(const a of sorted){
-            // Insert separator when day changes
-            if(a.dayOffset!==undefined && a.dayOffset!==lastDay){
-                const label=a.dayOffset===0?'Dnes':a.dayOffset===1?'Zítra · '+getDayDate(1):'Pozítří · '+getDayDate(2);
-                html+=`<div style="display:flex;align-items:center;gap:12px;padding:10px 14px;margin:${lastDay===-1?'0':'8px'} 0 4px">
-                    <div style="flex:1;height:1px;background:rgba(255,77,106,0.3)"></div>
-                    <span style="color:var(--accent);font-size:13px;font-weight:600;white-space:nowrap">${label}</span>
-                    <div style="flex:1;height:1px;background:rgba(255,77,106,0.3)"></div>
-                </div>`;
-            }
-            lastDay=a.dayOffset;
-
-            const t=a.title||'Unknown';
-            const p=a.poster||'';
-            const g=(a.genres||[]).slice(0,3).join(', ');
-            const sc=a.score?`${parseFloat(a.score).toFixed(1)}`:'';
-            const time=a.airingAt?new Date(a.airingAt).toLocaleTimeString('cs-CZ',{timeZone:'Europe/Prague',hour:'2-digit',minute:'2-digit',hour12:false}):'';
-            html+=`<div class="anime-item ${a.hidden?'hid':''}">${p?`<img src="${p}" class="anime-poster" loading="lazy" onerror="this.style.display='none'" onclick="window.open('https://anilist.co/anime/${a.anilistId||''}','_blank')" title="Otevřít na AniList">`:'<div class="anime-poster"></div>'}
-                <div class="anime-info"><div class="anime-title">${t}</div><div class="anime-meta">${time?`<span style="color:var(--accent)">${time}</span> · `:''}EP ${a.episode}${g?' · '+g:''}${sc?' · '+sc:''}</div></div>
-                <button class="toggle ${a.hidden?'off':'on'}" onclick="toggleAnime(${a.id},${a.hidden})"></button></div>`;
-        }
-        list.innerHTML=html;
-    } catch { list.innerHTML='<div style="text-align:center;color:var(--dim);padding:20px">Chyba</div>'; }
-}
-
-async function toggleAnime(id,hidden) {
-    await fetch(`/api/anime/${hidden?'show':'hide'}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:TOKEN,mediaId:id})});
-    loadAnime(); toast(hidden?'👁️ Zobrazeno':'🙈 Skryto');
-}
-
 // TorBox
 async function checkTB() {
     try {
@@ -557,138 +459,13 @@ async function toggleTB(field) {
     await fetch('/api/torbox/toggle', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({token:TOKEN, field, value:newVal}) });
 }
 
-// NekoBT
-async function checkNeko() {
-    try {
-        const r = await fetch(`/api/nekobt/status/${TOKEN}`); const d = await r.json();
-        const b = document.getElementById('neko-badge'); const u = document.getElementById('neko-user');
-        const l = document.getElementById('neko-login'); const t = document.getElementById('neko-toggles');
-        if (d.connected) {
-            b.className='badge on'; b.textContent='Připojeno';
-            u.classList.add('vis'); l.style.display='none'; t.style.display='block';
-            document.getElementById('neko-name').textContent = d.username || 'NekoBT User';
-            document.getElementById('neko-meta').textContent = 'NekoBT účet';
-            const etog = document.getElementById('neko-enabled-toggle');
-            etog.className = d.enabled !== false ? 'toggle on' : 'toggle off';
-        } else {
-            b.className='badge off'; b.textContent='Nepřipojen';
-            u.classList.remove('vis'); l.style.display='block'; t.style.display='none';
-        }
-    } catch {}
-}
-
-async function saveNekoKey() {
-    const key = document.getElementById('neko-key').value.trim();
-    if (!key) { toast('❌ Zadejte klíč'); return; }
-    const r = await fetch('/api/nekobt/save-key', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({token:TOKEN, key}) });
-    const d = await r.json();
-    if (d.success) { document.getElementById('neko-key').value=''; toast('✅ NekoBT uloženo!'); checkNeko(); }
-    else toast('❌ ' + (d.error || 'Neplatný klíč'));
-}
-
-async function disconnectNeko() {
-    await fetch(`/api/nekobt/disconnect/${TOKEN}`, {method:'POST'}); toast('🔌 NekoBT odpojeno'); checkNeko();
-}
-
-async function toggleNeko() {
-    const el = document.getElementById('neko-enabled-toggle');
-    const newVal = el.className.includes('off');
-    el.className = newVal ? 'toggle on' : 'toggle off';
-    await fetch('/api/nekobt/toggle', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({token:TOKEN, enabled:newVal}) });
-}
-
-// NZBgeek
-async function checkGeek() {
-    try {
-        const r = await fetch(`/api/nzbgeek/status/${TOKEN}`); const d = await r.json();
-        const b = document.getElementById('geek-badge'); const u = document.getElementById('geek-user');
-        const l = document.getElementById('geek-login'); const t = document.getElementById('geek-toggles');
-        if (d.connected) {
-            b.className='badge on'; b.textContent='Připojeno';
-            u.classList.add('vis'); l.style.display='none'; t.style.display='block';
-            const etog = document.getElementById('geek-enabled-toggle');
-            etog.className = d.enabled !== false ? 'toggle on' : 'toggle off';
-        } else {
-            b.className='badge off'; b.textContent='Nepřipojen';
-            u.classList.remove('vis'); l.style.display='block'; t.style.display='none';
-        }
-    } catch {}
-}
-
-async function saveGeekKey() {
-    const key = document.getElementById('geek-key').value.trim();
-    if (!key) { toast('❌ Zadejte klíč'); return; }
-    const r = await fetch('/api/nzbgeek/save-key', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({token:TOKEN, key}) });
-    const d = await r.json();
-    if (d.success) { document.getElementById('geek-key').value=''; toast('✅ NZBgeek uloženo!'); checkGeek(); }
-    else toast('❌ ' + (d.error || 'Neplatný klíč'));
-}
-
-async function disconnectGeek() {
-    await fetch(`/api/nzbgeek/disconnect/${TOKEN}`, {method:'POST'}); toast('🔌 NZBgeek odpojeno'); checkGeek();
-}
-
-async function toggleGeek() {
-    const el = document.getElementById('geek-enabled-toggle');
-    const newVal = el.className.includes('off');
-    el.className = newVal ? 'toggle on' : 'toggle off';
-    await fetch('/api/nzbgeek/toggle', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({token:TOKEN, enabled:newVal}) });
-}
-
-// SeaDex
-async function checkSeadex() {
-    try {
-        const r = await fetch(`/api/seadex/status/${TOKEN}`); const d = await r.json();
-        const el = document.getElementById('seadex-toggle');
-        el.className = d.enabled ? 'toggle on' : 'toggle off';
-    } catch {}
-}
-
-async function toggleSeadex() {
-    const el = document.getElementById('seadex-toggle');
-    const newVal = el.className.includes('off');
-    el.className = newVal ? 'toggle on' : 'toggle off';
-    await fetch('/api/seadex/toggle', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({token:TOKEN, enabled:newVal}) });
-}
-
-// My Indexer
+// Indexer settings
 async function checkIndexer() {
     try {
         const r = await fetch(`/api/indexer/status/${TOKEN}`); const d = await r.json();
-        const el = document.getElementById('indexer-toggle');
-        el.className = d.enabled ? 'toggle on' : 'toggle off';
-        // Show/hide sub-rows
-        document.getElementById('indexer-only-row').style.display = d.enabled ? 'flex' : 'none';
-        document.getElementById('indexer-catalog-row').style.display = d.enabled ? 'flex' : 'none';
-        document.getElementById('indexer-subs-row').style.display = d.enabled ? 'flex' : 'none';
-        document.getElementById('indexer-only-toggle').className = d.indexer_only ? 'toggle on' : 'toggle off';
         document.getElementById('indexer-catalog-toggle').className = d.indexer_catalog ? 'toggle on' : 'toggle off';
         document.getElementById('indexer-subs-toggle').className = d.subtitles_enabled ? 'toggle on' : 'toggle off';
     } catch {}
-}
-
-async function toggleIndexer() {
-    const el = document.getElementById('indexer-toggle');
-    const newVal = el.className.includes('off');
-    el.className = newVal ? 'toggle on' : 'toggle off';
-    document.getElementById('indexer-only-row').style.display = newVal ? 'flex' : 'none';
-    document.getElementById('indexer-catalog-row').style.display = newVal ? 'flex' : 'none';
-    document.getElementById('indexer-subs-row').style.display = newVal ? 'flex' : 'none';
-    if (!newVal) {
-        document.getElementById('indexer-only-toggle').className = 'toggle off';
-        document.getElementById('indexer-catalog-toggle').className = 'toggle off';
-        document.getElementById('indexer-subs-toggle').className = 'toggle off';
-        await fetch('/api/indexer/toggle', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({token:TOKEN, enabled:false, indexer_only:false, indexer_catalog:false, subtitles_enabled:false}) });
-    } else {
-        await fetch('/api/indexer/toggle', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({token:TOKEN, enabled:true}) });
-    }
-}
-
-async function toggleIndexerOnly() {
-    const el = document.getElementById('indexer-only-toggle');
-    const newVal = el.className.includes('off');
-    el.className = newVal ? 'toggle on' : 'toggle off';
-    await fetch('/api/indexer/toggle', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({token:TOKEN, indexer_only:newVal}) });
 }
 
 async function toggleIndexerCatalog() {
@@ -705,6 +482,49 @@ async function toggleSubtitles() {
     await fetch('/api/indexer/toggle', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({token:TOKEN, subtitles_enabled:newVal}) });
 }
 
+// Anime
+async function loadAnime() {
+    const list=document.getElementById('anime-list'); const count=document.getElementById('anime-count');
+    try {
+        const r=await fetch(`/api/anime?token=${TOKEN}`); const d=await r.json();
+        const vis=d.anime.filter(a=>!a.hidden).length;
+        count.textContent=`(${vis}/${d.count})`;
+        if(!d.anime?.length){list.innerHTML='<div style="text-align:center;color:var(--dim);padding:20px">Žádné anime</div>';return;}
+        const sorted=[...d.anime].sort((a,b)=>new Date(a.airingAt)-new Date(b.airingAt));
+        function getDayDate(offset){
+            const d=new Date(); d.setDate(d.getDate()+offset);
+            return d.toLocaleDateString('cs-CZ',{weekday:'long',day:'numeric',month:'numeric'});
+        }
+        let lastDay=-1;
+        let html='';
+        for(const a of sorted){
+            if(a.dayOffset!==undefined && a.dayOffset!==lastDay){
+                const label=a.dayOffset===0?'Dnes':a.dayOffset===1?'Zítra · '+getDayDate(1):'Pozítří · '+getDayDate(2);
+                html+=`<div style="display:flex;align-items:center;gap:12px;padding:10px 0;margin:${lastDay===-1?'0':'8px'} 0 4px">
+                    <div style="flex:1;height:1px;background:var(--accent-dim)"></div>
+                    <span style="color:var(--accent);font-size:12px;font-weight:500;white-space:nowrap">${label}</span>
+                    <div style="flex:1;height:1px;background:var(--accent-dim)"></div>
+                </div>`;
+            }
+            lastDay=a.dayOffset;
+            const t=a.title||'Unknown';
+            const p=a.poster||'';
+            const g=(a.genres||[]).slice(0,3).join(', ');
+            const sc=a.score?`${parseFloat(a.score).toFixed(1)}`:'';
+            const time=a.airingAt?new Date(a.airingAt).toLocaleTimeString('cs-CZ',{timeZone:'Europe/Prague',hour:'2-digit',minute:'2-digit',hour12:false}):'';
+            html+=`<div class="anime-item ${a.hidden?'hid':''}">${p?`<img src="${p}" class="anime-poster" loading="lazy" onerror="this.style.display='none'" onclick="window.open('https://anilist.co/anime/${a.anilistId||''}','_blank')" title="Otevřít na AniList">`:'<div class="anime-poster"></div>'}
+                <div class="anime-info"><div class="anime-title">${t}</div><div class="anime-meta">${time?`<span style="color:var(--accent)">${time}</span> · `:''}EP ${a.episode}${g?' · '+g:''}${sc?' · <span style="color:var(--accent)">'+sc+'</span>':''}</div></div>
+                <button class="toggle ${a.hidden?'off':'on'}" onclick="toggleAnime(${a.id},${a.hidden})"></button></div>`;
+        }
+        list.innerHTML=html;
+    } catch { list.innerHTML='<div style="text-align:center;color:var(--dim);padding:20px">Chyba</div>'; }
+}
+
+async function toggleAnime(id,hidden) {
+    await fetch(`/api/anime/${hidden?'show':'hide'}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:TOKEN,mediaId:id})});
+    loadAnime(); toast(hidden?'👁️ Zobrazeno':'🙈 Skryto');
+}
+
 // Sort Preferences
 let sortPrefs = { customSortEnabled:false, groupPriority:[], resPriority:[], langPriority:[], excludedResolutions:[], sortBySeeders:true, cachedFirst:false, defaultGroups:[], defaultResolutions:[], defaultLangs:[] };
 
@@ -718,29 +538,16 @@ async function loadSortPrefs() {
 }
 
 function renderSortPrefs() {
-    // Master toggle
     const tog = document.getElementById('sort-enabled-toggle');
     tog.className = sortPrefs.customSortEnabled ? 'toggle on' : 'toggle off';
     document.getElementById('sort-prefs-panel').style.display = sortPrefs.customSortEnabled ? 'block' : 'none';
-
-    // Seeders toggle
     const stog = document.getElementById('sort-seeders-toggle');
     stog.className = sortPrefs.sortBySeeders !== false ? 'toggle on' : 'toggle off';
-
-    // Cached first toggle
     const ctog = document.getElementById('sort-cached-toggle');
     ctog.className = sortPrefs.cachedFirst ? 'toggle on' : 'toggle off';
-
-    // Group list
     renderSortList('group-list', sortPrefs.groupPriority, 'group');
-
-    // Resolution list
     renderSortList('res-list', sortPrefs.resPriority, 'res');
-
-    // Language list
     renderSortList('lang-list', sortPrefs.langPriority || [], 'lang');
-
-    // Excluded resolutions
     const exDiv = document.getElementById('res-exclude');
     const allRes = sortPrefs.defaultResolutions || ['1080p','720p','4K','480p','DVD'];
     exDiv.innerHTML = allRes.map(r => {
@@ -753,13 +560,11 @@ function renderSortList(containerId, items, type) {
     const ul = document.getElementById(containerId);
     ul.innerHTML = items.map((item, i) =>
         `<li draggable="true" data-idx="${i}" data-type="${type}">
-            <span class="drag-handle">☰</span>
+            <span class="drag-handle">≡</span>
             <span class="item-name">${item}</span>
-            ${(type === 'group' || type === 'lang' || type === 'res') ? `<span class="remove-btn" onclick="${type === 'group' ? 'removeGroup' : type === 'lang' ? 'removeLang' : 'removeRes'}(${i})">×</span>` : ''}
+            <span class="remove-btn" onclick="${type === 'group' ? 'removeGroup' : type === 'lang' ? 'removeLang' : 'removeRes'}(${i})">×</span>
         </li>`
     ).join('');
-
-    // Drag & drop
     let dragIdx = null;
     ul.querySelectorAll('li').forEach(li => {
         li.addEventListener('dragstart', e => { dragIdx = +li.dataset.idx; li.classList.add('dragging'); });
@@ -778,23 +583,9 @@ function renderSortList(containerId, items, type) {
     });
 }
 
-function toggleCustomSort() {
-    sortPrefs.customSortEnabled = !sortPrefs.customSortEnabled;
-    saveSortPrefs();
-    renderSortPrefs();
-}
-
-function toggleSortSeeders() {
-    sortPrefs.sortBySeeders = !sortPrefs.sortBySeeders;
-    saveSortPrefs();
-    renderSortPrefs();
-}
-
-function toggleCachedFirst() {
-    sortPrefs.cachedFirst = !sortPrefs.cachedFirst;
-    saveSortPrefs();
-    renderSortPrefs();
-}
+function toggleCustomSort() { sortPrefs.customSortEnabled = !sortPrefs.customSortEnabled; saveSortPrefs(); renderSortPrefs(); }
+function toggleSortSeeders() { sortPrefs.sortBySeeders = !sortPrefs.sortBySeeders; saveSortPrefs(); renderSortPrefs(); }
+function toggleCachedFirst() { sortPrefs.cachedFirst = !sortPrefs.cachedFirst; saveSortPrefs(); renderSortPrefs(); }
 
 function toggleExcludeRes(res, exclude) {
     if (!sortPrefs.excludedResolutions) sortPrefs.excludedResolutions = [];
@@ -803,61 +594,12 @@ function toggleExcludeRes(res, exclude) {
     saveSortPrefs();
 }
 
-function addRes() {
-    const input = document.getElementById('new-res-input');
-    const name = input.value.trim();
-    if (!name) return;
-    if (!sortPrefs.resPriority.includes(name)) {
-        sortPrefs.resPriority.push(name);
-        saveSortPrefs();
-        renderSortPrefs();
-    }
-    input.value = '';
-}
-
-function removeRes(idx) {
-    sortPrefs.resPriority.splice(idx, 1);
-    saveSortPrefs();
-    renderSortPrefs();
-}
-
-function addLang() {
-    const input = document.getElementById('new-lang-input');
-    const name = input.value.trim().toUpperCase();
-    if (!name) return;
-    if (!sortPrefs.langPriority) sortPrefs.langPriority = [];
-    if (!sortPrefs.langPriority.includes(name)) {
-        sortPrefs.langPriority.push(name);
-        saveSortPrefs();
-        renderSortPrefs();
-    }
-    input.value = '';
-}
-
-function removeLang(idx) {
-    if (!sortPrefs.langPriority) return;
-    sortPrefs.langPriority.splice(idx, 1);
-    saveSortPrefs();
-    renderSortPrefs();
-}
-
-function addGroup() {
-    const input = document.getElementById('new-group-input');
-    const name = input.value.trim();
-    if (!name) return;
-    if (!sortPrefs.groupPriority.includes(name)) {
-        sortPrefs.groupPriority.push(name);
-        saveSortPrefs();
-        renderSortPrefs();
-    }
-    input.value = '';
-}
-
-function removeGroup(idx) {
-    sortPrefs.groupPriority.splice(idx, 1);
-    saveSortPrefs();
-    renderSortPrefs();
-}
+function addRes() { const input=document.getElementById('new-res-input'); const name=input.value.trim(); if(!name)return; if(!sortPrefs.resPriority.includes(name)){sortPrefs.resPriority.push(name);saveSortPrefs();renderSortPrefs();} input.value=''; }
+function removeRes(idx) { sortPrefs.resPriority.splice(idx, 1); saveSortPrefs(); renderSortPrefs(); }
+function addLang() { const input=document.getElementById('new-lang-input'); const name=input.value.trim().toUpperCase(); if(!name)return; if(!sortPrefs.langPriority)sortPrefs.langPriority=[]; if(!sortPrefs.langPriority.includes(name)){sortPrefs.langPriority.push(name);saveSortPrefs();renderSortPrefs();} input.value=''; }
+function removeLang(idx) { if(!sortPrefs.langPriority)return; sortPrefs.langPriority.splice(idx, 1); saveSortPrefs(); renderSortPrefs(); }
+function addGroup() { const input=document.getElementById('new-group-input'); const name=input.value.trim(); if(!name)return; if(!sortPrefs.groupPriority.includes(name)){sortPrefs.groupPriority.push(name);saveSortPrefs();renderSortPrefs();} input.value=''; }
+function removeGroup(idx) { sortPrefs.groupPriority.splice(idx, 1); saveSortPrefs(); renderSortPrefs(); }
 
 function resetSortPrefs() {
     sortPrefs.groupPriority = [...(sortPrefs.defaultGroups || [])];
@@ -865,8 +607,8 @@ function resetSortPrefs() {
     sortPrefs.langPriority = [...(sortPrefs.defaultLangs || [])];
     sortPrefs.excludedResolutions = [];
     sortPrefs.sortBySeeders = true;
-    saveSortPrefs();
-    renderSortPrefs();
+    sortPrefs.cachedFirst = false;
+    saveSortPrefs(); renderSortPrefs();
     toast('🔄 Výchozí nastavení obnoveno');
 }
 
@@ -880,7 +622,8 @@ async function saveSortPrefs() {
                 resPriority: sortPrefs.resPriority,
                 langPriority: sortPrefs.langPriority,
                 excludedResolutions: sortPrefs.excludedResolutions,
-                sortBySeeders: sortPrefs.sortBySeeders
+                sortBySeeders: sortPrefs.sortBySeeders,
+                cachedFirst: sortPrefs.cachedFirst
             })
         });
     } catch {}
@@ -889,9 +632,10 @@ async function saveSortPrefs() {
 // Init
 document.addEventListener('DOMContentLoaded',()=>{
     const saved=getCookie('token');
+    const savedRole=getCookie('role');
     if(saved) {
         fetch(`/api/user/${saved}`).then(r=>{
-            if(r.ok){TOKEN=saved;showApp();}
+            if(r.ok){TOKEN=saved;USER_ROLE=savedRole||'user';showApp();}
             else document.getElementById('login-section').style.display='block';
         }).catch(()=>document.getElementById('login-section').style.display='block');
     } else {
