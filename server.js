@@ -2037,38 +2037,58 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
   console.log(`  📰 NZB: searching indexer ${params.toString()}`);
 
   let nzbResults = [];
+  let toshoNzbResults = [];
   try {
     const resp = await axios.get(`${INDEXER_URL}/search?${params.toString()}`, { timeout: 8000 });
     nzbResults = resp.data?.nzb_results || [];
-    console.log(`  📰 NZB: ${nzbResults.length} results from indexer (${resp.data?.searchedBy || '?'})`);
+    // Tosho results that have r2_key = NZB available on R2
+    toshoNzbResults = (resp.data?.tosho_results || []).filter(t => t.r2_key);
+    console.log(`  📰 NZB: ${nzbResults.length} geek + ${toshoNzbResults.length} tosho from indexer (${resp.data?.searchedBy || '?'})`);
   } catch (err) {
     console.log(`  📰 NZB indexer error: ${err.message}`);
   }
 
+  // Normalize both sources into unified format
+  const allNzb = [
+    ...nzbResults.map(n => ({
+      name: n.title || n.name || 'Unknown',
+      size: parseInt(n.size) || n.filesize || 0,
+      r2_key: n.r2_key || null,
+      source: n.source || 'nzbgeek',
+      sourceLabel: '📰 NZBgeek',
+    })),
+    ...toshoNzbResults.map(t => ({
+      name: t.name || 'Unknown',
+      size: parseInt(t.filesize) || 0,
+      r2_key: t.r2_key || null,
+      source: 'animetosho',
+      sourceLabel: '📡 AT',
+    })),
+  ].filter(n => n.r2_key); // Only show NZBs that are on R2
+
   // Filter and sort NZB results using user preferences
-  let sorted = nzbResults;
+  let sorted = allNzb;
   if (user?.customSortEnabled) {
     const resOrder = user.resPriority || DEFAULT_RESOLUTIONS;
     const excludedRes = new Set((user.excludedResolutions || []).map(r => r.toLowerCase()));
 
     // Filter excluded resolutions
     sorted = sorted.filter(t => {
-      const name = t.title || t.name || '';
-      const res = detectQuality(name);
+      const res = detectQuality(t.name);
       if (res && excludedRes.has(res.toLowerCase())) return false;
       return true;
     });
 
     // Sort by resolution priority → size
     sorted.sort((a, b) => {
-      const aRes = detectQuality(a.title || a.name || '');
-      const bRes = detectQuality(b.title || b.name || '');
+      const aRes = detectQuality(a.name);
+      const bRes = detectQuality(b.name);
       const aResIdx = aRes ? resOrder.indexOf(aRes) : -1;
       const bResIdx = bRes ? resOrder.indexOf(bRes) : -1;
       const aResPri = aResIdx >= 0 ? aResIdx : resOrder.length;
       const bResPri = bResIdx >= 0 ? bResIdx : resOrder.length;
       if (aResPri !== bResPri) return aResPri - bResPri;
-      return (parseInt(b.size) || 0) - (parseInt(a.size) || 0);
+      return (b.size || 0) - (a.size || 0);
     });
   }
   const topNzb = sorted.slice(0, 20);
@@ -2078,24 +2098,19 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
   const epNum = isMovie ? 0 : episode;
 
   for (const t of topNzb) {
-    const name = t.title || t.name || 'Unknown';
-    const quality = detectQuality(name);
+    const quality = detectQuality(t.name);
     const size = t.size ? formatIndexerFilesize(t.size) : '?';
-    const sourceLabel = t.source === 'nzbgeek' ? '📰 NZBgeek' : '📡 AT';
 
-    const tags = [quality, sourceLabel, `📦 ${size}`].filter(Boolean);
-    const title = `${tags.join(' · ')}\n${name}`;
+    const tags = [quality, t.sourceLabel, `📦 ${size}`].filter(Boolean);
+    const title = `${tags.join(' · ')}\n${t.name}`;
 
-    if (t.r2_key) {
-      // R2 URL available — direct NZB stream via TorBox
-      const nzbUrl = `${R2_NZB_BASE}/${t.r2_key}`;
-      streams.push({
-        name: `📰 NZB`,
-        title,
-        url: `${BASE_URL}/${token}/play-nzb/${storeNZB(nzbUrl, name)}/${epNum}/video.mp4`,
-        behaviorHints: { bingeGroup: 'nzb-indexer', notWebReady: true }
-      });
-    }
+    const nzbUrl = `${R2_NZB_BASE}/${t.r2_key}`;
+    streams.push({
+      name: `📰 NZB`,
+      title,
+      url: `${BASE_URL}/${token}/play-nzb/${storeNZB(nzbUrl, t.name)}/${epNum}/video.mp4`,
+      behaviorHints: { bingeGroup: 'nzb-indexer', notWebReady: true }
+    });
   }
 
   // Always add "Refresh NZB" at the bottom
