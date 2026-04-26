@@ -1909,18 +1909,24 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
     const isTBCached = tbCacheMap[torrentHash];
 
     if (p2pEnabled) {
-      // P2P direct playback via Stremio's built-in torrent client
+      // P2P direct playback via Stremio's built-in torrent client.
+      // NOTE: this requires Stremio's local streaming server to be running.
+      //       - Desktop (Win/Mac/Linux) and Android have it built-in -> works.
+      //       - Web (browser) requires Stremio Service companion app on same machine.
+      //       - iOS / Apple TV / Stremio Lite do NOT have it -> P2P will NOT work there.
       const ih = torrentHash;
-      if (ih && ih.length >= 32) {
+      if (ih && /^[0-9a-f]{40}$/i.test(ih)) {
         const bingeGroup = t.indexer && t.indexerId ? `nimetodex-${t.indexerId}-s${season || 1}-p2p` : t.seadex ? 'seadex-p2p' : t.nekobt ? 'neko-p2p' : 'nyaa-p2p';
         const p2pStream = {
           name: `${streamName} P2P`,
           title,
-          infoHash: ih,
+          infoHash: ih.toLowerCase(),
           sources: P2P_TRACKERS.map(tr => `tracker:${tr}`),
-          behaviorHints: { bingeGroup, notWebReady: true },
+          behaviorHints: { bingeGroup },
         };
-        if (t.fileIdx != null) p2pStream.fileIdx = t.fileIdx;
+        // fileIdx must be a number per Stremio spec
+        const fIdx = t.fileIdx != null ? parseInt(t.fileIdx, 10) : NaN;
+        if (Number.isFinite(fIdx) && fIdx >= 0) p2pStream.fileIdx = fIdx;
         if (t.matchedFile) {
           if (t.matchedFile.size) p2pStream.behaviorHints.videoSize = t.matchedFile.size;
           if (t.matchedFile.name) p2pStream.behaviorHints.filename = t.matchedFile.name;
