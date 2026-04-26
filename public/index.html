@@ -108,7 +108,7 @@
         .anime-item { display:flex; align-items:center; gap:10px; padding:8px 0; }
         .anime-item + .anime-item { border-top:1px solid var(--border); }
         .anime-item.hid { opacity:0.35; }
-        .anime-poster { width:48px; height:68px; border-radius:5px; object-fit:cover; flex-shrink:0; background:var(--surface); cursor:pointer; transition:opacity 0.2s; }
+        .anime-poster { width:80px; height:112px; border-radius:6px; object-fit:cover; flex-shrink:0; background:var(--surface); cursor:pointer; transition:opacity 0.2s; }
         .anime-poster:hover { opacity:0.7; }
         .anime-info { flex:1; min-width:0; }
         .anime-title { font-size:13px; font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -194,6 +194,7 @@
                     <label style="font-size:11px;color:var(--dim);display:flex;align-items:center;gap:4px;"><input type="checkbox" id="perm-subtitles"> Titulky</label>
                     <label style="font-size:11px;color:var(--dim);display:flex;align-items:center;gap:4px;"><input type="checkbox" id="perm-catalog"> Katalog</label>
                     <label style="font-size:11px;color:var(--dim);display:flex;align-items:center;gap:4px;"><input type="checkbox" id="perm-ondemand" checked> On-demand</label>
+                    <label style="font-size:11px;color:var(--dim);display:flex;align-items:center;gap:4px;"><input type="checkbox" id="perm-animetoday"> Anime Today</label>
                 </div>
             </div>
 
@@ -415,7 +416,7 @@ function showApp() {
         document.getElementById('addon-nzb-row').style.display=(isAdmin||perms.nzb)?'block':'none';
         document.getElementById('section-nimetodex').style.display=(isAdmin||perms.subtitles||perms.catalog)?'block':'none';
         document.getElementById('section-torbox').style.display=(isAdmin||perms.torrents||perms.nzb)?'block':'none';
-        document.getElementById('section-anime-today').style.display=(isAdmin||perms.catalog)?'block':'none';
+        document.getElementById('section-anime-today').style.display=(isAdmin||perms.animetoday)?'block':'none';
 
         // Subtitle toggle visibility
         const subsRow=document.getElementById('indexer-subs-toggle')?.closest('.row');
@@ -455,7 +456,7 @@ async function loadAccountsList() {
         if(!d.accounts?.length){list.innerHTML='<div style="color:var(--dim);font-size:13px;">Žádné účty</div>';return;}
         list.innerHTML=d.accounts.map(a=>{
             const perms=a.permissions||{};
-            const permTags=['torrents','nzb','subtitles','catalog','ondemand'].map(p=>
+            const permTags=['torrents','nzb','subtitles','catalog','ondemand','animetoday'].map(p=>
                 `<span class="acc-perm ${perms[p]?'on':''}">${p}</span>`
             ).join('');
             const isSuperAdmin=a.role==='superadmin';
@@ -482,7 +483,8 @@ async function createNewAccount() {
         nzb:document.getElementById('perm-nzb').checked,
         subtitles:document.getElementById('perm-subtitles').checked,
         catalog:document.getElementById('perm-catalog').checked,
-        ondemand:document.getElementById('perm-ondemand').checked
+        ondemand:document.getElementById('perm-ondemand').checked,
+        animetoday:document.getElementById('perm-animetoday').checked
     };
     try {
         const r=await fetch('/api/admin/create-account',{method:'POST',headers:{'Content-Type':'application/json','x-admin-token':TOKEN},body:JSON.stringify({username,password,permissions})});
