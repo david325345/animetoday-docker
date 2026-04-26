@@ -27,6 +27,16 @@ const ONDEMAND_VIDEO_URL = process.env.ONDEMAND_VIDEO_URL || 'https://raw.github
 const R2_NZB_BASE = process.env.R2_NZB_BASE || 'https://pub-4a78ba5831734d77a4c5c6762c14d4a2.r2.dev';
 const NZB_REFRESH_TOKEN = process.env.NZB_REFRESH_TOKEN || '';
 
+// Public trackers for P2P (direct Stremio playback) — appended to torrent's own trackers
+const P2P_TRACKERS = [
+  'http://nyaa.tracker.wf:7777/announce',
+  'udp://open.stealth.si:80/announce',
+  'udp://tracker.opentrackr.org:1337/announce',
+  'udp://tracker.openbittorrent.com:6969/announce',
+  'udp://exodus.desync.com:6969/announce',
+  'udp://tracker.torrent.eu.org:451/announce',
+];
+
 console.log('═══════════════════════════════════════════');
 console.log('  🎬 Nyaa + Anime Today v5.0');
 console.log('═══════════════════════════════════════════');
@@ -279,6 +289,28 @@ app.post('/api/rd/toggle', express.json(), (req, res) => {
   const user = config.getUser(token);
   if (!user) return res.status(404).json({ error: 'User not found' });
   user.rd_enabled = !!enabled;
+  config.saveUser(token, user);
+  res.json({ success: true });
+});
+
+// ===== P2P (direct Stremio playback) =====
+app.get('/api/p2p/status/:token', (req, res) => {
+  const user = config.getUser(req.params.token);
+  if (!user) return res.json({ enabled: false });
+  res.json({ enabled: !!user.p2p_enabled });
+});
+
+app.post('/api/p2p/toggle', express.json(), (req, res) => {
+  const { token, enabled } = req.body;
+  const user = config.getUser(token);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  // Permission check — torrents permission required to enable P2P
+  const account = config.getAccountByToken(token);
+  const perms = account?.permissions || {};
+  if (enabled && !perms.torrents) {
+    return res.status(403).json({ error: 'Torrents permission required' });
+  }
+  user.p2p_enabled = !!enabled;
   config.saveUser(token, user);
   res.json({ success: true });
 });
@@ -1772,9 +1804,10 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
     return res.json({ streams: noResultStreams });
   }
 
-  const hasRD = !!user?.rd_api_key && user?.rd_enabled !== false;
+  const p2pEnabled = !!user?.p2p_enabled;
+  const hasRD = !p2pEnabled && !!user?.rd_api_key && user?.rd_enabled !== false;
   const hasTB = !!user?.tb_api_key;
-  const tbTorrents = hasTB && user.tb_use_torrents;
+  const tbTorrents = !p2pEnabled && hasTB && user.tb_use_torrents;
 
   let allResults;
   if (indexerOnly) {
@@ -1875,35 +1908,56 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
     const torrentHash = (t.infohash || t.magnet?.match(/btih:([a-zA-Z0-9]+)/i)?.[1] || '').toLowerCase();
     const isTBCached = tbCacheMap[torrentHash];
 
-    if (hasRD) {
-      const bingeGroup = t.indexer && t.indexerId ? `nimetodex-${t.indexerId}-s${season || 1}` : t.seadex ? 'seadex-rd' : t.nekobt ? 'neko-rd' : 'nyaa-rd';
-      const playEp = t.fileIdx != null ? `fi${t.fileIdx}` : String(epNum);
-      const rdStream = { name: `${streamName} RD`, title,
-        url: `${BASE_URL}/${token}/play/${storeMagnet(t.magnet)}/${playEp}/video.mp4`,
-        behaviorHints: { bingeGroup, notWebReady: true } };
-      if (t.matchedFile) {
-        if (t.matchedFile.size) rdStream.behaviorHints.videoSize = t.matchedFile.size;
-        if (t.matchedFile.name) rdStream.behaviorHints.filename = t.matchedFile.name;
+    if (p2pEnabled) {
+      // P2P direct playback via Stremio's built-in torrent client
+      const ih = torrentHash;
+      if (ih && ih.length >= 32) {
+        const bingeGroup = t.indexer && t.indexerId ? `nimetodex-${t.indexerId}-s${season || 1}-p2p` : t.seadex ? 'seadex-p2p' : t.nekobt ? 'neko-p2p' : 'nyaa-p2p';
+        const p2pStream = {
+          name: `${streamName} P2P`,
+          title,
+          infoHash: ih,
+          sources: P2P_TRACKERS.map(tr => `tracker:${tr}`),
+          behaviorHints: { bingeGroup, notWebReady: true },
+        };
+        if (t.fileIdx != null) p2pStream.fileIdx = t.fileIdx;
+        if (t.matchedFile) {
+          if (t.matchedFile.size) p2pStream.behaviorHints.videoSize = t.matchedFile.size;
+          if (t.matchedFile.name) p2pStream.behaviorHints.filename = t.matchedFile.name;
+        }
+        streams.push(p2pStream);
       }
-      streams.push(rdStream);
-    }
-    if (tbTorrents) {
-      const cacheIcon = tbCacheCheck ? (isTBCached ? '⚡' : '⏳') : '';
-      const tbName = cacheIcon ? `${cacheIcon}${streamName} TB` : `${streamName} TB`;
-      const tbTitle = tbCacheCheck ? (isTBCached ? `⚡ Cached\n${title}` : `⏳ Not cached\n${title}`) : title;
-      const bingeGroup = t.indexer && t.indexerId ? `nimetodex-${t.indexerId}-s${season || 1}-tb` : t.seadex ? 'seadex-tb' : t.nekobt ? 'neko-tb' : 'nyaa-tb';
-      const playEp = t.fileIdx != null ? `fi${t.fileIdx}` : String(epNum);
-      const tbStream = { name: tbName, title: tbTitle,
-        url: `${BASE_URL}/${token}/play-tb/${storeMagnet(t.magnet)}/${playEp}/video.mp4`,
-        behaviorHints: { bingeGroup, notWebReady: true } };
-      if (t.matchedFile) {
-        if (t.matchedFile.size) tbStream.behaviorHints.videoSize = t.matchedFile.size;
-        if (t.matchedFile.name) tbStream.behaviorHints.filename = t.matchedFile.name;
+    } else {
+      if (hasRD) {
+        const bingeGroup = t.indexer && t.indexerId ? `nimetodex-${t.indexerId}-s${season || 1}` : t.seadex ? 'seadex-rd' : t.nekobt ? 'neko-rd' : 'nyaa-rd';
+        const playEp = t.fileIdx != null ? `fi${t.fileIdx}` : String(epNum);
+        const rdStream = { name: `${streamName} RD`, title,
+          url: `${BASE_URL}/${token}/play/${storeMagnet(t.magnet)}/${playEp}/video.mp4`,
+          behaviorHints: { bingeGroup, notWebReady: true } };
+        if (t.matchedFile) {
+          if (t.matchedFile.size) rdStream.behaviorHints.videoSize = t.matchedFile.size;
+          if (t.matchedFile.name) rdStream.behaviorHints.filename = t.matchedFile.name;
+        }
+        streams.push(rdStream);
       }
-      streams.push(tbStream);
-    }
-    if (!hasRD && !tbTorrents) {
-      streams.push({ name: streamName, title, url: t.magnet, behaviorHints: { notWebReady: true } });
+      if (tbTorrents) {
+        const cacheIcon = tbCacheCheck ? (isTBCached ? '⚡' : '⏳') : '';
+        const tbName = cacheIcon ? `${cacheIcon}${streamName} TB` : `${streamName} TB`;
+        const tbTitle = tbCacheCheck ? (isTBCached ? `⚡ Cached\n${title}` : `⏳ Not cached\n${title}`) : title;
+        const bingeGroup = t.indexer && t.indexerId ? `nimetodex-${t.indexerId}-s${season || 1}-tb` : t.seadex ? 'seadex-tb' : t.nekobt ? 'neko-tb' : 'nyaa-tb';
+        const playEp = t.fileIdx != null ? `fi${t.fileIdx}` : String(epNum);
+        const tbStream = { name: tbName, title: tbTitle,
+          url: `${BASE_URL}/${token}/play-tb/${storeMagnet(t.magnet)}/${playEp}/video.mp4`,
+          behaviorHints: { bingeGroup, notWebReady: true } };
+        if (t.matchedFile) {
+          if (t.matchedFile.size) tbStream.behaviorHints.videoSize = t.matchedFile.size;
+          if (t.matchedFile.name) tbStream.behaviorHints.filename = t.matchedFile.name;
+        }
+        streams.push(tbStream);
+      }
+      if (!hasRD && !tbTorrents) {
+        streams.push({ name: streamName, title, url: t.magnet, behaviorHints: { notWebReady: true } });
+      }
     }
   }
 
@@ -2092,6 +2146,12 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
 
   // NZB addon requires TorBox with NZB enabled
   if (!user?.tb_api_key || !user?.tb_use_nzb) {
+    return res.json({ streams: [] });
+  }
+
+  // P2P mode disables NZB entirely (only torrents are played P2P, NZB is incompatible)
+  if (user.p2p_enabled) {
+    console.log(`  📰 NZB skipped: P2P mode is enabled`);
     return res.json({ streams: [] });
   }
 
