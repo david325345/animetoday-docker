@@ -222,11 +222,13 @@
             </div>
             </div>
 
+            <div id="addon-today-row">
             <div class="addon-label">Anime Today — dnešní katalog</div>
             <div class="manifest-url" id="url-today" onclick="copy('url-today')"></div>
             <div class="install-btns">
                 <a class="btn btn-p" id="install-today" href="#">Nainstalovat</a>
                 <button class="btn btn-s" onclick="copy('url-today')">Kopírovat</button>
+            </div>
             </div>
 
             <div style="margin-top:14px; font-size:11px; color:var(--hint);">Token: <span class="token-display" id="show-token"></span></div>
@@ -414,6 +416,7 @@ function showApp() {
 
         // Permissions — admin sees everything
         document.getElementById('addon-nzb-row').style.display=(isAdmin||perms.nzb)?'block':'none';
+        document.getElementById('addon-today-row').style.display=(isAdmin||perms.animetoday)?'block':'none';
         document.getElementById('section-nimetodex').style.display=(isAdmin||perms.subtitles||perms.catalog)?'block':'none';
         document.getElementById('section-torbox').style.display=(isAdmin||perms.torrents||perms.nzb)?'block':'none';
         document.getElementById('section-anime-today').style.display=(isAdmin||perms.animetoday)?'block':'none';
