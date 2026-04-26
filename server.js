@@ -1161,6 +1161,8 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
   const type = req.params.type;
   const fullId = req.params.id;
   const user = config.getUser(token);
+  const account = config.getAccountByToken(token);
+  const userPerms = account?.permissions || {};
   const isMovie = type === 'movie';
 
   console.log(`=== STREAM === type=${type} id=${fullId}`);
@@ -1759,7 +1761,7 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
   // Merge Indexer results
   if (!torrents.length && !indexerResults.length) {
     const noResultStreams = [{ name: '❌ Nenalezeno', title: `Nenalezeno na NimeToDex`, url: 'https://nimetodex.duckdns.org', behaviorHints: { notWebReady: true } }];
-    if (hasIndexer) {
+    if (hasIndexer && userPerms.ondemand !== false) {
       noResultStreams.push({
         name: '🔍 Search',
         title: 'Search on demand\nSearches Nyaa + trackers for new results.\nClose video and reopen episode after ~30s.',
@@ -1905,8 +1907,8 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
     }
   }
 
-  // Add "Search on demand" as last stream (only if indexer is enabled)
-  if (hasIndexer) {
+  // Add "Search on demand" as last stream (only if permitted)
+  if (hasIndexer && userPerms.ondemand !== false) {
     streams.push({
       name: '🔍 Search',
       title: 'Search on demand\nSearches Nyaa + trackers for new results.\nClose video and reopen episode after ~30s.',
@@ -2084,6 +2086,8 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
   const type = req.params.type;
   const fullId = req.params.id;
   const user = config.getUser(token);
+  const nzbAccount = config.getAccountByToken(token);
+  const nzbPerms = nzbAccount?.permissions || {};
   const isMovie = type === 'movie';
 
   // NZB addon requires TorBox with NZB enabled
@@ -2222,8 +2226,8 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
     });
   }
 
-  // Always add "Refresh NZB" at the bottom
-  if (imdbId) {
+  // Add "Refresh NZB" at the bottom (only if permitted)
+  if (imdbId && nzbPerms.ondemand !== false) {
     streams.push({
       name: '🔍 NZB',
       title: 'Refresh NZB\nSearches NZBGeek for new NZB files.\nClose video and reopen episode after ~30s.',
