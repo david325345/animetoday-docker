@@ -247,8 +247,20 @@
             </div>
         </div>
 
+        <!-- P2P (Direct Stremio playback) -->
+        <div class="section" id="section-p2p" style="display:none">
+            <div class="section-title">📺 Přímé přehrávání P2P <span class="badge off" id="p2p-badge">Vypnuto</span></div>
+            <div class="row">
+                <div class="row-label">Přehrávat torrenty přímo ve Stremio <small>Vypne RealDebrid, TorBox a NZB</small></div>
+                <button class="toggle off" id="p2p-toggle" onclick="toggleP2P()"></button>
+            </div>
+            <div style="font-size:11px;color:var(--hint);margin-top:6px;">
+                Když je zapnuto, torrenty se přehrávají přímo přes Stremio peer-to-peer (bez debrid služeb). NZB a debrid streamy budou skryty.
+            </div>
+        </div>
+
         <!-- RealDebrid -->
-        <div class="section">
+        <div class="section" id="section-rd">
             <div class="section-title">⚡ RealDebrid <span class="badge off" id="rd-badge">Nepřipojen</span></div>
             <div class="rd-user" id="rd-user">
                 <div class="avatar" style="background:var(--accent-dim);color:var(--accent);">RD</div>
@@ -420,6 +432,8 @@ function showApp() {
         document.getElementById('section-nimetodex').style.display=(isAdmin||perms.subtitles||perms.catalog)?'block':'none';
         document.getElementById('section-torbox').style.display=(isAdmin||perms.torrents||perms.nzb)?'block':'none';
         document.getElementById('section-anime-today').style.display=(isAdmin||perms.animetoday)?'block':'none';
+        // P2P section requires torrents permission
+        document.getElementById('section-p2p').style.display=(isAdmin||perms.torrents)?'block':'none';
 
         // Subtitle toggle visibility
         const subsRow=document.getElementById('indexer-subs-toggle')?.closest('.row');
@@ -429,7 +443,7 @@ function showApp() {
         if(catRow) catRow.style.display=(isAdmin||perms.catalog)?'flex':'none';
     }).catch(()=>{});
 
-    checkRD(); checkTB(); checkIndexer(); loadAnime(); loadSortPrefs();
+    checkRD(); checkTB(); checkIndexer(); checkP2P(); loadAnime(); loadSortPrefs();
 }
 
 function doLogout() {
@@ -580,6 +594,33 @@ async function toggleRD() {
     const newVal = el.className.includes('off');
     el.className = newVal ? 'toggle on' : 'toggle off';
     await fetch('/api/rd/toggle', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({token:TOKEN, enabled:newVal}) });
+}
+
+// P2P (direct Stremio playback)
+async function checkP2P() {
+    try {
+        const r = await fetch(`/api/p2p/status/${TOKEN}`); const d = await r.json();
+        const toggle = document.getElementById('p2p-toggle');
+        const badge = document.getElementById('p2p-badge');
+        if (d.enabled) {
+            toggle.className = 'toggle on';
+            badge.className = 'badge on'; badge.textContent = 'Aktivní';
+        } else {
+            toggle.className = 'toggle off';
+            badge.className = 'badge off'; badge.textContent = 'Vypnuto';
+        }
+    } catch {}
+}
+
+async function toggleP2P() {
+    const el = document.getElementById('p2p-toggle');
+    const newVal = el.className.includes('off');
+    const r = await fetch('/api/p2p/toggle', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({token:TOKEN, enabled:newVal}) });
+    if (!r.ok) { const e = await r.json().catch(()=>({})); toast('❌ ' + (e.error || 'Chyba')); return; }
+    el.className = newVal ? 'toggle on' : 'toggle off';
+    const badge = document.getElementById('p2p-badge');
+    if (newVal) { badge.className = 'badge on'; badge.textContent = 'Aktivní'; toast('📺 P2P zapnuto — RD/TB/NZB skryto ve Stremio'); }
+    else { badge.className = 'badge off'; badge.textContent = 'Vypnuto'; toast('⚡ P2P vypnuto'); }
 }
 
 // TorBox
