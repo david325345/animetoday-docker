@@ -122,6 +122,20 @@
         .footer { text-align:center; padding:20px 0 8px; font-size:10px; color:var(--hint); }
         .footer a { color:var(--accent); text-decoration:none; }
 
+        /* Admin */
+        .acc-row { display:flex; align-items:center; gap:10px; padding:10px 0; }
+        .acc-row + .acc-row { border-top:1px solid var(--border); }
+        .acc-row.inactive { opacity:0.4; }
+        .acc-name { font-size:13px; font-weight:500; flex:1; }
+        .acc-name small { font-size:11px; color:var(--hint); font-weight:400; display:block; }
+        .acc-role { font-size:10px; padding:2px 8px; border-radius:10px; font-weight:500; }
+        .acc-role.superadmin { background:rgba(232,67,99,0.15); color:var(--accent); }
+        .acc-role.user { background:rgba(55,138,221,0.12); color:var(--blue); }
+        .acc-perms { display:flex; flex-wrap:wrap; gap:3px; }
+        .acc-perm { font-size:9px; padding:1px 6px; border-radius:4px; background:var(--surface); color:var(--dim); }
+        .acc-perm.on { color:var(--green); background:var(--green-dim); }
+        .acc-actions { display:flex; gap:4px; }
+
         /* Token display */
         .token-display { font-family:'JetBrains Mono',monospace; font-size:12px; color:var(--dim); background:var(--surface); border:1px solid var(--border); border-radius:6px; padding:6px 10px; display:inline-block; margin-top:8px; }
 
@@ -152,6 +166,40 @@
 
     <!-- APP -->
     <div id="app-section" style="display:none">
+
+        <!-- User bar -->
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 0 6px;">
+            <div style="font-size:13px;color:var(--dim);">Přihlášen jako <span id="logged-user" style="color:var(--text);font-weight:500;"></span></div>
+            <div style="display:flex;gap:8px;">
+                <button class="btn btn-s btn-sm" id="admin-panel-btn" style="display:none;" onclick="toggleAdminPanel()">👑 Správa uživatelů</button>
+                <button class="btn btn-s btn-sm" onclick="doLogout()">Odhlásit</button>
+            </div>
+        </div>
+
+        <!-- Admin Panel -->
+        <div class="section" id="admin-panel" style="display:none;">
+            <div class="section-title">👑 Správa uživatelů</div>
+
+            <!-- Create new user -->
+            <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:14px;margin-bottom:14px;">
+                <div style="font-size:12px;color:var(--hint);font-weight:500;margin-bottom:8px;">Nový uživatel</div>
+                <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                    <input type="text" id="new-acc-user" class="input" placeholder="Jméno" style="flex:1;min-width:100px;font-family:'Outfit',sans-serif;">
+                    <input type="password" id="new-acc-pass" class="input" placeholder="Heslo" style="flex:1;min-width:100px;font-family:'Outfit',sans-serif;">
+                    <button class="btn btn-p btn-sm" onclick="createNewAccount()">Vytvořit</button>
+                </div>
+                <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;">
+                    <label style="font-size:11px;color:var(--dim);display:flex;align-items:center;gap:4px;"><input type="checkbox" id="perm-torrents" checked> Torrenty</label>
+                    <label style="font-size:11px;color:var(--dim);display:flex;align-items:center;gap:4px;"><input type="checkbox" id="perm-nzb"> NZB</label>
+                    <label style="font-size:11px;color:var(--dim);display:flex;align-items:center;gap:4px;"><input type="checkbox" id="perm-subtitles"> Titulky</label>
+                    <label style="font-size:11px;color:var(--dim);display:flex;align-items:center;gap:4px;"><input type="checkbox" id="perm-catalog"> Katalog</label>
+                    <label style="font-size:11px;color:var(--dim);display:flex;align-items:center;gap:4px;"><input type="checkbox" id="perm-ondemand" checked> On-demand</label>
+                </div>
+            </div>
+
+            <!-- User list -->
+            <div id="accounts-list"></div>
+        </div>
 
         <!-- Addons -->
         <div class="section">
@@ -349,7 +397,100 @@ function showApp() {
     document.getElementById('install-nyaa').href=`stremio://${nyaaUrl.replace(/^https?:\/\//,'')}`;
     document.getElementById('install-nzb').href=`stremio://${nzbUrl.replace(/^https?:\/\//,'')}`;
     document.getElementById('show-token').textContent=TOKEN;
+    // Show username and admin button
+    fetch(`/api/user/${TOKEN}`).then(r=>r.json()).then(d=>{
+        document.getElementById('logged-user').textContent=d.username||'User';
+        if(d.role==='superadmin'){
+            document.getElementById('admin-panel-btn').style.display='inline-flex';
+            USER_ROLE='superadmin';
+        }
+    }).catch(()=>{});
     checkRD(); checkTB(); checkIndexer(); loadAnime(); loadSortPrefs();
+}
+
+function doLogout() {
+    TOKEN=null; USER_ROLE=null;
+    setCookie('token','',-1); setCookie('role','',-1);
+    document.getElementById('app-section').style.display='none';
+    document.getElementById('admin-panel').style.display='none';
+    document.getElementById('login-section').style.display='block';
+    toast('👋 Odhlášeno');
+}
+
+function toggleAdminPanel() {
+    const panel=document.getElementById('admin-panel');
+    if(panel.style.display==='none'){
+        panel.style.display='block';
+        loadAccountsList();
+    } else {
+        panel.style.display='none';
+    }
+}
+
+async function loadAccountsList() {
+    try {
+        const r=await fetch('/api/admin/accounts',{headers:{'x-admin-token':TOKEN}});
+        const d=await r.json();
+        const list=document.getElementById('accounts-list');
+        if(!d.accounts?.length){list.innerHTML='<div style="color:var(--dim);font-size:13px;">Žádné účty</div>';return;}
+        list.innerHTML=d.accounts.map(a=>{
+            const perms=a.permissions||{};
+            const permTags=['torrents','nzb','subtitles','catalog','ondemand'].map(p=>
+                `<span class="acc-perm ${perms[p]?'on':''}">${p}</span>`
+            ).join('');
+            const isSuperAdmin=a.role==='superadmin';
+            const isActive=a.active!==false;
+            return `<div class="acc-row ${isActive?'':'inactive'}">
+                <div class="acc-name">${a.username}<small>${a.token}</small></div>
+                <span class="acc-role ${a.role}">${a.role==='superadmin'?'👑 Admin':'User'}</span>
+                <div class="acc-perms">${permTags}</div>
+                <div class="acc-actions">
+                    ${isSuperAdmin?'':`<button class="btn btn-s btn-sm" onclick="toggleAccount('${a.username}',${!isActive})">${isActive?'Deaktivovat':'Aktivovat'}</button>`}
+                    ${isSuperAdmin?'':`<button class="btn btn-d btn-sm" onclick="deleteAccount('${a.username}')">Smazat</button>`}
+                </div>
+            </div>`;
+        }).join('');
+    } catch(e) { toast('❌ '+e.message); }
+}
+
+async function createNewAccount() {
+    const username=document.getElementById('new-acc-user').value.trim();
+    const password=document.getElementById('new-acc-pass').value;
+    if(!username||!password){toast('❌ Vyplňte jméno a heslo');return;}
+    const permissions={
+        torrents:document.getElementById('perm-torrents').checked,
+        nzb:document.getElementById('perm-nzb').checked,
+        subtitles:document.getElementById('perm-subtitles').checked,
+        catalog:document.getElementById('perm-catalog').checked,
+        ondemand:document.getElementById('perm-ondemand').checked
+    };
+    try {
+        const r=await fetch('/api/admin/create-account',{method:'POST',headers:{'Content-Type':'application/json','x-admin-token':TOKEN},body:JSON.stringify({username,password,permissions})});
+        const d=await r.json();
+        if(!r.ok){toast('❌ '+(d.error||'Chyba'));return;}
+        toast('✅ Účet vytvořen!');
+        document.getElementById('new-acc-user').value='';
+        document.getElementById('new-acc-pass').value='';
+        loadAccountsList();
+    } catch(e) { toast('❌ '+e.message); }
+}
+
+async function deleteAccount(username) {
+    if(!confirm(`Smazat účet ${username}?`))return;
+    try {
+        const r=await fetch('/api/admin/delete-account',{method:'POST',headers:{'Content-Type':'application/json','x-admin-token':TOKEN},body:JSON.stringify({username})});
+        const d=await r.json();
+        if(!r.ok){toast('❌ '+(d.error||'Chyba'));return;}
+        toast('🗑️ Účet smazán'); loadAccountsList();
+    } catch(e) { toast('❌ '+e.message); }
+}
+
+async function toggleAccount(username, active) {
+    try {
+        const r=await fetch('/api/admin/toggle-account',{method:'POST',headers:{'Content-Type':'application/json','x-admin-token':TOKEN},body:JSON.stringify({username,active})});
+        if(!r.ok){toast('❌ Chyba');return;}
+        toast(active?'✅ Aktivováno':'⏸️ Deaktivováno'); loadAccountsList();
+    } catch(e) { toast('❌ '+e.message); }
 }
 
 async function doLogin() {
