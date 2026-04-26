@@ -88,21 +88,101 @@ function getUserFromToken(token) {
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
 // ===== USER API =====
-app.post('/api/user/create', (req, res) => {
-  const { token, data } = config.createUser();
-  res.json({ token, user: data });
+// Auth: Login with username/password
+app.post('/api/auth/login', express.json(), (req, res) => {
+  const { username, password } = req.body;
+  if (!username || !password) return res.status(400).json({ error: 'Missing credentials' });
+  const acc = config.authenticateUser(username, password);
+  if (!acc) return res.status(401).json({ error: 'Invalid credentials' });
+  if (acc.active === false) return res.status(403).json({ error: 'Account deactivated' });
+  res.json({
+    success: true,
+    token: acc.token,
+    username,
+    role: acc.role,
+    permissions: acc.permissions
+  });
 });
 
+// Get current user info by token
 app.get('/api/user/:token', (req, res) => {
   const user = config.getUser(req.params.token);
   if (!user) return res.status(404).json({ error: 'User not found' });
+  const acc = config.getAccountByToken(req.params.token);
   res.json({
     hidden_anime: user.hidden_anime,
     has_rd: !!user.rd_api_key,
-    has_nekobt: !!user.nekobt_api_key,
-    nekobt_enabled: user.nekobt_enabled !== false,
     created: user.created,
+    role: acc?.role || 'user',
+    permissions: acc?.permissions || {},
+    username: acc?.username || ''
   });
+});
+
+// ===== Admin API =====
+function requireAdmin(req, res, next) {
+  const token = req.headers['x-admin-token'] || req.body?.adminToken;
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+  const acc = config.getAccountByToken(token);
+  if (!acc || acc.role !== 'superadmin') return res.status(403).json({ error: 'Admin only' });
+  next();
+}
+
+app.get('/api/admin/accounts', (req, res) => {
+  const token = req.headers['x-admin-token'];
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+  const acc = config.getAccountByToken(token);
+  if (!acc || acc.role !== 'superadmin') return res.status(403).json({ error: 'Admin only' });
+  res.json({ accounts: config.listAccounts() });
+});
+
+app.post('/api/admin/create-account', express.json(), (req, res) => {
+  const token = req.headers['x-admin-token'];
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+  const acc = config.getAccountByToken(token);
+  if (!acc || acc.role !== 'superadmin') return res.status(403).json({ error: 'Admin only' });
+
+  const { username, password, permissions } = req.body;
+  if (!username || !password) return res.status(400).json({ error: 'Missing username or password' });
+  const created = config.createAccount(username, password, permissions);
+  if (!created) return res.status(409).json({ error: 'Username already exists' });
+  res.json({ success: true, token: created.token });
+});
+
+app.post('/api/admin/delete-account', express.json(), (req, res) => {
+  const token = req.headers['x-admin-token'];
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+  const acc = config.getAccountByToken(token);
+  if (!acc || acc.role !== 'superadmin') return res.status(403).json({ error: 'Admin only' });
+
+  const { username } = req.body;
+  const ok = config.deleteAccount(username);
+  if (!ok) return res.status(400).json({ error: 'Cannot delete this account' });
+  res.json({ success: true });
+});
+
+app.post('/api/admin/update-permissions', express.json(), (req, res) => {
+  const token = req.headers['x-admin-token'];
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+  const acc = config.getAccountByToken(token);
+  if (!acc || acc.role !== 'superadmin') return res.status(403).json({ error: 'Admin only' });
+
+  const { username, permissions } = req.body;
+  const ok = config.updateAccountPermissions(username, permissions);
+  if (!ok) return res.status(400).json({ error: 'Cannot update this account' });
+  res.json({ success: true });
+});
+
+app.post('/api/admin/toggle-account', express.json(), (req, res) => {
+  const token = req.headers['x-admin-token'];
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+  const acc = config.getAccountByToken(token);
+  if (!acc || acc.role !== 'superadmin') return res.status(403).json({ error: 'Admin only' });
+
+  const { username, active } = req.body;
+  const ok = config.toggleAccountActive(username, active);
+  if (!ok) return res.status(400).json({ error: 'Cannot modify this account' });
+  res.json({ success: true });
 });
 
 // ===== RD OAuth =====
@@ -2179,6 +2259,7 @@ app.listen(PORT, '0.0.0.0', async () => {
   console.log(`🚀 Server: ${BASE_URL}`);
   config.loadServerConfig();
   await config.restoreFromR2();
+  config.loadAccounts();
 
   // Load ID mapping databases
   await loadOfflineDB();
