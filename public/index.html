@@ -212,11 +212,13 @@
                 <button class="btn btn-s" onclick="copy('url-nyaa')">Kopírovat</button>
             </div>
 
+            <div id="addon-nzb-row">
             <div class="addon-label">NimeToDex NZB — Usenet</div>
             <div class="manifest-url" id="url-nzb" onclick="copy('url-nzb')"></div>
             <div class="install-btns">
                 <a class="btn btn-p" id="install-nzb" href="#">Nainstalovat</a>
                 <button class="btn btn-s" onclick="copy('url-nzb')">Kopírovat</button>
+            </div>
             </div>
 
             <div class="addon-label">Anime Today — dnešní katalog</div>
@@ -230,7 +232,7 @@
         </div>
 
         <!-- NimeToDex -->
-        <div class="section">
+        <div class="section" id="section-nimetodex">
             <div class="section-title">📦 NimeToDex</div>
             <div class="row">
                 <div class="row-label">Katalog — dnes přidané <small>Nové torrenty v Discover</small></div>
@@ -274,7 +276,7 @@
         </div>
 
         <!-- TorBox -->
-        <div class="section">
+        <div class="section" id="section-torbox">
             <div class="section-title">🔷 TorBox <span class="badge off" id="tb-badge">Nepřipojen</span></div>
             <div class="rd-user" id="tb-user">
                 <div class="avatar" style="background:var(--blue-dim);color:var(--blue);">TB</div>
@@ -363,7 +365,7 @@
         </div>
 
         <!-- Anime Today -->
-        <div class="section">
+        <div class="section" id="section-anime-today">
             <div class="section-title">📅 Anime today <span id="anime-count" style="font-size:11px;color:var(--hint);font-weight:400;margin-left:4px;"></span></div>
             <div class="anime-list" id="anime-list"></div>
         </div>
@@ -397,14 +399,32 @@ function showApp() {
     document.getElementById('install-nyaa').href=`stremio://${nyaaUrl.replace(/^https?:\/\//,'')}`;
     document.getElementById('install-nzb').href=`stremio://${nzbUrl.replace(/^https?:\/\//,'')}`;
     document.getElementById('show-token').textContent=TOKEN;
-    // Show username and admin button
+
+    // Fetch user info and apply permissions
     fetch(`/api/user/${TOKEN}`).then(r=>r.json()).then(d=>{
         document.getElementById('logged-user').textContent=d.username||'User';
-        if(d.role==='superadmin'){
-            document.getElementById('admin-panel-btn').style.display='inline-flex';
-            USER_ROLE='superadmin';
-        }
+        USER_ROLE=d.role;
+        const perms=d.permissions||{};
+        const isAdmin=d.role==='superadmin';
+
+        // Admin button
+        document.getElementById('admin-panel-btn').style.display=isAdmin?'inline-flex':'none';
+        if(!isAdmin) document.getElementById('admin-panel').style.display='none';
+
+        // Permissions — admin sees everything
+        document.getElementById('addon-nzb-row').style.display=(isAdmin||perms.nzb)?'block':'none';
+        document.getElementById('section-nimetodex').style.display=(isAdmin||perms.subtitles||perms.catalog)?'block':'none';
+        document.getElementById('section-torbox').style.display=(isAdmin||perms.torrents||perms.nzb)?'block':'none';
+        document.getElementById('section-anime-today').style.display=(isAdmin||perms.catalog)?'block':'none';
+
+        // Subtitle toggle visibility
+        const subsRow=document.getElementById('indexer-subs-toggle')?.closest('.row');
+        if(subsRow) subsRow.style.display=(isAdmin||perms.subtitles)?'flex':'none';
+        // Catalog toggle visibility
+        const catRow=document.getElementById('indexer-catalog-toggle')?.closest('.row');
+        if(catRow) catRow.style.display=(isAdmin||perms.catalog)?'flex':'none';
     }).catch(()=>{});
+
     checkRD(); checkTB(); checkIndexer(); loadAnime(); loadSortPrefs();
 }
 
