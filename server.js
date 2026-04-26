@@ -520,8 +520,12 @@ app.get('/:token/play/:hash/:episode/video.mp4', async (req, res) => {
   const magnet = magnetStore.get(req.params.hash);
   if (!magnet) return serveLoadingVideo(res);
 
-  const episode = parseInt(req.params.episode) || 0;
-  const cacheKey = getCacheKey(magnet, user.rd_api_key) + (episode ? `_ep${episode}` : '');
+  // Parse episode param: "fi3" = fileIdx 3, "5" = episode 5
+  const epParam = req.params.episode;
+  const isFileIdx = epParam.startsWith('fi');
+  const episode = isFileIdx ? parseInt(epParam.slice(2)) : (parseInt(epParam) || 0);
+
+  const cacheKey = getCacheKey(magnet, user.rd_api_key) + (isFileIdx ? `_fi${episode}` : episode ? `_ep${episode}` : '');
 
   // Already in progress
   if (rdInProgress.has(cacheKey)) return serveLoadingVideo(res);
@@ -529,7 +533,7 @@ app.get('/:token/play/:hash/:episode/video.mp4', async (req, res) => {
   rdInProgress.add(cacheKey);
 
   const timeoutP = new Promise(r => setTimeout(() => r(null), 8000));
-  const rdP = getRDStream(magnet, user.rd_api_key, episode);
+  const rdP = getRDStream(magnet, user.rd_api_key, episode, isFileIdx);
   const url = await Promise.race([rdP, timeoutP]);
 
   if (url) {
@@ -551,8 +555,12 @@ app.get('/:token/play-tb/:hash/:episode/video.mp4', async (req, res) => {
   const magnet = magnetStore.get(req.params.hash);
   if (!magnet) return serveLoadingVideo(res);
 
-  const episode = parseInt(req.params.episode) || 0;
-  const url = await getTBStream(magnet, user.tb_api_key, episode);
+  // Parse episode param: "fi3" = fileIdx 3, "5" = episode 5
+  const epParam = req.params.episode;
+  const isFileIdx = epParam.startsWith('fi');
+  const episode = isFileIdx ? parseInt(epParam.slice(2)) : (parseInt(epParam) || 0);
+
+  const url = await getTBStream(magnet, user.tb_api_key, episode, isFileIdx);
   if (url) return res.redirect(302, url);
   serveLoadingVideo(res);
 });
@@ -1757,18 +1765,14 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
     const isTBCached = tbCacheMap[torrentHash];
 
     if (hasRD) {
+      const bingeGroup = t.indexer && t.indexerId ? `nimetodex-${t.indexerId}-s${season || 1}` : t.seadex ? 'seadex-rd' : t.nekobt ? 'neko-rd' : 'nyaa-rd';
+      const playEp = t.fileIdx != null ? `fi${t.fileIdx}` : String(epNum);
       const rdStream = { name: `${streamName} RD`, title,
-        behaviorHints: { bingeGroup: t.indexer && t.indexerId ? `nimetodex-${t.indexerId}-s${season || 1}` : t.seadex ? 'seadex-rd' : t.nekobt ? 'neko-rd' : 'nyaa-rd', notWebReady: true } };
-      // Multi-file batch with fileIdx: use infoHash + fileIdx for direct file selection
-      if (t.indexer && t.fileIdx != null && t.infohash) {
-        rdStream.infoHash = t.infohash;
-        rdStream.fileIdx = t.fileIdx;
-        if (t.matchedFile) {
-          rdStream.behaviorHints.videoSize = t.matchedFile.size || undefined;
-          rdStream.behaviorHints.filename = t.matchedFile.name || undefined;
-        }
-      } else {
-        rdStream.url = `${BASE_URL}/${token}/play/${storeMagnet(t.magnet)}/${epNum}/video.mp4`;
+        url: `${BASE_URL}/${token}/play/${storeMagnet(t.magnet)}/${playEp}/video.mp4`,
+        behaviorHints: { bingeGroup, notWebReady: true } };
+      if (t.matchedFile) {
+        if (t.matchedFile.size) rdStream.behaviorHints.videoSize = t.matchedFile.size;
+        if (t.matchedFile.name) rdStream.behaviorHints.filename = t.matchedFile.name;
       }
       streams.push(rdStream);
     }
@@ -1776,29 +1780,19 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
       const cacheIcon = tbCacheCheck ? (isTBCached ? '⚡' : '⏳') : '';
       const tbName = cacheIcon ? `${cacheIcon}${streamName} TB` : `${streamName} TB`;
       const tbTitle = tbCacheCheck ? (isTBCached ? `⚡ Cached\n${title}` : `⏳ Not cached\n${title}`) : title;
+      const bingeGroup = t.indexer && t.indexerId ? `nimetodex-${t.indexerId}-s${season || 1}-tb` : t.seadex ? 'seadex-tb' : t.nekobt ? 'neko-tb' : 'nyaa-tb';
+      const playEp = t.fileIdx != null ? `fi${t.fileIdx}` : String(epNum);
       const tbStream = { name: tbName, title: tbTitle,
-        behaviorHints: { bingeGroup: t.indexer && t.indexerId ? `nimetodex-${t.indexerId}-s${season || 1}-tb` : t.seadex ? 'seadex-tb' : t.nekobt ? 'neko-tb' : 'nyaa-tb', notWebReady: true } };
-      if (t.indexer && t.fileIdx != null && t.infohash) {
-        tbStream.infoHash = t.infohash;
-        tbStream.fileIdx = t.fileIdx;
-        if (t.matchedFile) {
-          tbStream.behaviorHints.videoSize = t.matchedFile.size || undefined;
-          tbStream.behaviorHints.filename = t.matchedFile.name || undefined;
-        }
-      } else {
-        tbStream.url = `${BASE_URL}/${token}/play-tb/${storeMagnet(t.magnet)}/${epNum}/video.mp4`;
+        url: `${BASE_URL}/${token}/play-tb/${storeMagnet(t.magnet)}/${playEp}/video.mp4`,
+        behaviorHints: { bingeGroup, notWebReady: true } };
+      if (t.matchedFile) {
+        if (t.matchedFile.size) tbStream.behaviorHints.videoSize = t.matchedFile.size;
+        if (t.matchedFile.name) tbStream.behaviorHints.filename = t.matchedFile.name;
       }
       streams.push(tbStream);
     }
     if (!hasRD && !tbTorrents) {
-      const plainStream = { name: streamName, title, behaviorHints: { notWebReady: true } };
-      if (t.indexer && t.fileIdx != null && t.infohash) {
-        plainStream.infoHash = t.infohash;
-        plainStream.fileIdx = t.fileIdx;
-      } else {
-        plainStream.url = t.magnet;
-      }
-      streams.push(plainStream);
+      streams.push({ name: streamName, title, url: t.magnet, behaviorHints: { notWebReady: true } });
     }
   }
 
