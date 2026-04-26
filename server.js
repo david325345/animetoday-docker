@@ -588,12 +588,41 @@ app.get('/:token/nzb-refresh/:imdb/:season/:episode/video.mp4', async (req, res)
   if (episode && episode !== '0') params.episode = parseInt(episode);
 
   console.log(`  📰 NZB refresh trigger: ${imdb} S${season}E${episode}`);
-  axios.post(`${INDEXER_URL}/api/nzb/refresh-by-imdb`, params, {
-    headers: { Authorization: `Bearer ${NZB_REFRESH_TOKEN}` },
-    timeout: 30000
-  })
-    .then(r => console.log(`  📰 NZB refresh done: ${r.data?.found || 0} found, ${r.data?.uploaded || 0} uploaded`))
-    .catch(err => console.log(`  📰 NZB refresh error: ${err.message}`));
+
+  // Fire both refreshes in background (don't await)
+  (async () => {
+    try {
+      // First: get tosho_results infohashes from search
+      const searchParams = new URLSearchParams(params);
+      const searchResp = await axios.get(`${INDEXER_URL}/search?${searchParams.toString()}`, { timeout: 8000 });
+      const toshoResults = searchResp.data?.tosho_results || [];
+      const infohashes = toshoResults.map(t => t.infohash).filter(h => h && h.length === 40);
+
+      const authHeaders = { Authorization: `Bearer ${NZB_REFRESH_TOKEN}`, 'Content-Type': 'application/json' };
+
+      // Parallel: Geek + Tosho refresh
+      const tasks = [
+        axios.post(`${INDEXER_URL}/api/nzb/refresh-by-imdb`, params, { headers: authHeaders, timeout: 30000 })
+          .then(r => console.log(`  📰 Geek refresh: ${r.data?.found || 0} found, ${r.data?.uploaded || 0} uploaded`))
+          .catch(err => console.log(`  📰 Geek refresh error: ${err.message}`)),
+      ];
+
+      if (infohashes.length > 0) {
+        tasks.push(
+          axios.post(`${INDEXER_URL}/api/tosho/refresh-by-infohashes`, { infohashes: infohashes.slice(0, 100) }, { headers: authHeaders, timeout: 60000 })
+            .then(r => console.log(`  📡 Tosho refresh: ${r.data?.uploaded || 0} uploaded, ${r.data?.unavailable || 0} unavailable`))
+            .catch(err => console.log(`  📡 Tosho refresh error: ${err.message}`))
+        );
+      } else {
+        console.log(`  📡 Tosho refresh: skipped (no infohashes)`);
+      }
+
+      await Promise.allSettled(tasks);
+      console.log(`  📰 NZB refresh complete`);
+    } catch (err) {
+      console.log(`  📰 NZB refresh error: ${err.message}`);
+    }
+  })();
 
   res.redirect(302, ONDEMAND_VIDEO_URL);
 });
