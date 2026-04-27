@@ -745,7 +745,7 @@ app.get('/:token/today/manifest.json', (req, res) => {
     id: 'cz.nyaa.anime.today.v8',
     version: '8.0.0',
     name: 'Anime Today',
-    description: 'Anime schedule z SIMKL — dnes + 2 dny dopředu s postery a hodnocením.',
+    description: 'Anime schedule from SIMKL — today + 2 days ahead with posters and ratings.',
     logo: `${BASE_URL}/logo.png`,
     resources: ['catalog', 'meta'],
     types: ['series'],
@@ -1006,8 +1006,8 @@ app.get('/:token/nyaa/manifest.json', (req, res) => {
     resources,
     types: ['series', 'movie'],
     catalogs: [
-      { type: 'series', id: 'nimetodex-today', name: 'NimeToDex — Dnes přidané', extra: [{ name: 'skip' }] },
-      { type: 'movie', id: 'nimetodex-today', name: 'NimeToDex — Dnes přidané', extra: [{ name: 'skip' }] }
+      { type: 'series', id: 'nimetodex-today', name: 'NimeToDex — Added today', extra: [{ name: 'skip' }] },
+      { type: 'movie', id: 'nimetodex-today', name: 'NimeToDex — Added today', extra: [{ name: 'skip' }] }
     ],
     idPrefixes: ['at:', 'kitsu:', 'tt', 'tvdb:', 'anilist:'],
     behaviorHints: { configurable: false, configurationRequired: false }
@@ -1792,7 +1792,7 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
 
   // Merge Indexer results
   if (!torrents.length && !indexerResults.length) {
-    const noResultStreams = [{ name: '❌ Nenalezeno', title: `Nenalezeno na NimeToDex`, url: 'https://nimetodex.duckdns.org', behaviorHints: { notWebReady: true } }];
+    const noResultStreams = [{ name: '❌ Not found', title: `Not found on NimeToDex`, url: 'https://nimetodex.duckdns.org', behaviorHints: { notWebReady: true } }];
     if (hasIndexer && userPerms.ondemand !== false) {
       noResultStreams.push({
         name: '🔍 Search',
@@ -1987,7 +1987,7 @@ app.get('/:token/nzb/manifest.json', (req, res) => {
     id: 'cz.nzb.search.v2',
     version: '2.0.0',
     name: 'NimeToDex NZB',
-    description: 'Anime NZB z NimeToDex indexeru — Usenet streaming přes TorBox.',
+    description: 'Anime NZB from NimeToDex indexer — Usenet streaming via TorBox.',
     logo: `${BASE_URL}/logo-nzb.png`,
     resources: ['stream'],
     types: ['series', 'movie'],
