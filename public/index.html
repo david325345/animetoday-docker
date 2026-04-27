@@ -134,6 +134,9 @@
         .acc-perms { display:flex; flex-wrap:wrap; gap:3px; }
         .acc-perm { font-size:9px; padding:1px 6px; border-radius:4px; background:var(--surface); color:var(--dim); }
         .acc-perm.on { color:var(--green); background:var(--green-dim); }
+        label.acc-perm { cursor:pointer; user-select:none; transition:opacity 0.15s; }
+        label.acc-perm:hover { opacity:0.75; }
+        label.acc-perm input { display:none; }
         .acc-actions { display:flex; gap:4px; }
 
         /* Token display */
@@ -430,6 +433,7 @@ const I18N = {
         'admin.deactivate': 'Deactivate',
         'admin.activate': 'Activate',
         'admin.delete': 'Delete',
+        'admin.savePerms': '💾 Save',
         // Addons section
         'addons.title': '🔗 Stremio addons',
         'addons.nyaa': 'NimeToDex — torrents',
@@ -503,6 +507,7 @@ const I18N = {
         'toast.fillUserPass': '❌ Fill in username and password',
         'toast.accountCreated': '✅ Account created!',
         'toast.accountDeleted': '🗑️ Account deleted',
+        'toast.permsSaved': '💾 Permissions saved',
         'toast.activated': '✅ Activated',
         'toast.deactivated': '⏸️ Deactivated',
         'toast.loggedOut': '👋 Logged out',
@@ -552,6 +557,7 @@ const I18N = {
         'admin.deactivate': 'Deaktivovat',
         'admin.activate': 'Aktivovat',
         'admin.delete': 'Smazat',
+        'admin.savePerms': '💾 Uložit',
         'addons.title': '🔗 Stremio addony',
         'addons.nyaa': 'NimeToDex — torrenty',
         'addons.nzb': 'NimeToDex NZB — Usenet',
@@ -616,6 +622,7 @@ const I18N = {
         'toast.fillUserPass': '❌ Vyplňte jméno a heslo',
         'toast.accountCreated': '✅ Účet vytvořen!',
         'toast.accountDeleted': '🗑️ Účet smazán',
+        'toast.permsSaved': '💾 Oprávnění uložena',
         'toast.activated': '✅ Aktivováno',
         'toast.deactivated': '⏸️ Deaktivováno',
         'toast.loggedOut': '👋 Odhlášeno',
@@ -746,23 +753,45 @@ async function loadAccountsList() {
         const d=await r.json();
         const list=document.getElementById('accounts-list');
         if(!d.accounts?.length){list.innerHTML=`<div style="color:var(--dim);font-size:13px;">${t('admin.noAccounts')}</div>`;return;}
+        const PERM_KEYS=['torrents','nzb','subtitles','catalog','ondemand','animetoday'];
         list.innerHTML=d.accounts.map(a=>{
             const perms=a.permissions||{};
-            const permTags=['torrents','nzb','subtitles','catalog','ondemand','animetoday'].map(p=>
-                `<span class="acc-perm ${perms[p]?'on':''}">${p}</span>`
-            ).join('');
             const isSuperAdmin=a.role==='superadmin';
             const isActive=a.active!==false;
-            return `<div class="acc-row ${isActive?'':'inactive'}">
+            const safeUser=a.username.replace(/"/g,'&quot;');
+            // Super admin: read-only tag pills. Others: clickable checkbox labels.
+            const permTags=PERM_KEYS.map(p=>{
+                if(isSuperAdmin) return `<span class="acc-perm ${perms[p]?'on':''}">${p}</span>`;
+                return `<label class="acc-perm ${perms[p]?'on':''}" data-perm="${p}"><input type="checkbox" ${perms[p]?'checked':''} onchange="this.parentElement.classList.toggle('on',this.checked)">${p}</label>`;
+            }).join('');
+            return `<div class="acc-row ${isActive?'':'inactive'}" data-user="${safeUser}">
                 <div class="acc-name">${a.username}<small>${a.token}</small></div>
                 <span class="acc-role ${a.role}">${a.role==='superadmin'?t('admin.roleAdmin'):t('admin.roleUser')}</span>
                 <div class="acc-perms">${permTags}</div>
                 <div class="acc-actions">
-                    ${isSuperAdmin?'':`<button class="btn btn-s btn-sm" onclick="toggleAccount('${a.username}',${!isActive})">${isActive?t('admin.deactivate'):t('admin.activate')}</button>`}
-                    ${isSuperAdmin?'':`<button class="btn btn-d btn-sm" onclick="deleteAccount('${a.username}')">${t('admin.delete')}</button>`}
+                    ${isSuperAdmin?'':`<button class="btn btn-p btn-sm" onclick="savePermissions('${safeUser}')">${t('admin.savePerms')}</button>`}
+                    ${isSuperAdmin?'':`<button class="btn btn-s btn-sm" onclick="toggleAccount('${safeUser}',${!isActive})">${isActive?t('admin.deactivate'):t('admin.activate')}</button>`}
+                    ${isSuperAdmin?'':`<button class="btn btn-d btn-sm" onclick="deleteAccount('${safeUser}')">${t('admin.delete')}</button>`}
                 </div>
             </div>`;
         }).join('');
+    } catch(e) { toast('❌ '+e.message); }
+}
+
+async function savePermissions(username) {
+    const row=document.querySelector(`.acc-row[data-user="${username.replace(/"/g,'&quot;')}"]`);
+    if(!row) return;
+    const permissions={};
+    row.querySelectorAll('label.acc-perm').forEach(lbl=>{
+        const key=lbl.dataset.perm;
+        const cb=lbl.querySelector('input[type=checkbox]');
+        if(key && cb) permissions[key]=cb.checked;
+    });
+    try {
+        const r=await fetch('/api/admin/update-permissions',{method:'POST',headers:{'Content-Type':'application/json','x-admin-token':TOKEN},body:JSON.stringify({username,permissions})});
+        const d=await r.json().catch(()=>({}));
+        if(!r.ok){toast('❌ '+(d.error||t('toast.error')));return;}
+        toast(t('toast.permsSaved'));
     } catch(e) { toast('❌ '+e.message); }
 }
 
