@@ -1908,6 +1908,26 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
     const torrentHash = (t.infohash || t.magnet?.match(/btih:([a-zA-Z0-9]+)/i)?.[1] || '').toLowerCase();
     const isTBCached = tbCacheMap[torrentHash];
 
+    // Build bingeGroup that's stable across episodes within the same release.
+    // Strict match: release group + resolution + dual-audio flag, scoped per season.
+    // This way SubsPlease 1080p S1E1 and SubsPlease 1080p S1E2 share a bingeGroup,
+    // letting Stremio auto-pick the same release for the next episode.
+    // Fallback when no releaseGroup is known: use indexerId so batches still work
+    // (a batch torrent has the same indexerId across all its episodes).
+    const seasonKey = season ?? 1;
+    const norm = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const grp = norm(t.releaseGroup);
+    const res = norm(t.resolution);
+    const dual = t.dualAudio ? 'dual' : 'single';
+    const releaseSig = grp ? `g-${grp}-${res || 'noRes'}-${dual}` : (t.indexerId ? `id-${t.indexerId}` : null);
+    const buildBinge = (suffix) => {
+      if (releaseSig) return `nimetodex-${releaseSig}-s${seasonKey}${suffix}`;
+      // Last-resort static bingeGroups for non-indexer sources
+      if (t.seadex) return `seadex${suffix}`;
+      if (t.nekobt) return `neko${suffix}`;
+      return `nyaa${suffix}`;
+    };
+
     if (p2pEnabled) {
       // P2P direct playback via Stremio's built-in torrent client.
       // NOTE: this requires Stremio's local streaming server to be running.
@@ -1916,7 +1936,7 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
       //       - iOS / Apple TV / Stremio Lite do NOT have it -> P2P will NOT work there.
       const ih = torrentHash;
       if (ih && /^[0-9a-f]{40}$/i.test(ih)) {
-        const bingeGroup = t.indexer && t.indexerId ? `nimetodex-${t.indexerId}-s${season ?? 1}-p2p` : t.seadex ? 'seadex-p2p' : t.nekobt ? 'neko-p2p' : 'nyaa-p2p';
+        const bingeGroup = buildBinge('-p2p');
         const p2pStream = {
           name: `${streamName} P2P`,
           title,
@@ -1935,7 +1955,7 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
       }
     } else {
       if (hasRD) {
-        const bingeGroup = t.indexer && t.indexerId ? `nimetodex-${t.indexerId}-s${season ?? 1}` : t.seadex ? 'seadex-rd' : t.nekobt ? 'neko-rd' : 'nyaa-rd';
+        const bingeGroup = buildBinge('-rd');
         const playEp = t.fileIdx != null ? `fi${t.fileIdx}` : String(epNum);
         const rdStream = { name: `${streamName} RD`, title,
           url: `${BASE_URL}/${token}/play/${storeMagnet(t.magnet)}/${playEp}/video.mp4`,
@@ -1950,7 +1970,7 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
         const cacheIcon = tbCacheCheck ? (isTBCached ? '⚡' : '⏳') : '';
         const tbName = cacheIcon ? `${cacheIcon}${streamName} TB` : `${streamName} TB`;
         const tbTitle = tbCacheCheck ? (isTBCached ? `⚡ Cached\n${title}` : `⏳ Not cached\n${title}`) : title;
-        const bingeGroup = t.indexer && t.indexerId ? `nimetodex-${t.indexerId}-s${season ?? 1}-tb` : t.seadex ? 'seadex-tb' : t.nekobt ? 'neko-tb' : 'nyaa-tb';
+        const bingeGroup = buildBinge('-tb');
         const playEp = t.fileIdx != null ? `fi${t.fileIdx}` : String(epNum);
         const tbStream = { name: tbName, title: tbTitle,
           url: `${BASE_URL}/${token}/play-tb/${storeMagnet(t.magnet)}/${playEp}/video.mp4`,
