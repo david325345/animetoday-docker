@@ -612,7 +612,7 @@ app.get('/:token/ondemand/:type/:id/video.mp4', async (req, res) => {
     }
   }
 
-  if (season && !isMovie) params.season = season;
+  if (season != null && !isMovie) params.season = season;
   if (episode && !isMovie) params.episode = episode;
 
   // Fire on-demand search in background (don't await)
@@ -696,7 +696,7 @@ app.get('/:token/nzb-refresh/:imdb/:season/:episode/video.mp4', async (req, res)
   const { imdb, season, episode } = req.params;
 
   const params = { imdb };
-  if (season && season !== '0') params.season = parseInt(season);
+  if (season != null && season !== '') params.season = parseInt(season);
   if (episode && episode !== '0') params.episode = parseInt(episode);
 
   console.log(`  📰 NZB refresh trigger: ${imdb} S${season}E${episode}`);
@@ -1359,7 +1359,7 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
     const parts = fullId.split(':');
     const anilistId = parseInt(parts[1]);
     if (parts.length >= 4) {
-      season = parseInt(parts[2]) || 1;
+      const sN = parseInt(parts[2]); season = Number.isFinite(sN) ? sN : 1;
       episode = parseInt(parts[3]) || 1;
     } else {
       season = 1;
@@ -1422,7 +1422,7 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
   else if (fullId.startsWith('anilist:')) {
     const parts = fullId.split(':');
     const anilistId = parseInt(parts[1]);
-    season = parseInt(parts[2]) || 1;
+    const sN = parseInt(parts[2]); season = Number.isFinite(sN) ? sN : 1;
     episode = parseInt(parts[3]) || 1;
     console.log(`  🔷 AniList: ${anilistId} S${season}E${episode}`);
     const rec = offlineDB.byAniList.get(anilistId);
@@ -1593,7 +1593,7 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
       if (resolved.anilistId) params.set('anilist', resolved.anilistId);
       if (resolved.tvdbId) params.set('tvdb', resolved.tvdbId);
       if (resolved.anidbId) params.set('anidb', resolved.anidbId);
-      if (season && !isMovie) params.set('season', season);
+      if (season != null && !isMovie) params.set('season', season);
       if (episode && !isMovie) params.set('episode', episode);
 
       if (!params.toString()) return [];
@@ -1713,7 +1713,7 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
         if (searchName) {
           const qParams = new URLSearchParams();
           qParams.set('q', searchName);
-          if (season && !isMovie) qParams.set('season', season);
+          if (season != null && !isMovie) qParams.set('season', season);
           if (episode && !isMovie) qParams.set('episode', episode);
 
           const ft0 = Date.now();
@@ -1916,7 +1916,7 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
       //       - iOS / Apple TV / Stremio Lite do NOT have it -> P2P will NOT work there.
       const ih = torrentHash;
       if (ih && /^[0-9a-f]{40}$/i.test(ih)) {
-        const bingeGroup = t.indexer && t.indexerId ? `nimetodex-${t.indexerId}-s${season || 1}-p2p` : t.seadex ? 'seadex-p2p' : t.nekobt ? 'neko-p2p' : 'nyaa-p2p';
+        const bingeGroup = t.indexer && t.indexerId ? `nimetodex-${t.indexerId}-s${season ?? 1}-p2p` : t.seadex ? 'seadex-p2p' : t.nekobt ? 'neko-p2p' : 'nyaa-p2p';
         const p2pStream = {
           name: `${streamName} P2P`,
           title,
@@ -1935,7 +1935,7 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
       }
     } else {
       if (hasRD) {
-        const bingeGroup = t.indexer && t.indexerId ? `nimetodex-${t.indexerId}-s${season || 1}` : t.seadex ? 'seadex-rd' : t.nekobt ? 'neko-rd' : 'nyaa-rd';
+        const bingeGroup = t.indexer && t.indexerId ? `nimetodex-${t.indexerId}-s${season ?? 1}` : t.seadex ? 'seadex-rd' : t.nekobt ? 'neko-rd' : 'nyaa-rd';
         const playEp = t.fileIdx != null ? `fi${t.fileIdx}` : String(epNum);
         const rdStream = { name: `${streamName} RD`, title,
           url: `${BASE_URL}/${token}/play/${storeMagnet(t.magnet)}/${playEp}/video.mp4`,
@@ -1950,7 +1950,7 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
         const cacheIcon = tbCacheCheck ? (isTBCached ? '⚡' : '⏳') : '';
         const tbName = cacheIcon ? `${cacheIcon}${streamName} TB` : `${streamName} TB`;
         const tbTitle = tbCacheCheck ? (isTBCached ? `⚡ Cached\n${title}` : `⏳ Not cached\n${title}`) : title;
-        const bingeGroup = t.indexer && t.indexerId ? `nimetodex-${t.indexerId}-s${season || 1}-tb` : t.seadex ? 'seadex-tb' : t.nekobt ? 'neko-tb' : 'nyaa-tb';
+        const bingeGroup = t.indexer && t.indexerId ? `nimetodex-${t.indexerId}-s${season ?? 1}-tb` : t.seadex ? 'seadex-tb' : t.nekobt ? 'neko-tb' : 'nyaa-tb';
         const playEp = t.fileIdx != null ? `fi${t.fileIdx}` : String(epNum);
         const tbStream = { name: tbName, title: tbTitle,
           url: `${BASE_URL}/${token}/play-tb/${storeMagnet(t.magnet)}/${playEp}/video.mp4`,
@@ -2169,7 +2169,10 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
   // Parse at: IDs
   if (fullId.startsWith('at:')) {
     const parts = fullId.split(':');
-    if (parts.length >= 4) { season = parseInt(parts[2]) || 1; episode = parseInt(parts[3]) || 1; }
+    if (parts.length >= 4) {
+      const sN = parseInt(parts[2]); season = Number.isFinite(sN) ? sN : 1;
+      episode = parseInt(parts[3]) || 1;
+    }
     else { season = 1; episode = parseInt(parts[2]) || 1; }
   }
 
@@ -2210,7 +2213,7 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
   if (imdbId) params.set('imdb', imdbId);
   if (anilistId) params.set('anilist', anilistId);
   if (anidbId) params.set('anidb', anidbId);
-  if (season && !isMovie) params.set('season', season);
+  if (season != null && !isMovie) params.set('season', season);
   if (episode && !isMovie) params.set('episode', episode);
 
   console.log(`  📰 NZB: searching indexer ${params.toString()}`);
