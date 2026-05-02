@@ -1608,6 +1608,8 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
     const cached = allResults.filter(t => tbCacheMap[getHash(t)]);
     const notCached = allResults.filter(t => !tbCacheMap[getHash(t)]);
     allResults = [...sortByGroupPriority(cached, user || null), ...sortByGroupPriority(notCached, user || null)];
+    console.log(`  ⚡ cachedFirst: ${cached.length} cached, ${notCached.length} not cached`);
+    console.log(`  🏁 Top 3 after sort: ${allResults.slice(0, 3).map(t => `[${tbCacheMap[getHash(t)]?'⚡':'⏳'}] ${t.resolution||'?'} ${t.audioLangs||'-'}`).join(' | ')}`);
   }
 
   // Sort EN/Dub first if enabled — streams with English audio go to top, but within each bucket
