@@ -1602,27 +1602,27 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
     }
   }
 
-  // Sort cached first if enabled — each bucket re-sorted with the preset to keep ordering inside.
-  if (tbCacheCheck && user?.cachedFirst && Object.keys(tbCacheMap).length) {
-    const getHash = t => (t.infohash || t.magnet?.match(/btih:([a-zA-Z0-9]+)/i)?.[1] || '').toLowerCase();
-    const cached = allResults.filter(t => tbCacheMap[getHash(t)]);
-    const notCached = allResults.filter(t => !tbCacheMap[getHash(t)]);
-    allResults = [...sortByGroupPriority(cached, user || null), ...sortByGroupPriority(notCached, user || null)];
-    console.log(`  ⚡ cachedFirst: ${cached.length} cached, ${notCached.length} not cached`);
-    console.log(`  🏁 Top 3 after sort: ${allResults.slice(0, 3).map(t => `[${tbCacheMap[getHash(t)]?'⚡':'⏳'}] ${t.resolution||'?'} ${t.audioLangs||'-'}`).join(' | ')}`);
-  }
-
-  // Sort EN/Dub first if enabled — streams with English audio go to top, but within each bucket
-  // the preset order is preserved (re-sort each bucket so size/quality stays consistent).
+  // Sort EN/Dub first — applied BEFORE cachedFirst so cache wins (cached EN > uncached EN > cached JP > uncached JP).
   if (user?.dubFirst) {
     const hasEN = (t) => {
       if (!t) return false;
+      if (t.dualAudio) return true; // dual = ja + en (catches streams with dualAudio flag but empty audio_langs)
       const langs = String(t.audioLangs || '').toLowerCase().split(',').map(s => s.trim()).filter(Boolean);
       return langs.includes('en');
     };
     const withEN = allResults.filter(hasEN);
     const withoutEN = allResults.filter(t => !hasEN(t));
     allResults = [...sortByGroupPriority(withEN, user || null), ...sortByGroupPriority(withoutEN, user || null)];
+  }
+
+  // Sort cached first — applied LAST so cache has the final say. Each bucket re-sorted with the preset.
+  if (tbCacheCheck && user?.cachedFirst && Object.keys(tbCacheMap).length) {
+    const getHash = t => (t.infohash || t.magnet?.match(/btih:([a-zA-Z0-9]+)/i)?.[1] || '').toLowerCase();
+    const cached = allResults.filter(t => tbCacheMap[getHash(t)]);
+    const notCached = allResults.filter(t => !tbCacheMap[getHash(t)]);
+    allResults = [...sortByGroupPriority(cached, user || null), ...sortByGroupPriority(notCached, user || null)];
+    console.log(`  ⚡ cachedFirst: ${cached.length} cached, ${notCached.length} not cached`);
+    console.log(`  🏁 Top 3 after sort: ${allResults.slice(0, 3).map(t => `[${tbCacheMap[getHash(t)]?'⚡':'⏳'}] ${t.resolution||'?'} ${t.audioLangs||'-'}${t.dualAudio?' D':''}`).join(' | ')}`);
   }
 
   const streams = [];
