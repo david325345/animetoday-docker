@@ -1602,16 +1602,16 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
     }
   }
 
-  // Sort cached first if enabled — each group keeps its own sort order
+  // Sort cached first if enabled — each bucket re-sorted with the preset to keep ordering inside.
   if (tbCacheCheck && user?.cachedFirst && Object.keys(tbCacheMap).length) {
     const getHash = t => (t.infohash || t.magnet?.match(/btih:([a-zA-Z0-9]+)/i)?.[1] || '').toLowerCase();
     const cached = allResults.filter(t => tbCacheMap[getHash(t)]);
     const notCached = allResults.filter(t => !tbCacheMap[getHash(t)]);
-    allResults = [...cached, ...notCached];
+    allResults = [...sortByGroupPriority(cached, user || null), ...sortByGroupPriority(notCached, user || null)];
   }
 
-  // Sort EN/Dub first if enabled — anything with English audio (DUB or DUAL) goes to top.
-  // Applied after cachedFirst so EN audio takes priority; within each bucket the previous order is preserved.
+  // Sort EN/Dub first if enabled — streams with English audio go to top, but within each bucket
+  // the preset order is preserved (re-sort each bucket so size/quality stays consistent).
   if (user?.dubFirst) {
     const hasEN = (t) => {
       if (!t) return false;
@@ -1620,7 +1620,7 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
     };
     const withEN = allResults.filter(hasEN);
     const withoutEN = allResults.filter(t => !hasEN(t));
-    allResults = [...withEN, ...withoutEN];
+    allResults = [...sortByGroupPriority(withEN, user || null), ...sortByGroupPriority(withoutEN, user || null)];
   }
 
   const streams = [];
