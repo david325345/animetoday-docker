@@ -1670,7 +1670,7 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
       const sourceIcon = t.seadexBest ? '🏆 ' : t.tosho ? '📡 ' : '';
       const qualityPart = t.resolution || '';
       // Mark tags that contain English audio with ✅
-      const audioWithMarker = audioTag === 'DUB' || audioTag === 'DUAL' ? `${audioTag} ✅` : audioTag;
+      const audioWithMarker = audioTag === 'Dub' || audioTag === 'Dual' ? `${audioTag} ✅` : audioTag;
       const audioPart = audioTag ? ` · ${audioWithMarker}` : '';
       streamName = `NimeToDex ${sourceIcon}${qualityPart}${audioPart}`.trim();
     } else {
@@ -1682,7 +1682,7 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
       const statsLine = `👥 ${parseInt(t.seeders) || 0} | ${formatSizeWithIcon(t)}`;
       title = `${line1 ? line1 + '\n' : ''}${name}\n${statsLine}`;
       const audioTagFb = detectAudioTag(t);
-      const audioWithMarker = audioTagFb === 'DUB' || audioTagFb === 'DUAL' ? `${audioTagFb} ✅` : audioTagFb;
+      const audioWithMarker = audioTagFb === 'Dub' || audioTagFb === 'Dual' ? `${audioTagFb} ✅` : audioTagFb;
       const audioPart = audioTagFb ? ` · ${audioWithMarker}` : '';
       streamName = `NimeToDex ${quality || ''}${audioPart}`.trim();
     }
@@ -1804,7 +1804,7 @@ app.get('/:token/nzb/manifest.json', (req, res) => {
 // ===== Language score helper for NZB sorting =====
 // Returns lowest index from langOrder found in item's language/subs/title
 // Lower = better match. Items with no match get langOrder.length (worst)
-// ===== Detect audio language tag for stream name (JP / DUB / DUAL / MULTI) =====
+// ===== Detect audio language tag for stream name (JP / Dub / Dual / Multi) =====
 // Uses indexer-provided dual_audio flag and audio_langs CSV (ISO 639-1 lowercase).
 // Returns null when audio info is unknown — caller should not append a tag.
 function detectAudioTag(t) {
@@ -1813,12 +1813,12 @@ function detectAudioTag(t) {
   const hasEn = langs.includes('en');
   const hasMulti = langs.includes('multi');
 
-  if (t.dualAudio) return 'DUAL';
-  if (hasMulti && langs.length >= 2) return 'MULTI'; // multi + extra langs
-  if (hasJa && hasEn) return 'DUAL';
+  if (t.dualAudio) return 'Dual';
+  if (hasMulti && langs.length >= 2) return 'Multi'; // multi + extra langs
+  if (hasJa && hasEn) return 'Dual';
   if (hasJa && !hasEn) return 'JP';
-  if (hasEn && !hasJa) return 'DUB';
-  if (hasMulti) return 'MULTI';
+  if (hasEn && !hasJa) return 'Dub';
+  if (hasMulti) return 'Multi';
   return null;
 }
 
