@@ -103,8 +103,11 @@ app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.ht
 app.get('/:token/configure', (req, res) => {
   res.redirect(302, `/?token=${encodeURIComponent(req.params.token)}`);
 });
-// Also handle per-addon configure paths (Stremio sometimes uses these)
+// Also handle per-addon configure paths
 app.get('/:token/today/configure', (req, res) => {
+  res.redirect(302, `/?token=${encodeURIComponent(req.params.token)}`);
+});
+app.get('/:token/nyaa/configure', (req, res) => {
   res.redirect(302, `/?token=${encodeURIComponent(req.params.token)}`);
 });
 app.get('/:token/nzb/configure', (req, res) => {
