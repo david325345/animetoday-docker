@@ -7,15 +7,16 @@ const axios = require('axios');
 const config = require('./lib/config');
 const { fetchAnimeSchedule, formatTimeCET: simklFormatTime, getDayLabel } = require('./lib/simkl');
 const { loadOfflineDB, loadAnimeLists, loadMappingCache, resolveToAniDB, resolveEpisode, resolveViaTVDB, parseEpisodeAndSeason, weeklyUpdate, offlineDB, getTVDBFromAniDB, getTVDBInfoFromAniDB } = require('./lib/idmap');
-const { searchByAniDBId, searchByText, detectQuality, sortByGroupPriority, loadEidCache, DEFAULT_GROUPS, DEFAULT_RESOLUTIONS } = require('./lib/search');
+const { detectQuality, sortByGroupPriority, loadEidCache, DEFAULT_GROUPS, DEFAULT_RESOLUTIONS } = require('./lib/search');
 const { getRDStream, rdInProgress, getCacheKey, serveLoadingVideo, DOWNLOADING_VIDEO_URL, checkInstantAvailability } = require('./lib/realdebrid');
 const { generateAllPosters } = require('./lib/posters');
 const { formatTimeCET } = require('./lib/simkl');
 const { startRssFetcher, clearRssIndex, searchRssIndex, getRssStats } = require('./lib/rss');
 const { getTBStatus, getTBStream, getTBNZBStream, checkTBCached, tbInProgress } = require('./lib/torbox');
-const { searchNekobt, validateApiKey: validateNekobtKey, sortNekobtResults } = require('./lib/nekobt');
+const { validateApiKey: validateNekobtKey } = require('./lib/nekobt');
 const { searchByTVDB: nzbgeekSearch, searchByIMDb: nzbgeekMovieSearch, validateApiKey: validateNzbgeekKey } = require('./lib/nzbgeek');
-const { searchByAniListId: seadexSearch, findEpisodeFile: seadexFindEpisode } = require('./lib/seadex');
+// SeaDex / NekoBT direct search removed — all torrent results come from our own indexer now.
+// API endpoints and lib files are kept for backward compatibility / future re-enabling.
 
 process.on('uncaughtException', (err) => { console.error('⚠️ Uncaught:', err.message); console.error(err.stack); });
 process.on('unhandledRejection', (err) => { console.error('⚠️ Unhandled:', err?.message || err); });
@@ -1409,457 +1410,165 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
     }
   }
 
-  // ===== PARALLEL SEARCH: AnimeTosho + NekoBT + SeaDex + My Indexer =====
-  const hasNekobt = user?.nekobt_api_key && user?.nekobt_enabled !== false;
-  const hasSeadex = user?.seadex_enabled;
+  // ===== INDEXER SEARCH (sole source) =====
+  // NekoBT, SeaDex, AnimeTosho legacy pipelines removed — all results come from our own indexer now.
   const hasIndexer = user?.indexer_enabled;
-  const indexerOnly = hasIndexer && user?.indexer_only;
 
-  // AnimeTosho search task (complex flow with fallbacks)
-  const atSearchTask = indexerOnly ? Promise.resolve([]) : (async () => {
-    let torrents = [];
-    // Handle at: ID format from Anime Today: at:187941:1:5 or at:187941:5
-  if (fullId.startsWith('at:')) {
-    const parts = fullId.split(':');
-    const anilistId = parseInt(parts[1]);
-    if (parts.length >= 4) {
-      const sN = parseInt(parts[2]); season = Number.isFinite(sN) ? sN : 1;
-      episode = parseInt(parts[3]) || 1;
-    } else {
-      season = 1;
-      episode = parseInt(parts[2]) || 1;
-    }
-    console.log(`  🎌 AT: AniList ${anilistId} S${season}E${episode}`);
-    const rec = offlineDB.byAniList.get(anilistId);
-
-    if (rec?.anidb) {
-      // Multi-season: try resolving via IMDb→TVDB→AniDB per-season
-      if (season > 1 && rec.imdb) {
-        const epResult = await resolveEpisode(type, rec.imdb, season, episode);
-        if (epResult.anidbId) {
-          console.log(`  🎯 Season-specific AniDB: ${epResult.anidbId} ep${epResult.episode}`);
-          torrents = await searchByAniDBId(epResult.anidbId, epResult.episode, false, false);
-        }
-        // Also try absolute episode via Cinemeta offset
-        if (!torrents.length && epResult.episode !== episode) {
-          console.log(`  🔄 Trying absolute ep ${epResult.episode}`);
-          torrents = await searchByAniDBId(rec.anidb, epResult.episode, false, false);
-        }
-      }
-      // Season 1 or fallback
-      if (!torrents.length) {
-        console.log(`  🆔 AniList ${anilistId} → AniDB ${rec.anidb} "${rec.title}"`);
-        torrents = await searchByAniDBId(rec.anidb, isMovie ? null : episode, isMovie, false);
-      }
-    }
-
-    // Text search fallback for at: IDs
-    if (!torrents.length) {
-      const names = [];
-      if (rec?.title) names.push(rec.title);
-      const schedule = todayAnimeCache.find(s => s.anilistId === anilistId);
-      if (schedule) {
-        if (schedule.title && !names.includes(schedule.title)) names.push(schedule.title);
-        if (schedule.enTitle && !names.includes(schedule.enTitle)) names.push(schedule.enTitle);
-      }
-      if (names.length) {
-        console.log(`  🔄 Fallback text search: [${names.join(', ')}]`);
-        torrents = await searchByText(names, isMovie ? null : episode, isMovie);
-      }
-    }
-  }
-  // Handle TVDB ID format: tvdb:424536:2:8
-  else if (fullId.startsWith('tvdb:')) {
-    const parts = fullId.split(':');
-    const tvdbId = parts[1];
-    const tvdbSeason = parseInt(parts[2]) || 1;
-    const tvdbEpisode = parseInt(parts[3]) || 1;
-    season = tvdbSeason;
-    episode = tvdbEpisode;
-    console.log(`  📺 TVDB: ${tvdbId} S${tvdbSeason}E${tvdbEpisode}`);
-    const resolved = resolveViaTVDB(tvdbId, tvdbSeason, tvdbEpisode);
-    if (resolved?.anidbId) {
-      torrents = await searchByAniDBId(resolved.anidbId, resolved.episode, isMovie, false);
-    }
-  }
-  // Handle AniList ID format: anilist:154587:2:8 or anilist:154587
-  else if (fullId.startsWith('anilist:')) {
-    const parts = fullId.split(':');
-    const anilistId = parseInt(parts[1]);
-    const sN = parseInt(parts[2]); season = Number.isFinite(sN) ? sN : 1;
-    episode = parseInt(parts[3]) || 1;
-    console.log(`  🔷 AniList: ${anilistId} S${season}E${episode}`);
-    const rec = offlineDB.byAniList.get(anilistId);
-    if (rec?.anidb) {
-      if (season > 1) {
-        // Try anime-lists for season-specific AniDB
-        const tvdbId = getTVDBFromAniDB(rec.anidb);
-        if (tvdbId) {
-          const resolved = resolveViaTVDB(tvdbId, season, episode);
-          if (resolved?.anidbId) {
-            torrents = await searchByAniDBId(resolved.anidbId, resolved.episode, isMovie, false);
-          }
-        }
-      }
-      if (!torrents.length) {
-        console.log(`  🆔 AniList ${anilistId} → AniDB ${rec.anidb} "${rec.title}"`);
-        torrents = await searchByAniDBId(rec.anidb, isMovie ? null : episode, isMovie, false);
-      }
-    }
-  }
-  // Existing: IMDb (tt...) and Kitsu (kitsu:...)
-  else {
-
-  // 1. For multi-season: try anime-lists to get per-season AniDB ID + correct episode
-  if (!torrents.length && season > 1 && !isMovie) {
-    const epResult = await resolveEpisode(type, fullId, season, episode);
-    if (epResult.anidbId) {
-      // anime-lists gave us a season-specific AniDB ID
-      console.log(`  🎯 Season-specific AniDB: ${epResult.anidbId} ep${epResult.episode}`);
-      torrents = await searchByAniDBId(epResult.anidbId, epResult.episode, false, false);
-    }
+  if (!hasIndexer) {
+    return res.json({ streams: [{
+      name: '⚠️ Indexer disabled',
+      title: 'Enable the NimeToDex indexer in your settings.',
+      url: BASE_URL,
+      behaviorHints: { notWebReady: true }
+    }] });
   }
 
-  // 2. Base AniDB ID lookup (for S01, movies, or if season-specific failed)
-  if (!torrents.length) {
-    const resolved = await resolveToAniDB(type, fullId);
-    if (resolved?.anidb) {
-      const searchEp = isMovie ? null : episode;
-      torrents = await searchByAniDBId(resolved.anidb, searchEp, isMovie, false);
+  // Build indexer query
+  const params = new URLSearchParams();
+  if (fullId.startsWith('tt')) params.set('imdb', fullId.split(':')[0]);
+  if (resolved.anilistId) params.set('anilist', resolved.anilistId);
+  if (resolved.tvdbId) params.set('tvdb', resolved.tvdbId);
+  if (resolved.anidbId) params.set('anidb', resolved.anidbId);
+  if (season != null && !isMovie) params.set('season', season);
+  if (episode && !isMovie) params.set('episode', episode);
 
-      // If S01 episode search found nothing and season > 1, try absolute episode via Cinemeta offset
-      if (!torrents.length && season > 1 && !isMovie) {
-        const epResult = await resolveEpisode(type, fullId, season, episode);
-        if (epResult.episode !== episode) {
-          console.log(`  🔄 Trying absolute ep ${epResult.episode}`);
-          torrents = await searchByAniDBId(resolved.anidb, epResult.episode, false, false);
-        }
-      }
-    }
-  }
-
-  // 3. Fallback: text search
-  if (!torrents.length) {
-    let names = [];
-    try {
-      const resolved2 = await resolveToAniDB(type, fullId);
-      if (resolved2?.title) names.push(resolved2.title);
-    } catch {}
-
-    if (fullId.startsWith('tt')) {
-      try {
-        const cine = await axios.get(`https://v3-cinemeta.strem.io/meta/${type}/${fullId.split(':')[0]}.json`, { timeout: 5000 });
-        const meta = cine.data?.meta;
-        if (meta?.name) {
-          const name = meta.name;
-          if (!names.includes(name)) names.push(name);
-          // Strip diacritics version
-          const stripped = name.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-          if (stripped !== name && !names.includes(stripped)) names.push(stripped);
-        }
-        // English aliases
-        if (meta?.aliases) for (const a of meta.aliases) { if (!names.includes(a)) names.push(a); }
-      } catch {}
-    }
-
-    if (names.length) {
-      console.log(`  🔄 Fallback text search: [${names.join(', ')}]`);
-      torrents = await searchByText(names, isMovie ? null : episode, isMovie);
-    }
-  }
-
-  } // end else (IMDb/Kitsu)
-
-    // Add RSS for today's anime
-    if (isTodayAnime && todaySchedule) {
-      const rssNames = [todaySchedule.title, todaySchedule.enTitle].filter(Boolean);
-      const rssResults = searchRssIndex(rssNames, episode);
-      if (rssResults.length) {
-        const existingHashes = new Set(torrents.map(t => t.magnet?.match(/btih:([a-zA-Z0-9]+)/i)?.[1]?.toLowerCase()).filter(Boolean));
-        const newRss = rssResults.filter(r => {
-          const hash = r.magnet?.match(/btih:([a-zA-Z0-9]+)/i)?.[1]?.toLowerCase();
-          return hash && !existingHashes.has(hash);
-        });
-        if (newRss.length) {
-          torrents = [...torrents, ...newRss];
-          console.log(`  📡 +${newRss.length} from Nyaa RSS`);
-        }
-      }
-    }
-
-    return torrents;
-  })().catch(err => { console.error(`  AT search error: ${err.message}`); return []; });
-
-  // NekoBT search task
-  const nekobtTask = indexerOnly ? Promise.resolve([]) :
-    ((hasNekobt && resolved.names.length) ?
-    (async () => {
-      console.log(`  🐱 NekoBT search: [${resolved.names.join(', ')}] S${season}E${episode}`);
-      return await searchNekobt(resolved.names, user.nekobt_api_key, season, episode, isMovie);
-    })().catch(() => []) :
-    // Fallback: need async name resolve
-    (hasNekobt ?
-      (async () => {
-        const names = [...resolved.names];
-        if (!names.length) {
-          try {
-            const res = await resolveToAniDB(type, fullId);
-            if (res?.title) names.push(res.title);
-          } catch {}
-        }
-        if (!names.length && fullId.startsWith('tt')) {
-          try {
-            const cine = await axios.get(`https://v3-cinemeta.strem.io/meta/${type}/${fullId.split(':')[0]}.json`, { timeout: 5000 });
-            if (cine.data?.meta?.name) names.push(cine.data.meta.name);
-          } catch {}
-        }
-        if (names.length) {
-          console.log(`  🐱 NekoBT search: [${names.join(', ')}] S${season}E${episode}`);
-          return await searchNekobt(names, user.nekobt_api_key, season, episode, isMovie);
-        }
-        return [];
-      })().catch(() => []) :
-      Promise.resolve([])
-    ));
-
-  // SeaDex search task
-  const seadexTask = indexerOnly ? Promise.resolve([]) :
-    (hasSeadex ?
-    (async () => {
-      let alId = resolved.anilistId;
-      // Async fallback if no AniList ID yet
-      if (!alId && fullId.startsWith('tt')) {
+  const mapResults = (results) => results
+    .filter(r => r.magnet || r.infohash)
+    .map(r => {
+      // Find matching episode file in batch
+      let matchedFile = null;
+      if (r.batch && r.file_list) {
         try {
-          const res = await resolveToAniDB('series', fullId.split(':')[0]);
-          if (res?.anidb) {
-            const rec = offlineDB.byAniDB.get(res.anidb);
-            if (rec?.anilist) alId = rec.anilist;
+          const files = typeof r.file_list === 'string' ? JSON.parse(r.file_list) : r.file_list;
+          if (Array.isArray(files)) {
+            // Priority 1: Use fileIdx from indexer (multi-AL batch support)
+            if (r.fileIdx != null || r.file_index != null) {
+              const idx = r.fileIdx != null ? r.fileIdx : r.file_index;
+              const file = files.find(f => f.idx === idx);
+              if (file) {
+                matchedFile = { name: (file.name || '').split('/').pop(), size: file.size, idx: file.idx };
+              }
+            }
+            // Priority 2: Regex match by episode number
+            if (!matchedFile && episode) {
+              const epPad = String(episode).padStart(2, '0');
+              const sPad = String(season || 0).padStart(2, '0');
+              const found = files.find(f => {
+                const n = (f.name || '').toLowerCase();
+                return new RegExp(`s${sPad}e${epPad}|\\be${epPad}\\b|\\b${epPad}v\\d|\\s${epPad}\\s|\\s${epPad}\\.|\\-${epPad}\\b`).test(n);
+              });
+              if (found) {
+                matchedFile = { name: (found.name || '').split('/').pop(), size: found.size, idx: found.idx };
+              }
+            }
           }
         } catch {}
       }
-      if (alId) {
-        console.log(`  🏆 SeaDex: searching AniList ${alId}`);
-        return await seadexSearch(alId);
-      }
-      console.log(`  🏆 SeaDex: no AniList ID resolved`);
-      return [];
-    })().catch(() => []) :
-    Promise.resolve([]));
 
-  // My Indexer task (NimeToDex)
-  const indexerTask = hasIndexer ?
-    (async () => {
-      const t0 = Date.now();
-      const params = new URLSearchParams();
-
-      // Send all IDs we already have — API has its own fallback chain
-      if (fullId.startsWith('tt')) params.set('imdb', fullId.split(':')[0]);
-      if (resolved.anilistId) params.set('anilist', resolved.anilistId);
-      if (resolved.tvdbId) params.set('tvdb', resolved.tvdbId);
-      if (resolved.anidbId) params.set('anidb', resolved.anidbId);
-      if (season != null && !isMovie) params.set('season', season);
-      if (episode && !isMovie) params.set('episode', episode);
-
-      if (!params.toString()) return [];
-
-      const mapResults = (results) => results
-        .filter(r => r.magnet || r.infohash)
-        .map(r => {
-          // Find matching episode file in batch
-          let matchedFile = null;
-          if (r.batch && r.file_list) {
-            try {
-              const files = typeof r.file_list === 'string' ? JSON.parse(r.file_list) : r.file_list;
-              if (Array.isArray(files)) {
-                // Priority 1: Use fileIdx from indexer (multi-AL batch support)
-                if (r.fileIdx != null || r.file_index != null) {
-                  const idx = r.fileIdx != null ? r.fileIdx : r.file_index;
-                  const file = files.find(f => f.idx === idx);
-                  if (file) {
-                    matchedFile = { name: (file.name || '').split('/').pop(), size: file.size, idx: file.idx };
-                  }
-                }
-                // Priority 2: Regex match by episode number
-                if (!matchedFile && episode) {
-                  const epPad = String(episode).padStart(2, '0');
-                  const sPad = String(season || 0).padStart(2, '0');
-                  const found = files.find(f => {
-                    const n = f.name || '';
-                    if (new RegExp(`S${sPad}E${epPad}(?:\\b|[^\\d])`, 'i').test(n)) return true;
-                    if (new RegExp(`\\s-\\s${epPad}(?:\\s|\\[|\\(|v\\d|\\.|$)`).test(n)) return true;
-                    if (new RegExp(`E${epPad}(?:\\b|[^\\d])`, 'i').test(n)) return true;
-                    return false;
-                  });
-                  if (found) {
-                    matchedFile = { name: (found.name || '').split('/').pop(), size: found.size, idx: found.idx };
-                  }
-                }
-              }
-            } catch {}
-          }
-
-          return {
-            name: r.name || 'Unknown',
-            magnet: r.magnet || (r.infohash ? `magnet:?xt=urn:btih:${r.infohash}` : null),
-            infohash: (r.infohash || '').toLowerCase() || null,
-            seeders: String(r.seeders || 0),
-            leechers: String(r.leechers || 0),
-            filesize: r.filesize ? formatIndexerFilesize(r.filesize) : '?',
-            filesizeBytes: parseInt(r.filesize) || 0,
-            source: 'indexer',
-            indexer: true,
-            indexerId: r.id || null,
-            releaseGroup: r.group_name || '',
-            resolution: r.resolution || '',
-            dualAudio: !!r.dual_audio,
-            seadexBest: !!r.seadex_best,
-            batch: !!r.batch,
-            videoSource: r.video_source || '',
-            codec: r.codec || '',
-            audioLangs: r.audio_langs || '',
-            subtitleLangs: r.subtitle_langs || '',
-            audioCodec: r.audio_codec || '',
-            fileCount: r.file_count || 0,
-            matchedFile: matchedFile,
-            fileIdx: matchedFile?.idx != null ? matchedFile.idx : (r.fileIdx != null ? r.fileIdx : null),
-          };
-        });
-
-      const mapToshoResults = (results) => results
-        .filter(r => r.magnet || r.infohash)
-        .map(r => ({
-          name: r.name || 'Unknown',
-          magnet: r.magnet || (r.infohash ? `magnet:?xt=urn:btih:${r.infohash}` : null),
-          infohash: r.infohash || null,
-          seeders: String(r.seeders || 0),
-          leechers: String(r.leechers || 0),
-          filesize: r.filesize ? formatIndexerFilesize(r.filesize) : '?',
-          filesizeBytes: parseInt(r.filesize) || 0,
-          source: 'tosho',
-          indexer: true,
-          tosho: true,
-          releaseGroup: r.group_name || '',
-          resolution: r.resolution || '',
-          dualAudio: !!r.dual_audio,
-          seadexBest: !!r.seadex_best,
-          batch: !!r.batch,
-          videoSource: r.video_source || '',
-          codec: r.codec || '',
-          audioLangs: r.audio_langs || '',
-          subtitleLangs: r.subtitle_langs || '',
-          audioCodec: r.audio_codec || '',
-          fileCount: r.file_count || 0,
-          matchedFile: null,
-        }));
-
-      try {
-        console.log(`  📦 Indexer: searching ${params.toString()}`);
-        const resp = await axios.get(`${INDEXER_URL}/search?${params.toString()}`, { timeout: 8000 });
-        const results = resp.data?.results || [];
-        const toshoResults = resp.data?.tosho_results || [];
-        const ms = Date.now() - t0;
-        console.log(`  📦 Indexer: ${results.length} results + ${toshoResults.length} tosho (${ms}ms, searchedBy: ${resp.data?.searchedBy || '?'})`);
-
-        const mapped = mapResults(results);
-        const mappedTosho = mapToshoResults(toshoResults);
-
-        // Deduplicate tosho by infohash against main results
-        const mainHashes = new Set(mapped.map(t => (t.infohash || '').toLowerCase()).filter(Boolean));
-        const uniqueTosho = mappedTosho.filter(t => {
-          const h = (t.infohash || '').toLowerCase();
-          return h && !mainHashes.has(h);
-        });
-        if (uniqueTosho.length && toshoResults.length) console.log(`  📡 AT: +${uniqueTosho.length} unique (${toshoResults.length - uniqueTosho.length} duplicates)`);
-
-        const combined = [...mapped, ...uniqueTosho];
-        if (combined.length) return combined;
-
-        // Fallback: text search by name if ID search found nothing
-        const searchName = resolved.names[0] || resolved.title;
-        if (searchName) {
-          const qParams = new URLSearchParams();
-          qParams.set('q', searchName);
-          if (season != null && !isMovie) qParams.set('season', season);
-          if (episode && !isMovie) qParams.set('episode', episode);
-
-          const ft0 = Date.now();
-          console.log(`  📦 Indexer fallback: q="${searchName}"`);
-          const qResp = await axios.get(`${INDEXER_URL}/search?${qParams.toString()}`, { timeout: 8000 });
-          const qResults = qResp.data?.results || [];
-          const qTosho = qResp.data?.tosho_results || [];
-          console.log(`  📦 Indexer fallback: ${qResults.length} results + ${qTosho.length} tosho (${Date.now() - ft0}ms)`);
-          const qMapped = mapResults(qResults);
-          const qMappedTosho = mapToshoResults(qTosho);
-          const qMainHashes = new Set(qMapped.map(t => (t.infohash || '').toLowerCase()).filter(Boolean));
-          const qUniqueTosho = qMappedTosho.filter(t => {
-            const h = (t.infohash || '').toLowerCase();
-            return h && !qMainHashes.has(h);
-          });
-          return [...qMapped, ...qUniqueTosho];
-        }
-
-        return [];
-      } catch (err) {
-        const ms = Date.now() - t0;
-        console.log(`  📦 Indexer error (${ms}ms): ${err.message}`);
-        return [];
-      }
-    })().catch(() => []) :
-    Promise.resolve([]);
-
-  // ===== Run all four in parallel =====
-  const [atResults, nekobtResults, seadexResults, indexerResults] = await Promise.all([atSearchTask, nekobtTask, seadexTask, indexerTask]);
-
-  let torrents = atResults;
-
-  // Merge NekoBT results
-  if (nekobtResults.length) {
-    const existingHashes = new Set(
-      torrents.map(t => {
-        const h = t.infohash || t.magnet?.match(/btih:([a-zA-Z0-9]+)/i)?.[1];
-        return h?.toLowerCase();
-      }).filter(Boolean)
-    );
-    const newNekobt = nekobtResults.filter(t => {
-      const h = t.infohash?.toLowerCase();
-      return h && !existingHashes.has(h);
+      return {
+        name: r.name || 'Unknown',
+        magnet: r.magnet || (r.infohash ? `magnet:?xt=urn:btih:${r.infohash}` : null),
+        infohash: (r.infohash || '').toLowerCase() || null,
+        seeders: String(r.seeders || 0),
+        leechers: String(r.leechers || 0),
+        filesize: r.filesize ? formatIndexerFilesize(r.filesize) : '?',
+        filesizeBytes: parseInt(r.filesize) || 0,
+        source: 'indexer',
+        indexer: true,
+        indexerId: r.id || null,
+        releaseGroup: r.group_name || '',
+        resolution: r.resolution || '',
+        dualAudio: !!r.dual_audio,
+        seadexBest: !!r.seadex_best,
+        seadex: r.source === 'seadex',
+        batch: !!r.batch,
+        videoSource: r.video_source || '',
+        codec: r.codec || '',
+        audioLangs: r.audio_langs || '',
+        subtitleLangs: r.subtitle_langs || '',
+        audioCodec: r.audio_codec || '',
+        fileCount: r.file_count || 0,
+        matchedFile: matchedFile,
+        fileIdx: matchedFile?.idx != null ? matchedFile.idx : (r.fileIdx != null ? r.fileIdx : null),
+      };
     });
-    if (newNekobt.length) {
-      const sortedNeko = sortNekobtResults(newNekobt);
-      torrents = [...torrents, ...sortedNeko];
-      console.log(`  🐱 +${newNekobt.length} unique from NekoBT (${nekobtResults.length - newNekobt.length} duplicates)`);
-    } else {
-      console.log(`  🐱 NekoBT: all ${nekobtResults.length} results already present`);
-    }
-  }
 
-  // Merge SeaDex results — mark existing + add new
-  if (seadexResults.length) {
-    const seadexByHash = new Map();
-    for (const sr of seadexResults) {
-      if (sr.infohash) seadexByHash.set(sr.infohash.toLowerCase(), sr);
-    }
-    let marked = 0;
-    for (const t of torrents) {
-      const h = (t.infohash || t.magnet?.match(/btih:([a-zA-Z0-9]+)/i)?.[1] || '').toLowerCase();
-      const sr = h ? seadexByHash.get(h) : null;
-      if (sr) {
-        t.seadex = true;
-        t.isBest = sr.isBest;
-        t.dualAudio = sr.dualAudio;
-        seadexByHash.delete(h);
-        marked++;
+  const mapToshoResults = (results) => results
+    .filter(r => r.magnet || r.infohash)
+    .map(r => ({
+      name: r.name || 'Unknown',
+      magnet: r.magnet || (r.infohash ? `magnet:?xt=urn:btih:${r.infohash}` : null),
+      infohash: r.infohash || null,
+      seeders: String(r.seeders || 0),
+      leechers: String(r.leechers || 0),
+      filesize: r.filesize ? formatIndexerFilesize(r.filesize) : '?',
+      filesizeBytes: parseInt(r.filesize) || 0,
+      source: 'tosho',
+      indexer: true,
+      tosho: true,
+      releaseGroup: r.group_name || '',
+      resolution: r.resolution || '',
+      dualAudio: !!r.dual_audio,
+      seadexBest: !!r.seadex_best,
+      batch: !!r.batch,
+      videoSource: r.video_source || '',
+      codec: r.codec || '',
+      audioLangs: r.audio_langs || '',
+      subtitleLangs: r.subtitle_langs || '',
+      audioCodec: r.audio_codec || '',
+      fileCount: r.file_count || 0,
+      matchedFile: null,
+    }));
+
+  // Run indexer search
+  let indexerResults = [];
+  if (params.toString()) {
+    try {
+      const t0 = Date.now();
+      console.log(`  📦 Indexer: searching ${params.toString()}`);
+      const resp = await axios.get(`${INDEXER_URL}/search?${params.toString()}`, { timeout: 8000 });
+      const results = resp.data?.results || [];
+      const toshoResults = resp.data?.tosho_results || [];
+      const ms = Date.now() - t0;
+      console.log(`  📦 Indexer: ${results.length} results + ${toshoResults.length} tosho (${ms}ms, searchedBy: ${resp.data?.searchedBy || '?'})`);
+
+      indexerResults = [...mapResults(results), ...mapToshoResults(toshoResults)];
+
+      // Fallback: try fulltext search if nothing found
+      if (!indexerResults.length) {
+        let searchName = null;
+        try {
+          const r2 = await resolveToAniDB(type, fullId);
+          if (r2?.title) searchName = r2.title;
+        } catch {}
+        if (!searchName && fullId.startsWith('tt')) {
+          try {
+            const cine = await axios.get(`https://v3-cinemeta.strem.io/meta/${type}/${fullId.split(':')[0]}.json`, { timeout: 5000 });
+            if (cine.data?.meta?.name) searchName = cine.data.meta.name;
+          } catch {}
+        }
+        if (searchName) {
+          const ft0 = Date.now();
+          const fbParams = new URLSearchParams({ q: searchName });
+          if (season != null && !isMovie) fbParams.set('season', season);
+          if (episode && !isMovie) fbParams.set('episode', episode);
+          console.log(`  📦 Indexer fallback: q="${searchName}"`);
+          const fbResp = await axios.get(`${INDEXER_URL}/search?${fbParams.toString()}`, { timeout: 8000 });
+          const qResults = fbResp.data?.results || [];
+          const qTosho = fbResp.data?.tosho_results || [];
+          console.log(`  📦 Indexer fallback: ${qResults.length} results + ${qTosho.length} tosho (${Date.now() - ft0}ms)`);
+          indexerResults = [...mapResults(qResults), ...mapToshoResults(qTosho)];
+        }
       }
+    } catch (err) {
+      console.log(`  📦 Indexer error: ${err.message}`);
     }
-    const remaining = [...seadexByHash.values()];
-    if (remaining.length) torrents = [...torrents, ...remaining];
-    console.log(`  🏆 SeaDex: ${marked} marked, +${remaining.length} new (${seadexResults.length} total)`);
   }
 
-  // Merge Indexer results
-  if (!torrents.length && !indexerResults.length) {
+  // No results — show fallback streams
+  if (!indexerResults.length) {
     const noResultStreams = [{ name: '❌ Not found', title: `Not found on NimeToDex`, url: 'https://nimetodex.duckdns.org', behaviorHints: { notWebReady: true } }];
-    if (hasIndexer && userPerms.ondemand !== false) {
+    if (userPerms.ondemand !== false) {
       noResultStreams.push({
         name: '🔍 Search',
         title: 'Search on demand\nSearches Nyaa + trackers for new results.\nClose video and reopen episode after ~30s.',
@@ -1875,20 +1584,11 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
   const hasTB = !!user?.tb_api_key;
   const tbTorrents = !p2pEnabled && hasTB && user.tb_use_torrents;
 
-  let allResults;
-  if (indexerOnly) {
-    // Indexer-only mode: indexer results are the main results, sort them
-    const indexerWithMagnet = indexerResults.filter(t => t.magnet);
-    allResults = sortByGroupPriority(indexerWithMagnet, user || null);
-    if (indexerWithMagnet.length) console.log(`  📦 Indexer-only: ${indexerWithMagnet.length} results`);
-  } else {
-    // Normal mode: sort main sources, append indexer at bottom
-    const sorted = sortByGroupPriority(torrents, user || null);
-    const maxResults = hasNekobt ? 30 : 20;
-    const withMagnet = sorted.filter(t => t.magnet).slice(0, maxResults);
-    allResults = [...withMagnet, ...indexerResults.filter(t => t.magnet)];
-    if (indexerResults.length) console.log(`  📦 +${indexerResults.length} from Indexer (appended at bottom)`);
-  }
+  // Apply sort + filters (handles excludeResolutions, group/res/lang priority — all toggle-controlled)
+  const indexerWithMagnet = indexerResults.filter(t => t.magnet);
+  let allResults = sortByGroupPriority(indexerWithMagnet, user || null);
+  console.log(`  📦 ${allResults.length} results after sort (${indexerWithMagnet.length} input)`);
+
 
   // TorBox cache check — batch all hashes in one request
   let tbCacheMap = {};
@@ -2081,7 +1781,7 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
     });
   }
 
-  console.log(`  📤 Streams: ${streams.length}${hasNekobt && !indexerOnly ? ' (NekoBT enabled)' : ''}${hasIndexer ? ' (Indexer enabled)' : ''}${indexerOnly ? ' (INDEXER ONLY)' : ''}`);
+  console.log(`  📤 Streams: ${streams.length} (Indexer)`);
   res.json({ streams });
 });
 
