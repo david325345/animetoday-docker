@@ -12,7 +12,7 @@ const { getRDStream, rdInProgress, getCacheKey, serveLoadingVideo, DOWNLOADING_V
 const { generateAllPosters } = require('./lib/posters');
 const { formatTimeCET } = require('./lib/simkl');
 const { startRssFetcher, clearRssIndex, searchRssIndex, getRssStats } = require('./lib/rss');
-const { getTBStatus, getTBStream, getTBNZBStream, checkTBCached } = require('./lib/torbox');
+const { getTBStatus, getTBStream, getTBNZBStream, checkTBCached, tbInProgress } = require('./lib/torbox');
 const { searchNekobt, validateApiKey: validateNekobtKey, sortNekobtResults } = require('./lib/nekobt');
 const { searchByTVDB: nzbgeekSearch, searchByIMDb: nzbgeekMovieSearch, validateApiKey: validateNzbgeekKey } = require('./lib/nzbgeek');
 const { searchByAniListId: seadexSearch, findEpisodeFile: seadexFindEpisode } = require('./lib/seadex');
@@ -686,9 +686,29 @@ app.get('/:token/play-tb/:hash/:episode/video.mp4', async (req, res) => {
   const isFileIdx = epParam.startsWith('fi');
   const episode = isFileIdx ? parseInt(epParam.slice(2)) : (parseInt(epParam) || 0);
 
-  const url = await getTBStream(magnet, user.tb_api_key, episode, isFileIdx);
-  if (url) return res.redirect(302, url);
+  const hashMatch = magnet.match(/btih:([a-zA-Z0-9]+)/i);
+  const cacheKey = `tb:${(hashMatch?.[1] || '').toLowerCase()}:${isFileIdx ? 'fi' : ''}${episode}`;
+
+  // Already in progress — let other request finish, serve loading video
+  if (tbInProgress.has(cacheKey)) return serveLoadingVideo(res);
+
+  tbInProgress.add(cacheKey);
+
+  // Race full TB flow against an 8s timeout. If TB doesn't deliver in 8s,
+  // serve loading video and let the work finish in background (cache for next click).
+  const timeoutP = new Promise(r => setTimeout(() => r(null), 8000));
+  const tbP = getTBStream(magnet, user.tb_api_key, episode, isFileIdx);
+  const url = await Promise.race([tbP, timeoutP]);
+
+  if (url) {
+    tbInProgress.delete(cacheKey);
+    return res.redirect(302, url);
+  }
+
+  // Serve loading video, let TB finish in background
   serveLoadingVideo(res);
+  tbP.then(u => { if (u) console.log('  TB: ✅ Background done, cached'); })
+    .catch(() => {}).finally(() => tbInProgress.delete(cacheKey));
 });
 
 // ===== NZB PLAY PROXY =====
