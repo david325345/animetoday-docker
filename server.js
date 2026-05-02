@@ -1917,7 +1917,9 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
       const audioTag = detectAudioTag(t);
       const sourceIcon = t.seadexBest ? '🏆 ' : t.tosho ? '📡 ' : '';
       const qualityPart = t.resolution || '';
-      const audioPart = audioTag ? ` · ${audioTag}` : '';
+      // Mark tags that contain English audio with ✅
+      const audioWithMarker = audioTag === 'DUB' || audioTag === 'DUAL' ? `${audioTag} ✅` : audioTag;
+      const audioPart = audioTag ? ` · ${audioWithMarker}` : '';
       streamName = `NimeToDex ${sourceIcon}${qualityPart}${audioPart}`.trim();
     } else {
       // === Non-indexer result: legacy fallback (currently unused, indexer is sole source) ===
@@ -1928,7 +1930,8 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
       const statsLine = `👥 ${parseInt(t.seeders) || 0} | 📦 ${t.filesize || '?'}`;
       title = `${line1 ? line1 + '\n' : ''}${name}\n${statsLine}`;
       const audioTagFb = detectAudioTag(t);
-      const audioPart = audioTagFb ? ` · ${audioTagFb}` : '';
+      const audioWithMarker = audioTagFb === 'DUB' || audioTagFb === 'DUAL' ? `${audioTagFb} ✅` : audioTagFb;
+      const audioPart = audioTagFb ? ` · ${audioWithMarker}` : '';
       streamName = `NimeToDex ${quality || ''}${audioPart}`.trim();
     }
 
