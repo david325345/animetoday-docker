@@ -446,7 +446,7 @@ app.post('/api/sort-prefs/:token', express.json(), (req, res) => {
   config.saveUser(req.params.token, user);
   res.json({ success: true });
 });
-  if (Array.isArray(groupPriority)) user.groupPriority = groupPriority;
+
 // ===== TorBox API =====
 app.post('/api/torbox/save-key', express.json(), async (req, res) => {
   const { token, key } = req.body;
