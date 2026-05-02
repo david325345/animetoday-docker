@@ -1897,28 +1897,24 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
       const statsLine = statsParts.join(' · ');
 
       title = `${line1 ? line1 + '\n' : ''}${name}${fileLine}\n${statsLine}`;
-      // Build streamName: quality · audio (audio inserted between quality and service suffix)
+      // Build content streamName: "NimeToDex [🏆|📡] QUALITY · AUDIO"
+      // Service prefix [RD] / [TB ⚡] / [P2P] is prepended later when building stream objects.
       const audioTag = detectAudioTag(t);
-      const baseStreamName = t.seadexBest ? '🏆' : t.tosho ? `📡${t.resolution || ''}` : (t.resolution || '📦');
-      streamName = audioTag ? `${baseStreamName} · ${audioTag}` : baseStreamName;
+      const sourceIcon = t.seadexBest ? '🏆 ' : t.tosho ? '📡 ' : '';
+      const qualityPart = t.resolution || '';
+      const audioPart = audioTag ? ` · ${audioTag}` : '';
+      streamName = `NimeToDex ${sourceIcon}${qualityPart}${audioPart}`.trim();
     } else {
-      // === Non-indexer result: original formatting ===
+      // === Non-indexer result: legacy fallback (currently unused, indexer is sole source) ===
       const tags = [];
-      if (t.seadex) tags.push(t.isBest ? '🏆 Best' : '🏆 SeaDex');
       if (quality) tags.push(quality);
-      if (t.nekobt && t.groups?.length) tags.push(`[${t.groups[0]}]`);
-      if (t.nekobt && t.level >= 3) tags.push('⭐OTL');
-      else if (t.nekobt && t.mtl) tags.push('⚠️MTL');
       if (t.dualAudio) tags.push('Dual Audio');
       const line1 = tags.filter(Boolean).join(' · ');
-
-      const statsLine = t.seadex
-        ? `📦 ${t.filesize || '?'}`
-        : `👥 ${parseInt(t.seeders) || 0} | 📦 ${t.filesize || '?'}`;
+      const statsLine = `👥 ${parseInt(t.seeders) || 0} | 📦 ${t.filesize || '?'}`;
       title = `${line1 ? line1 + '\n' : ''}${name}\n${statsLine}`;
-      const audioTag2 = detectAudioTag(t);
-      const baseStreamName2 = t.seadex ? '🏆' : t.nekobt ? '🐱' : '🎌';
-      streamName = audioTag2 ? `${baseStreamName2} · ${audioTag2}` : baseStreamName2;
+      const audioTagFb = detectAudioTag(t);
+      const audioPart = audioTagFb ? ` · ${audioTagFb}` : '';
+      streamName = `NimeToDex ${quality || ''}${audioPart}`.trim();
     }
 
     // Check TB cache status for this torrent
@@ -1955,7 +1951,7 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
       if (ih && /^[0-9a-f]{40}$/i.test(ih)) {
         const bingeGroup = buildBinge('-p2p');
         const p2pStream = {
-          name: `${streamName} P2P`,
+          name: `[P2P]\n${streamName}`,
           title,
           infoHash: ih.toLowerCase(),
           sources: P2P_TRACKERS.map(tr => `tracker:${tr}`),
@@ -1974,7 +1970,7 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
       if (hasRD) {
         const bingeGroup = buildBinge('-rd');
         const playEp = t.fileIdx != null ? `fi${t.fileIdx}` : String(epNum);
-        const rdStream = { name: `${streamName} RD`, title,
+        const rdStream = { name: `[RD]\n${streamName}`, title,
           url: `${BASE_URL}/${token}/play/${storeMagnet(t.magnet)}/${playEp}/video.mp4`,
           behaviorHints: { bingeGroup, notWebReady: true } };
         if (t.matchedFile) {
@@ -1984,8 +1980,8 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
         streams.push(rdStream);
       }
       if (tbTorrents) {
-        const cacheIcon = tbCacheCheck ? (isTBCached ? '⚡' : '⏳') : '';
-        const tbName = cacheIcon ? `${cacheIcon}${streamName} TB` : `${streamName} TB`;
+        const cacheIcon = tbCacheCheck ? (isTBCached ? ' ⚡' : ' ⏳') : '';
+        const tbName = `[TB${cacheIcon}]\n${streamName}`;
         const tbTitle = tbCacheCheck ? (isTBCached ? `⚡ Cached\n${title}` : `⏳ Not cached\n${title}`) : title;
         const bingeGroup = buildBinge('-tb');
         const playEp = t.fileIdx != null ? `fi${t.fileIdx}` : String(epNum);
@@ -1999,7 +1995,7 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
         streams.push(tbStream);
       }
       if (!hasRD && !tbTorrents) {
-        streams.push({ name: streamName, title, url: t.magnet, behaviorHints: { notWebReady: true } });
+        streams.push({ name: `[Magnet]\n${streamName}`, title, url: t.magnet, behaviorHints: { notWebReady: true } });
       }
     }
   }
