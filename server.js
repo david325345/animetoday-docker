@@ -1897,7 +1897,10 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
       const statsLine = statsParts.join(' · ');
 
       title = `${line1 ? line1 + '\n' : ''}${name}${fileLine}\n${statsLine}`;
-      streamName = t.seadexBest ? '🏆' : t.tosho ? `📡${t.resolution || ''}` : (t.resolution || '📦');
+      // Build streamName: quality · audio (audio inserted between quality and service suffix)
+      const audioTag = detectAudioTag(t);
+      const baseStreamName = t.seadexBest ? '🏆' : t.tosho ? `📡${t.resolution || ''}` : (t.resolution || '📦');
+      streamName = audioTag ? `${baseStreamName} · ${audioTag}` : baseStreamName;
     } else {
       // === Non-indexer result: original formatting ===
       const tags = [];
@@ -1913,7 +1916,9 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
         ? `📦 ${t.filesize || '?'}`
         : `👥 ${parseInt(t.seeders) || 0} | 📦 ${t.filesize || '?'}`;
       title = `${line1 ? line1 + '\n' : ''}${name}\n${statsLine}`;
-      streamName = t.seadex ? '🏆' : t.nekobt ? '🐱' : '🎌';
+      const audioTag2 = detectAudioTag(t);
+      const baseStreamName2 = t.seadex ? '🏆' : t.nekobt ? '🐱' : '🎌';
+      streamName = audioTag2 ? `${baseStreamName2} · ${audioTag2}` : baseStreamName2;
     }
 
     // Check TB cache status for this torrent
@@ -2032,6 +2037,24 @@ app.get('/:token/nzb/manifest.json', (req, res) => {
 // ===== Language score helper for NZB sorting =====
 // Returns lowest index from langOrder found in item's language/subs/title
 // Lower = better match. Items with no match get langOrder.length (worst)
+// ===== Detect audio language tag for stream name (JP / DUB / DUAL / MULTI) =====
+// Uses indexer-provided dual_audio flag and audio_langs CSV (ISO 639-1 lowercase).
+// Returns null when audio info is unknown — caller should not append a tag.
+function detectAudioTag(t) {
+  const langs = String(t.audioLangs || '').toLowerCase().split(',').map(s => s.trim()).filter(Boolean);
+  const hasJa = langs.includes('ja');
+  const hasEn = langs.includes('en');
+  const hasMulti = langs.includes('multi');
+
+  if (t.dualAudio) return 'DUAL';
+  if (hasMulti && langs.length >= 2) return 'MULTI'; // multi + extra langs
+  if (hasJa && hasEn) return 'DUAL';
+  if (hasJa && !hasEn) return 'JP';
+  if (hasEn && !hasJa) return 'DUB';
+  if (hasMulti) return 'MULTI';
+  return null;
+}
+
 // ===== Format filesize from indexer (bytes → human readable) =====
 function formatIndexerFilesize(bytes) {
   if (!bytes) return '?';
