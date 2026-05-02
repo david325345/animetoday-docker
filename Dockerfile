@@ -1,4 +1,4 @@
-FROM node:20-alpine
+FROM node:22-alpine
 
 RUN apk add --no-cache python3 make g++ vips-dev
 RUN apk add --no-cache fontconfig ttf-dejavu font-noto
