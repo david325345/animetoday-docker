@@ -1185,17 +1185,40 @@ async function saveSortPrefs() {
 }
 
 // Init
-document.addEventListener('DOMContentLoaded',()=>{
+document.addEventListener('DOMContentLoaded', async () => {
     applyLang();
-    const saved=getCookie('token');
-    const savedRole=getCookie('role');
-    if(saved) {
-        fetch(`/api/user/${saved}`).then(r=>{
-            if(r.ok){TOKEN=saved;USER_ROLE=savedRole||'user';showApp();}
-            else document.getElementById('login-section').style.display='block';
-        }).catch(()=>document.getElementById('login-section').style.display='block');
+
+    // Check for ?token= in URL (Stremio settings gear redirects here for auto-login)
+    const urlParams = new URLSearchParams(window.location.search);
+    const urlToken = urlParams.get('token');
+    if (urlToken) {
+        try {
+            const r = await fetch(`/api/user/${urlToken}`);
+            if (r.ok) {
+                const d = await r.json();
+                TOKEN = urlToken;
+                USER_ROLE = d.role || 'user';
+                setCookie('token', TOKEN);
+                setCookie('role', USER_ROLE);
+                // Clean ?token from URL (don't expose in history/bookmarks)
+                history.replaceState(null, '', window.location.pathname);
+                showApp();
+                return;
+            }
+        } catch {}
+        // Invalid URL token — fall through to cookie / login flow
+        history.replaceState(null, '', window.location.pathname);
+    }
+
+    const saved = getCookie('token');
+    const savedRole = getCookie('role');
+    if (saved) {
+        fetch(`/api/user/${saved}`).then(r => {
+            if (r.ok) { TOKEN = saved; USER_ROLE = savedRole || 'user'; showApp(); }
+            else document.getElementById('login-section').style.display = 'block';
+        }).catch(() => document.getElementById('login-section').style.display = 'block');
     } else {
-        document.getElementById('login-section').style.display='block';
+        document.getElementById('login-section').style.display = 'block';
     }
 });
 </script>
