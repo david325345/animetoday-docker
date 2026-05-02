@@ -374,7 +374,11 @@ app.post('/api/refresh', async (req, res) => {
 app.get('/api/sort-prefs/:token', (req, res) => {
   const user = config.getUser(req.params.token);
   if (!user) return res.json({});
+  // Migrate legacy users: if no sortMode set, derive it from customSortEnabled
+  let sortMode = user.sortMode;
+  if (!sortMode) sortMode = user.customSortEnabled ? 'custom' : 'qualityThenSeeders';
   res.json({
+    sortMode,
     customSortEnabled: user.customSortEnabled || false,
     groupPriority: user.groupPriority || DEFAULT_GROUPS,
     resPriority: user.resPriority || DEFAULT_RESOLUTIONS,
@@ -391,8 +395,16 @@ app.get('/api/sort-prefs/:token', (req, res) => {
 app.post('/api/sort-prefs/:token', express.json(), (req, res) => {
   const user = config.getUser(req.params.token);
   if (!user) return res.status(404).json({ error: 'User not found' });
-  const { customSortEnabled, groupPriority, resPriority, langPriority, excludedResolutions, sortBySeeders, cachedFirst } = req.body;
-  if (typeof customSortEnabled === 'boolean') user.customSortEnabled = customSortEnabled;
+  const { sortMode, customSortEnabled, groupPriority, resPriority, langPriority, excludedResolutions, sortBySeeders, cachedFirst } = req.body;
+  const VALID_MODES = ['qualityThenSeeders', 'qualityThenSize', 'seeders', 'size', 'custom'];
+  if (typeof sortMode === 'string' && VALID_MODES.includes(sortMode)) {
+    user.sortMode = sortMode;
+    // Keep legacy flag in sync so older code paths still work
+    user.customSortEnabled = (sortMode === 'custom');
+  } else if (typeof customSortEnabled === 'boolean') {
+    user.customSortEnabled = customSortEnabled;
+    if (!user.sortMode) user.sortMode = customSortEnabled ? 'custom' : 'qualityThenSeeders';
+  }
   if (Array.isArray(groupPriority)) user.groupPriority = groupPriority;
   if (Array.isArray(resPriority)) user.resPriority = resPriority;
   if (Array.isArray(langPriority)) user.langPriority = langPriority;
@@ -2268,28 +2280,39 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
     })),
   ].filter(n => n.r2_key); // Only show NZBs that are on R2
 
-  // Filter and sort NZB results using user preferences
+  // Filter and sort NZB results using user preferences (preset modes)
   let sorted = allNzb;
-  if (user?.customSortEnabled) {
-    const resOrder = user.resPriority || DEFAULT_RESOLUTIONS;
-    const excludedRes = new Set((user.excludedResolutions || []).map(r => r.toLowerCase()));
+  let sortMode = user?.sortMode;
+  if (!sortMode) sortMode = user?.customSortEnabled ? 'custom' : 'qualityThenSeeders';
 
-    // Filter excluded resolutions
+  const resOrder = user?.resPriority || DEFAULT_RESOLUTIONS;
+  const getNzbResRank = (t) => {
+    const res = detectQuality(t.name);
+    if (!res) return resOrder.length;
+    const idx = resOrder.indexOf(res);
+    return idx >= 0 ? idx : resOrder.length;
+  };
+
+  if (sortMode === 'qualityThenSeeders' || sortMode === 'qualityThenSize') {
+    // NZB has no seeders, both modes sort by quality then size
+    sorted.sort((a, b) => {
+      const r = getNzbResRank(a) - getNzbResRank(b);
+      if (r !== 0) return r;
+      return (b.size || 0) - (a.size || 0);
+    });
+  } else if (sortMode === 'seeders' || sortMode === 'size') {
+    // NZB has no seeders → both fall to size
+    sorted.sort((a, b) => (b.size || 0) - (a.size || 0));
+  } else if (sortMode === 'custom' && user?.customSortEnabled) {
+    const excludedRes = new Set((user.excludedResolutions || []).map(r => r.toLowerCase()));
     sorted = sorted.filter(t => {
       const res = detectQuality(t.name);
       if (res && excludedRes.has(res.toLowerCase())) return false;
       return true;
     });
-
-    // Sort by resolution priority → size
     sorted.sort((a, b) => {
-      const aRes = detectQuality(a.name);
-      const bRes = detectQuality(b.name);
-      const aResIdx = aRes ? resOrder.indexOf(aRes) : -1;
-      const bResIdx = bRes ? resOrder.indexOf(bRes) : -1;
-      const aResPri = aResIdx >= 0 ? aResIdx : resOrder.length;
-      const bResPri = bResIdx >= 0 ? bResIdx : resOrder.length;
-      if (aResPri !== bResPri) return aResPri - bResPri;
+      const r = getNzbResRank(a) - getNzbResRank(b);
+      if (r !== 0) return r;
       return (b.size || 0) - (a.size || 0);
     });
   }
