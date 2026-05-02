@@ -385,6 +385,7 @@ app.get('/api/sort-prefs/:token', (req, res) => {
     langPriority: user.langPriority || [],
     excludedResolutions: user.excludedResolutions || [],
     sortBySeeders: user.sortBySeeders !== false,
+    dubFirst: user.dubFirst || false,
     cachedFirst: user.cachedFirst || false,
     defaultGroups: DEFAULT_GROUPS,
     defaultResolutions: DEFAULT_RESOLUTIONS,
@@ -395,7 +396,7 @@ app.get('/api/sort-prefs/:token', (req, res) => {
 app.post('/api/sort-prefs/:token', express.json(), (req, res) => {
   const user = config.getUser(req.params.token);
   if (!user) return res.status(404).json({ error: 'User not found' });
-  const { sortMode, customSortEnabled, groupPriority, resPriority, langPriority, excludedResolutions, sortBySeeders, cachedFirst } = req.body;
+  const { sortMode, customSortEnabled, groupPriority, resPriority, langPriority, excludedResolutions, sortBySeeders, dubFirst, cachedFirst } = req.body;
   const VALID_MODES = ['qualityThenSeeders', 'qualityThenSize', 'seeders', 'size', 'custom'];
   if (typeof sortMode === 'string' && VALID_MODES.includes(sortMode)) {
     user.sortMode = sortMode;
@@ -410,6 +411,7 @@ app.post('/api/sort-prefs/:token', express.json(), (req, res) => {
   if (Array.isArray(langPriority)) user.langPriority = langPriority;
   if (Array.isArray(excludedResolutions)) user.excludedResolutions = excludedResolutions;
   if (typeof sortBySeeders === 'boolean') user.sortBySeeders = sortBySeeders;
+  if (typeof dubFirst === 'boolean') user.dubFirst = dubFirst;
   if (typeof cachedFirst === 'boolean') user.cachedFirst = cachedFirst;
   config.saveUser(req.params.token, user);
   res.json({ success: true });
@@ -1854,6 +1856,19 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
     const cached = allResults.filter(t => tbCacheMap[getHash(t)]);
     const notCached = allResults.filter(t => !tbCacheMap[getHash(t)]);
     allResults = [...cached, ...notCached];
+  }
+
+  // Sort EN/Dub first if enabled — anything with English audio (DUB or DUAL) goes to top.
+  // Applied after cachedFirst so EN audio takes priority; within each bucket the previous order is preserved.
+  if (user?.dubFirst) {
+    const hasEN = (t) => {
+      if (!t) return false;
+      const langs = String(t.audioLangs || '').toLowerCase().split(',').map(s => s.trim()).filter(Boolean);
+      return langs.includes('en');
+    };
+    const withEN = allResults.filter(hasEN);
+    const withoutEN = allResults.filter(t => !hasEN(t));
+    allResults = [...withEN, ...withoutEN];
   }
 
   const streams = [];
