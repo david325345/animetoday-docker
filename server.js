@@ -97,6 +97,20 @@ function getUserFromToken(token) {
 // ===== Landing page =====
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
+// ===== Stremio addon configure endpoints =====
+// When user clicks the gear icon in Stremio, it opens BASE_URL/{token}/configure (or similar).
+// We redirect to the main web UI with ?token=XXX so frontend can auto-login.
+app.get('/:token/configure', (req, res) => {
+  res.redirect(302, `/?token=${encodeURIComponent(req.params.token)}`);
+});
+// Also handle per-addon configure paths (Stremio sometimes uses these)
+app.get('/:token/today/configure', (req, res) => {
+  res.redirect(302, `/?token=${encodeURIComponent(req.params.token)}`);
+});
+app.get('/:token/nzb/configure', (req, res) => {
+  res.redirect(302, `/?token=${encodeURIComponent(req.params.token)}`);
+});
+
 // ===== USER API =====
 // Auth: Login with username/password
 app.post('/api/auth/login', express.json(), (req, res) => {
@@ -777,7 +791,7 @@ app.get('/:token/nzb-refresh/:imdb/:season/:episode/video.mp4', async (req, res)
 app.get('/:token/today/manifest.json', (req, res) => {
   res.json({
     id: 'cz.nyaa.anime.today.v8',
-    version: '8.0.0',
+    version: '8.1.0',
     name: 'Anime Today',
     description: 'Anime schedule from SIMKL — today + 2 days ahead with posters and ratings.',
     logo: `${BASE_URL}/logo.png`,
@@ -785,7 +799,7 @@ app.get('/:token/today/manifest.json', (req, res) => {
     types: ['series'],
     catalogs: [{ type: 'series', id: 'anime-today', name: 'Anime Schedule', extra: [{ name: 'skip', isRequired: false }] }],
     idPrefixes: ['at:'],
-    behaviorHints: { configurable: false, configurationRequired: false }
+    behaviorHints: { configurable: true, configurationRequired: false }
   });
 });
 
@@ -1033,7 +1047,7 @@ app.get('/:token/nyaa/manifest.json', (req, res) => {
   }
   res.json({
     id: 'cz.nyaa.search.v7',
-    version: '7.2.0',
+    version: '7.3.0',
     name: 'NimeToDex',
     description: 'Anime torrent indexer + RealDebrid/TorBox. Funguje s Cinemeta/Kitsu/Anime Today.',
     logo: `${BASE_URL}/logo-nyaa.png`,
@@ -1044,7 +1058,7 @@ app.get('/:token/nyaa/manifest.json', (req, res) => {
       { type: 'movie', id: 'nimetodex-today', name: 'NimeToDex — Added today', extra: [{ name: 'skip' }] }
     ],
     idPrefixes: ['at:', 'kitsu:', 'tt', 'tvdb:', 'anilist:'],
-    behaviorHints: { configurable: false, configurationRequired: false }
+    behaviorHints: { configurable: true, configurationRequired: false }
   });
 });
 
@@ -2020,7 +2034,8 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
       if (tbTorrents) {
         const cacheIcon = tbCacheCheck ? (isTBCached ? ' ⚡' : ' ⏳') : '';
         const tbName = `[TB${cacheIcon}]\n${streamName}`;
-        const tbTitle = tbCacheCheck ? (isTBCached ? `⚡ Cached\n${title}` : `⏳ Not cached\n${title}`) : title;
+        // Cache state already shown in name as [TB ⚡] / [TB ⏳], no need to duplicate in title
+        const tbTitle = title;
         const bingeGroup = buildBinge('-tb');
         const playEp = t.fileIdx != null ? `fi${t.fileIdx}` : String(epNum);
         const tbStream = { name: tbName, title: tbTitle,
@@ -2056,7 +2071,7 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
 app.get('/:token/nzb/manifest.json', (req, res) => {
   res.json({
     id: 'cz.nzb.search.v2',
-    version: '2.0.0',
+    version: '2.1.0',
     name: 'NimeToDex NZB',
     description: 'Anime NZB from NimeToDex indexer — Usenet streaming via TorBox.',
     logo: `${BASE_URL}/logo-nzb.png`,
@@ -2064,7 +2079,7 @@ app.get('/:token/nzb/manifest.json', (req, res) => {
     types: ['series', 'movie'],
     catalogs: [],
     idPrefixes: ['at:', 'kitsu:', 'tt', 'tvdb:', 'anilist:'],
-    behaviorHints: { configurable: false, configurationRequired: false }
+    behaviorHints: { configurable: true, configurationRequired: false }
   });
 });
 
