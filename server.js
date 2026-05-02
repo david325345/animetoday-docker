@@ -1959,7 +1959,7 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
       // Stats line
       const statsParts = [];
       statsParts.push(`👥 ${parseInt(t.seeders) || 0}`);
-      statsParts.push(`📦 ${t.filesize || '?'}`);
+      statsParts.push(formatSizeWithIcon(t));
       if (t.batch && t.fileCount) statsParts.push(`${t.fileCount} files`);
       const statsLine = statsParts.join(' · ');
 
@@ -1979,7 +1979,7 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
       if (quality) tags.push(quality);
       if (t.dualAudio) tags.push('Dual Audio');
       const line1 = tags.filter(Boolean).join(' · ');
-      const statsLine = `👥 ${parseInt(t.seeders) || 0} | 📦 ${t.filesize || '?'}`;
+      const statsLine = `👥 ${parseInt(t.seeders) || 0} | ${formatSizeWithIcon(t)}`;
       title = `${line1 ? line1 + '\n' : ''}${name}\n${statsLine}`;
       const audioTagFb = detectAudioTag(t);
       const audioWithMarker = audioTagFb === 'DUB' || audioTagFb === 'DUAL' ? `${audioTagFb} ✅` : audioTagFb;
@@ -2120,6 +2120,21 @@ function detectAudioTag(t) {
   if (hasEn && !hasJa) return 'DUB';
   if (hasMulti) return 'MULTI';
   return null;
+}
+
+// ===== Format filesize with icon: 💾 single, 📦 batch (ep / total) =====
+function formatSizeWithIcon(t) {
+  const isBatch = t.batch === true || (t.matchedFile != null) || (t.fileCount > 1);
+  if (isBatch) {
+    // Batch — show ep size / total size if both available
+    if (t.matchedFile?.size && t.filesizeBytes) {
+      return `📦 ${formatIndexerFilesize(t.matchedFile.size)} / ${formatIndexerFilesize(t.filesizeBytes)}`;
+    }
+    // Fallback: only total known
+    return `📦 ${t.filesize || '?'}`;
+  }
+  // Single file (movie or single ep)
+  return `💾 ${t.filesize || '?'}`;
 }
 
 // ===== Format filesize from indexer (bytes → human readable) =====
