@@ -331,19 +331,27 @@
         <!-- Řazení -->
         <div class="section">
             <div class="section-title" data-i18n="sort.title">⚙️ Řazení výsledků</div>
+
+            <div class="row" style="align-items:center;">
+                <div class="row-label" data-i18n="sort.mode">Režim řazení</div>
+                <select id="sort-mode-select" class="input" style="max-width:240px;font-family:'Outfit',sans-serif;" onchange="onSortModeChange()">
+                    <option value="qualityThenSeeders" data-i18n="sort.modeQualitySeeders">By quality then seeders</option>
+                    <option value="qualityThenSize" data-i18n="sort.modeQualitySize">By quality then size</option>
+                    <option value="seeders" data-i18n="sort.modeSeeders">By seeders</option>
+                    <option value="size" data-i18n="sort.modeSize">By size</option>
+                    <option value="custom" data-i18n="sort.modeCustom">Custom (advanced)</option>
+                </select>
+            </div>
+
             <div class="row">
-                <div class="row-label" data-i18n="sort.custom">Vlastní řazení</div>
-                <button class="toggle off" id="sort-enabled-toggle" onclick="toggleCustomSort()"></button>
+                <div class="row-label"><span data-i18n="sort.cachedFirst">Cached první</span> <small data-i18n="sort.cachedFirstHint">TorBox cache nahoře</small></div>
+                <button class="toggle off" id="sort-cached-toggle" onclick="toggleCachedFirst()"></button>
             </div>
 
             <div id="sort-prefs-panel" style="display:none;">
                 <div class="row">
                     <div class="row-label" data-i18n="sort.bySeeders">Řadit podle seeders</div>
                     <button class="toggle on" id="sort-seeders-toggle" onclick="toggleSortSeeders()"></button>
-                </div>
-                <div class="row">
-                    <div class="row-label"><span data-i18n="sort.cachedFirst">Cached první</span> <small data-i18n="sort.cachedFirstHint">TorBox cache nahoře</small></div>
-                    <button class="toggle off" id="sort-cached-toggle" onclick="toggleCachedFirst()"></button>
                 </div>
 
                 <div class="sort-grid">
@@ -473,6 +481,12 @@ const I18N = {
         'tb.keyPlaceholder': 'TorBox API key',
         // Sort section
         'sort.title': '⚙️ Result sorting',
+        'sort.mode': 'Sorting mode',
+        'sort.modeQualitySeeders': 'By quality then seeders',
+        'sort.modeQualitySize': 'By quality then size',
+        'sort.modeSeeders': 'By seeders',
+        'sort.modeSize': 'By size',
+        'sort.modeCustom': 'Custom (advanced)',
         'sort.custom': 'Custom sort',
         'sort.bySeeders': 'Sort by seeders',
         'sort.cachedFirst': 'Cached first',
@@ -591,6 +605,12 @@ const I18N = {
         'tb.cacheCheckHint': '⚡ / ⏳ u streamů',
         'tb.keyPlaceholder': 'TorBox API klíč',
         'sort.title': '⚙️ Řazení výsledků',
+        'sort.mode': 'Režim řazení',
+        'sort.modeQualitySeeders': 'Podle kvality, pak seederů',
+        'sort.modeQualitySize': 'Podle kvality, pak velikosti',
+        'sort.modeSeeders': 'Podle seederů',
+        'sort.modeSize': 'Podle velikosti',
+        'sort.modeCustom': 'Vlastní (pokročilé)',
         'sort.custom': 'Vlastní řazení',
         'sort.bySeeders': 'Řadit podle seeders',
         'sort.cachedFirst': 'Cached první',
@@ -1038,7 +1058,7 @@ async function toggleAnime(id,hidden) {
 }
 
 // Sort Preferences
-let sortPrefs = { customSortEnabled:false, groupPriority:[], resPriority:[], langPriority:[], excludedResolutions:[], sortBySeeders:true, cachedFirst:false, defaultGroups:[], defaultResolutions:[], defaultLangs:[] };
+let sortPrefs = { sortMode:'qualityThenSeeders', customSortEnabled:false, groupPriority:[], resPriority:[], langPriority:[], excludedResolutions:[], sortBySeeders:true, cachedFirst:false, defaultGroups:[], defaultResolutions:[], defaultLangs:[] };
 
 async function loadSortPrefs() {
     try {
@@ -1050,9 +1070,10 @@ async function loadSortPrefs() {
 }
 
 function renderSortPrefs() {
-    const tog = document.getElementById('sort-enabled-toggle');
-    tog.className = sortPrefs.customSortEnabled ? 'toggle on' : 'toggle off';
-    document.getElementById('sort-prefs-panel').style.display = sortPrefs.customSortEnabled ? 'block' : 'none';
+    const sel = document.getElementById('sort-mode-select');
+    if (sel) sel.value = sortPrefs.sortMode || 'qualityThenSeeders';
+    const showAdvanced = (sortPrefs.sortMode === 'custom');
+    document.getElementById('sort-prefs-panel').style.display = showAdvanced ? 'block' : 'none';
     const stog = document.getElementById('sort-seeders-toggle');
     stog.className = sortPrefs.sortBySeeders !== false ? 'toggle on' : 'toggle off';
     const ctog = document.getElementById('sort-cached-toggle');
@@ -1066,6 +1087,14 @@ function renderSortPrefs() {
         const checked = (sortPrefs.excludedResolutions || []).includes(r) ? 'checked' : '';
         return `<label><input type="checkbox" ${checked} onchange="toggleExcludeRes('${r}', this.checked)"> ${r}</label>`;
     }).join('');
+}
+
+function onSortModeChange() {
+    const sel = document.getElementById('sort-mode-select');
+    sortPrefs.sortMode = sel.value;
+    sortPrefs.customSortEnabled = (sel.value === 'custom');
+    saveSortPrefs();
+    renderSortPrefs();
 }
 
 function renderSortList(containerId, items, type) {
@@ -1095,7 +1124,6 @@ function renderSortList(containerId, items, type) {
     });
 }
 
-function toggleCustomSort() { sortPrefs.customSortEnabled = !sortPrefs.customSortEnabled; saveSortPrefs(); renderSortPrefs(); }
 function toggleSortSeeders() { sortPrefs.sortBySeeders = !sortPrefs.sortBySeeders; saveSortPrefs(); renderSortPrefs(); }
 function toggleCachedFirst() { sortPrefs.cachedFirst = !sortPrefs.cachedFirst; saveSortPrefs(); renderSortPrefs(); }
 
@@ -1129,6 +1157,7 @@ async function saveSortPrefs() {
         await fetch(`/api/sort-prefs/${TOKEN}`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
+                sortMode: sortPrefs.sortMode,
                 customSortEnabled: sortPrefs.customSortEnabled,
                 groupPriority: sortPrefs.groupPriority,
                 resPriority: sortPrefs.resPriority,
