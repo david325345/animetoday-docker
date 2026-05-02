@@ -1602,27 +1602,36 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
     }
   }
 
-  // Sort EN/Dub first — applied BEFORE cachedFirst so cache wins (cached EN > uncached EN > cached JP > uncached JP).
-  if (user?.dubFirst) {
+  // Combined priority sort: cachedFirst + dubFirst combine into a 4-bucket priority order.
+  // When both toggles are ON: cached+EN > uncached+EN > cached+JP > uncached+JP (EN priority, cache as tie-breaker).
+  // When only one is ON: simple 2-bucket partition for that dimension.
+  // Inside each bucket the preset sort is applied for consistent ordering.
+  const cacheActive = tbCacheCheck && user?.cachedFirst && Object.keys(tbCacheMap).length > 0;
+  const dubActive = !!user?.dubFirst;
+
+  if (cacheActive || dubActive) {
+    const getHash = t => (t.infohash || t.magnet?.match(/btih:([a-zA-Z0-9]+)/i)?.[1] || '').toLowerCase();
+    const isCached = t => cacheActive && !!tbCacheMap[getHash(t)];
     const hasEN = (t) => {
       if (!t) return false;
-      if (t.dualAudio) return true; // dual = ja + en (catches streams with dualAudio flag but empty audio_langs)
+      if (t.dualAudio) return true; // dual = ja + en
       const langs = String(t.audioLangs || '').toLowerCase().split(',').map(s => s.trim()).filter(Boolean);
       return langs.includes('en');
     };
-    const withEN = allResults.filter(hasEN);
-    const withoutEN = allResults.filter(t => !hasEN(t));
-    allResults = [...sortByGroupPriority(withEN, user || null), ...sortByGroupPriority(withoutEN, user || null)];
-  }
 
-  // Sort cached first — applied LAST so cache has the final say. Each bucket re-sorted with the preset.
-  if (tbCacheCheck && user?.cachedFirst && Object.keys(tbCacheMap).length) {
-    const getHash = t => (t.infohash || t.magnet?.match(/btih:([a-zA-Z0-9]+)/i)?.[1] || '').toLowerCase();
-    const cached = allResults.filter(t => tbCacheMap[getHash(t)]);
-    const notCached = allResults.filter(t => !tbCacheMap[getHash(t)]);
-    allResults = [...sortByGroupPriority(cached, user || null), ...sortByGroupPriority(notCached, user || null)];
-    console.log(`  ⚡ cachedFirst: ${cached.length} cached, ${notCached.length} not cached`);
-    console.log(`  🏁 Top 3 after sort: ${allResults.slice(0, 3).map(t => `[${tbCacheMap[getHash(t)]?'⚡':'⏳'}] ${t.resolution||'?'} ${t.audioLangs||'-'}${t.dualAudio?' D':''}`).join(' | ')}`);
+    // Higher score = higher priority. EN weight=2, cache weight=1 → EN dominates, cache as tie-breaker.
+    const score = t => (dubActive && hasEN(t) ? 2 : 0) + (cacheActive && isCached(t) ? 1 : 0);
+
+    const buckets = { 3: [], 2: [], 1: [], 0: [] };
+    for (const t of allResults) buckets[score(t)].push(t);
+    allResults = [
+      ...sortByGroupPriority(buckets[3], user || null),
+      ...sortByGroupPriority(buckets[2], user || null),
+      ...sortByGroupPriority(buckets[1], user || null),
+      ...sortByGroupPriority(buckets[0], user || null),
+    ];
+
+    console.log(`  🎯 priority sort: cached+EN=${buckets[3].length} | EN=${buckets[2].length} | cached=${buckets[1].length} | rest=${buckets[0].length}`);
   }
 
   const streams = [];
