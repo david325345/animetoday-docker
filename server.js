@@ -1608,6 +1608,7 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
     const cached = allResults.filter(t => tbCacheMap[getHash(t)]);
     const notCached = allResults.filter(t => !tbCacheMap[getHash(t)]);
     allResults = [...sortByGroupPriority(cached, user || null), ...sortByGroupPriority(notCached, user || null)];
+    console.log(`  ⚡ cachedFirst: ${cached.length} cached, ${notCached.length} not cached`);
   }
 
   // Sort EN/Dub first if enabled — streams with English audio go to top, but within each bucket
@@ -1621,7 +1622,18 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
     const withEN = allResults.filter(hasEN);
     const withoutEN = allResults.filter(t => !hasEN(t));
     allResults = [...sortByGroupPriority(withEN, user || null), ...sortByGroupPriority(withoutEN, user || null)];
+    console.log(`  🇬🇧 dubFirst: ${withEN.length} with EN, ${withoutEN.length} without`);
   }
+
+  // Debug: show top 5 final order
+  console.log(`  🏁 Final top 5:`);
+  allResults.slice(0, 5).forEach((t, i) => {
+    const sz = t.matchedFile?.size || t.filesizeBytes || 0;
+    const szStr = sz >= 1e9 ? `${(sz/1e9).toFixed(1)}GB` : sz >= 1e6 ? `${(sz/1e6).toFixed(0)}MB` : '?';
+    const hash = (t.infohash || t.magnet?.match(/btih:([a-zA-Z0-9]+)/i)?.[1] || '').toLowerCase();
+    const cached = tbCacheMap[hash] ? '⚡' : '⏳';
+    console.log(`    ${i+1}. [${cached}] ${t.resolution || '???'} · ${szStr} · ${t.audioLangs || '-'} · ${t.name?.slice(0, 60)}`);
+  });
 
   const streams = [];
   for (const t of allResults) {
