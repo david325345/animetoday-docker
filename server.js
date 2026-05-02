@@ -1822,18 +1822,18 @@ function detectAudioTag(t) {
   return null;
 }
 
-// ===== Format filesize with icon: 💾 single, 📦 batch (ep / total) =====
+// ===== Format filesize with icon =====
+// Single file (movie / single ep):  💾 1.2 GB
+// Batch with episode picked:        💾 956 MB / 📦 1.2 GB
+// Batch without episode size:       📦 1.2 GB
 function formatSizeWithIcon(t) {
   const isBatch = t.batch === true || (t.matchedFile != null) || (t.fileCount > 1);
   if (isBatch) {
-    // Batch — show ep size / total size if both available
     if (t.matchedFile?.size && t.filesizeBytes) {
-      return `📦 ${formatIndexerFilesize(t.matchedFile.size)} / ${formatIndexerFilesize(t.filesizeBytes)}`;
+      return `💾 ${formatIndexerFilesize(t.matchedFile.size)} / 📦 ${formatIndexerFilesize(t.filesizeBytes)}`;
     }
-    // Fallback: only total known
     return `📦 ${t.filesize || '?'}`;
   }
-  // Single file (movie or single ep)
   return `💾 ${t.filesize || '?'}`;
 }
 
