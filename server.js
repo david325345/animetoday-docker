@@ -391,17 +391,26 @@ app.post('/api/refresh', async (req, res) => {
 app.get('/api/sort-prefs/:token', (req, res) => {
   const user = config.getUser(req.params.token);
   if (!user) return res.json({});
-  // Migrate legacy users: if no sortMode set, derive it from customSortEnabled
+  // Migrate legacy users: 'custom' → 'qualityThenSeeders'; map customSortEnabled to all per-filter toggles ON.
   let sortMode = user.sortMode;
-  if (!sortMode) sortMode = user.customSortEnabled ? 'custom' : 'qualityThenSeeders';
+  if (!sortMode || sortMode === 'custom') {
+    sortMode = 'qualityThenSeeders';
+  }
+  // Migration: if user previously had customSortEnabled=true and any filter list set, default toggles ON for those.
+  const hadLegacyCustom = !!user.customSortEnabled;
   res.json({
     sortMode,
-    customSortEnabled: user.customSortEnabled || false,
+    // Per-filter toggles
+    groupsEnabled: typeof user.groupsEnabled === 'boolean' ? user.groupsEnabled : hadLegacyCustom,
+    resEnabled: typeof user.resEnabled === 'boolean' ? user.resEnabled : hadLegacyCustom,
+    excludeResEnabled: typeof user.excludeResEnabled === 'boolean' ? user.excludeResEnabled : hadLegacyCustom,
+    langsEnabled: typeof user.langsEnabled === 'boolean' ? user.langsEnabled : hadLegacyCustom,
+    // Lists (used when corresponding toggle is ON)
     groupPriority: user.groupPriority || DEFAULT_GROUPS,
     resPriority: user.resPriority || DEFAULT_RESOLUTIONS,
     langPriority: user.langPriority || [],
     excludedResolutions: user.excludedResolutions || [],
-    sortBySeeders: user.sortBySeeders !== false,
+    // Top-level toggles (apply across all modes)
     dubFirst: user.dubFirst || false,
     cachedFirst: user.cachedFirst || false,
     defaultGroups: DEFAULT_GROUPS,
@@ -413,27 +422,31 @@ app.get('/api/sort-prefs/:token', (req, res) => {
 app.post('/api/sort-prefs/:token', express.json(), (req, res) => {
   const user = config.getUser(req.params.token);
   if (!user) return res.status(404).json({ error: 'User not found' });
-  const { sortMode, customSortEnabled, groupPriority, resPriority, langPriority, excludedResolutions, sortBySeeders, dubFirst, cachedFirst } = req.body;
-  const VALID_MODES = ['qualityThenSeeders', 'qualityThenSize', 'seeders', 'size', 'custom'];
+  const {
+    sortMode,
+    groupsEnabled, resEnabled, excludeResEnabled, langsEnabled,
+    groupPriority, resPriority, langPriority, excludedResolutions,
+    dubFirst, cachedFirst
+  } = req.body;
+  const VALID_MODES = ['qualityThenSeeders', 'qualityThenSize', 'seeders', 'size'];
   if (typeof sortMode === 'string' && VALID_MODES.includes(sortMode)) {
     user.sortMode = sortMode;
-    // Keep legacy flag in sync so older code paths still work
-    user.customSortEnabled = (sortMode === 'custom');
-  } else if (typeof customSortEnabled === 'boolean') {
-    user.customSortEnabled = customSortEnabled;
-    if (!user.sortMode) user.sortMode = customSortEnabled ? 'custom' : 'qualityThenSeeders';
+    user.customSortEnabled = false; // legacy flag kept off — no longer used for sort logic
   }
+  if (typeof groupsEnabled === 'boolean') user.groupsEnabled = groupsEnabled;
+  if (typeof resEnabled === 'boolean') user.resEnabled = resEnabled;
+  if (typeof excludeResEnabled === 'boolean') user.excludeResEnabled = excludeResEnabled;
+  if (typeof langsEnabled === 'boolean') user.langsEnabled = langsEnabled;
   if (Array.isArray(groupPriority)) user.groupPriority = groupPriority;
   if (Array.isArray(resPriority)) user.resPriority = resPriority;
   if (Array.isArray(langPriority)) user.langPriority = langPriority;
   if (Array.isArray(excludedResolutions)) user.excludedResolutions = excludedResolutions;
-  if (typeof sortBySeeders === 'boolean') user.sortBySeeders = sortBySeeders;
   if (typeof dubFirst === 'boolean') user.dubFirst = dubFirst;
   if (typeof cachedFirst === 'boolean') user.cachedFirst = cachedFirst;
   config.saveUser(req.params.token, user);
   res.json({ success: true });
 });
-
+  if (Array.isArray(groupPriority)) user.groupPriority = groupPriority;
 // ===== TorBox API =====
 app.post('/api/torbox/save-key', express.json(), async (req, res) => {
   const { token, key } = req.body;
@@ -2357,10 +2370,10 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
     })),
   ].filter(n => n.r2_key); // Only show NZBs that are on R2
 
-  // Filter and sort NZB results using user preferences (preset modes)
+  // Filter and sort NZB results using user preferences (4 preset modes + per-filter toggles)
   let sorted = allNzb;
   let sortMode = user?.sortMode;
-  if (!sortMode) sortMode = user?.customSortEnabled ? 'custom' : 'qualityThenSeeders';
+  if (!sortMode || sortMode === 'custom') sortMode = 'qualityThenSeeders';
 
   const resOrder = user?.resPriority || DEFAULT_RESOLUTIONS;
   const getNzbResRank = (t) => {
@@ -2370,28 +2383,27 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
     return idx >= 0 ? idx : resOrder.length;
   };
 
+  // Pre-filter: exclude resolutions if toggle ON
+  if (user?.excludeResEnabled) {
+    const excludedRes = new Set((user.excludedResolutions || []).map(r => r.toLowerCase()));
+    if (excludedRes.size) {
+      sorted = sorted.filter(t => {
+        const res = detectQuality(t.name);
+        if (res && excludedRes.has(res.toLowerCase())) return false;
+        return true;
+      });
+    }
+  }
+
+  // Sort (NZB has no seeders, so all modes effectively use size as secondary)
   if (sortMode === 'qualityThenSeeders' || sortMode === 'qualityThenSize') {
-    // NZB has no seeders, both modes sort by quality then size
     sorted.sort((a, b) => {
       const r = getNzbResRank(a) - getNzbResRank(b);
       if (r !== 0) return r;
       return (b.size || 0) - (a.size || 0);
     });
   } else if (sortMode === 'seeders' || sortMode === 'size') {
-    // NZB has no seeders → both fall to size
     sorted.sort((a, b) => (b.size || 0) - (a.size || 0));
-  } else if (sortMode === 'custom' && user?.customSortEnabled) {
-    const excludedRes = new Set((user.excludedResolutions || []).map(r => r.toLowerCase()));
-    sorted = sorted.filter(t => {
-      const res = detectQuality(t.name);
-      if (res && excludedRes.has(res.toLowerCase())) return false;
-      return true;
-    });
-    sorted.sort((a, b) => {
-      const r = getNzbResRank(a) - getNzbResRank(b);
-      if (r !== 0) return r;
-      return (b.size || 0) - (a.size || 0);
-    });
   }
   const topNzb = sorted.slice(0, 20);
 
