@@ -344,6 +344,11 @@
             </div>
 
             <div class="row">
+                <div class="row-label"><span data-i18n="sort.dubFirst">EN/Dub první</span> <small data-i18n="sort.dubFirstHint">Anglické audio nahoře</small></div>
+                <button class="toggle off" id="sort-dub-toggle" onclick="toggleDubFirst()"></button>
+            </div>
+
+            <div class="row">
                 <div class="row-label"><span data-i18n="sort.cachedFirst">Cached první</span> <small data-i18n="sort.cachedFirstHint">TorBox cache nahoře</small></div>
                 <button class="toggle off" id="sort-cached-toggle" onclick="toggleCachedFirst()"></button>
             </div>
@@ -491,6 +496,8 @@ const I18N = {
         'sort.bySeeders': 'Sort by seeders',
         'sort.cachedFirst': 'Cached first',
         'sort.cachedFirstHint': 'TorBox cache on top',
+        'sort.dubFirst': 'EN/Dub first',
+        'sort.dubFirstHint': 'English audio on top',
         'sort.groupPriority': 'Group priority',
         'sort.resPriority': 'Resolution priority',
         'sort.excludeRes': 'Exclude resolutions',
@@ -615,6 +622,8 @@ const I18N = {
         'sort.bySeeders': 'Řadit podle seeders',
         'sort.cachedFirst': 'Cached první',
         'sort.cachedFirstHint': 'TorBox cache nahoře',
+        'sort.dubFirst': 'EN/Dub první',
+        'sort.dubFirstHint': 'Anglické audio nahoře',
         'sort.groupPriority': 'Priorita skupin',
         'sort.resPriority': 'Priorita rozlišení',
         'sort.excludeRes': 'Vyloučit rozlišení',
@@ -1058,7 +1067,7 @@ async function toggleAnime(id,hidden) {
 }
 
 // Sort Preferences
-let sortPrefs = { sortMode:'qualityThenSeeders', customSortEnabled:false, groupPriority:[], resPriority:[], langPriority:[], excludedResolutions:[], sortBySeeders:true, cachedFirst:false, defaultGroups:[], defaultResolutions:[], defaultLangs:[] };
+let sortPrefs = { sortMode:'qualityThenSeeders', customSortEnabled:false, groupPriority:[], resPriority:[], langPriority:[], excludedResolutions:[], sortBySeeders:true, dubFirst:false, cachedFirst:false, defaultGroups:[], defaultResolutions:[], defaultLangs:[] };
 
 async function loadSortPrefs() {
     try {
@@ -1078,6 +1087,8 @@ function renderSortPrefs() {
     stog.className = sortPrefs.sortBySeeders !== false ? 'toggle on' : 'toggle off';
     const ctog = document.getElementById('sort-cached-toggle');
     ctog.className = sortPrefs.cachedFirst ? 'toggle on' : 'toggle off';
+    const dtog = document.getElementById('sort-dub-toggle');
+    if (dtog) dtog.className = sortPrefs.dubFirst ? 'toggle on' : 'toggle off';
     renderSortList('group-list', sortPrefs.groupPriority, 'group');
     renderSortList('res-list', sortPrefs.resPriority, 'res');
     renderSortList('lang-list', sortPrefs.langPriority || [], 'lang');
@@ -1126,6 +1137,7 @@ function renderSortList(containerId, items, type) {
 
 function toggleSortSeeders() { sortPrefs.sortBySeeders = !sortPrefs.sortBySeeders; saveSortPrefs(); renderSortPrefs(); }
 function toggleCachedFirst() { sortPrefs.cachedFirst = !sortPrefs.cachedFirst; saveSortPrefs(); renderSortPrefs(); }
+function toggleDubFirst() { sortPrefs.dubFirst = !sortPrefs.dubFirst; saveSortPrefs(); renderSortPrefs(); }
 
 function toggleExcludeRes(res, exclude) {
     if (!sortPrefs.excludedResolutions) sortPrefs.excludedResolutions = [];
@@ -1147,6 +1159,7 @@ function resetSortPrefs() {
     sortPrefs.langPriority = [...(sortPrefs.defaultLangs || [])];
     sortPrefs.excludedResolutions = [];
     sortPrefs.sortBySeeders = true;
+    sortPrefs.dubFirst = false;
     sortPrefs.cachedFirst = false;
     saveSortPrefs(); renderSortPrefs();
     toast(t('toast.sortReset'));
@@ -1164,6 +1177,7 @@ async function saveSortPrefs() {
                 langPriority: sortPrefs.langPriority,
                 excludedResolutions: sortPrefs.excludedResolutions,
                 sortBySeeders: sortPrefs.sortBySeeders,
+                dubFirst: sortPrefs.dubFirst,
                 cachedFirst: sortPrefs.cachedFirst
             })
         });
