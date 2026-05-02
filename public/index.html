@@ -339,7 +339,6 @@
                     <option value="qualityThenSize" data-i18n="sort.modeQualitySize">By quality then size</option>
                     <option value="seeders" data-i18n="sort.modeSeeders">By seeders</option>
                     <option value="size" data-i18n="sort.modeSize">By size</option>
-                    <option value="custom" data-i18n="sort.modeCustom">Custom (advanced)</option>
                 </select>
             </div>
 
@@ -353,48 +352,62 @@
                 <button class="toggle off" id="sort-cached-toggle" onclick="toggleCachedFirst()"></button>
             </div>
 
-            <div id="sort-prefs-panel" style="display:none;">
-                <div class="row">
-                    <div class="row-label" data-i18n="sort.bySeeders">Řadit podle seeders</div>
-                    <button class="toggle on" id="sort-seeders-toggle" onclick="toggleSortSeeders()"></button>
-                </div>
+            <div class="divider"></div>
 
-                <div class="sort-grid">
-                    <div>
-                        <div class="sort-col-title" data-i18n="sort.groupPriority">Priorita skupin</div>
-                        <ul class="sort-list" id="group-list"></ul>
-                        <div class="add-group-row">
-                            <input type="text" id="new-group-input" class="input" placeholder="Název skupiny" data-i18n-placeholder="sort.groupPlaceholder">
-                            <button class="btn btn-s" onclick="addGroup()">+</button>
-                        </div>
-                    </div>
-                    <div>
-                        <div class="sort-col-title" data-i18n="sort.resPriority">Priorita rozlišení</div>
-                        <ul class="sort-list" id="res-list"></ul>
-                        <div class="add-group-row">
-                            <input type="text" id="new-res-input" class="input" placeholder="Rozlišení (4K, 1080p,...)" data-i18n-placeholder="sort.resPlaceholder">
-                            <button class="btn btn-s" onclick="addRes()">+</button>
-                        </div>
-                    </div>
+            <!-- Pokročilé filtry: každý se dá nezávisle zapnout / vypnout -->
+            <div class="row">
+                <div class="row-label"><span data-i18n="sort.groupsToggle">Priorita skupin</span> <small data-i18n="sort.groupsHint">Preferované release skupiny nahoře</small></div>
+                <button class="toggle off" id="sort-groups-toggle" onclick="toggleGroupsEnabled()"></button>
+            </div>
+            <div id="groups-section" style="margin-top:6px;">
+                <ul class="sort-list" id="group-list"></ul>
+                <div class="add-group-row">
+                    <input type="text" id="new-group-input" class="input" placeholder="Název skupiny" data-i18n-placeholder="sort.groupPlaceholder">
+                    <button class="btn btn-s" onclick="addGroup()">+</button>
                 </div>
+            </div>
 
-                <div class="divider"></div>
-                <div class="sort-col-title" data-i18n="sort.excludeRes">Vyloučit rozlišení</div>
+            <div class="divider"></div>
+
+            <div class="row">
+                <div class="row-label"><span data-i18n="sort.resToggle">Priorita rozlišení</span> <small data-i18n="sort.resHint">Vlastní pořadí 4K/1080p/720p</small></div>
+                <button class="toggle off" id="sort-res-toggle" onclick="toggleResEnabled()"></button>
+            </div>
+            <div id="res-section" style="margin-top:6px;">
+                <ul class="sort-list" id="res-list"></ul>
+                <div class="add-group-row">
+                    <input type="text" id="new-res-input" class="input" placeholder="Rozlišení (4K, 1080p,...)" data-i18n-placeholder="sort.resPlaceholder">
+                    <button class="btn btn-s" onclick="addRes()">+</button>
+                </div>
+            </div>
+
+            <div class="divider"></div>
+
+            <div class="row">
+                <div class="row-label"><span data-i18n="sort.excludeResToggle">Vyloučit rozlišení</span> <small data-i18n="sort.excludeResHint">Vybraná rozlišení skrýt</small></div>
+                <button class="toggle off" id="sort-exclude-res-toggle" onclick="toggleExcludeResEnabled()"></button>
+            </div>
+            <div id="exclude-res-section" style="margin-top:6px;">
                 <div id="res-exclude"></div>
+            </div>
 
-                <div class="divider"></div>
-                <div class="sort-col-title" data-i18n="sort.langPriority">Priorita jazyků</div>
+            <div class="divider"></div>
+
+            <div class="row">
+                <div class="row-label"><span data-i18n="sort.langsToggle">Priorita jazyků</span> <small data-i18n="sort.langsHint">Preferované audio jazyky</small></div>
+                <button class="toggle off" id="sort-langs-toggle" onclick="toggleLangsEnabled()"></button>
+            </div>
+            <div id="langs-section" style="margin-top:6px;">
                 <div style="max-width:50%;">
                     <ul class="sort-list" id="lang-list"></ul>
                     <div class="add-group-row">
-                        <input type="text" id="new-lang-input" class="input" placeholder="Jazyk (CZ, EN,...)" data-i18n-placeholder="sort.langPlaceholder">
+                        <input type="text" id="new-lang-input" class="input" placeholder="Jazyk (en, ja, cs,...)" data-i18n-placeholder="sort.langPlaceholder">
                         <button class="btn btn-s" onclick="addLang()">+</button>
                     </div>
                 </div>
-                <div style="font-size:10px;color:var(--hint);margin-top:6px;" data-i18n="sort.langHint">Pro NZB — řadí podle audio/titulků</div>
-
-                <button class="btn btn-s btn-sm" data-i18n="sort.reset" onclick="resetSortPrefs()" style="margin-top:14px;">Obnovit výchozí</button>
             </div>
+
+            <button class="btn btn-s btn-sm" data-i18n="sort.reset" onclick="resetSortPrefs()" style="margin-top:14px;">Obnovit výchozí</button>
         </div>
 
         <!-- Anime Today -->
@@ -491,21 +504,21 @@ const I18N = {
         'sort.modeQualitySize': 'By quality then size',
         'sort.modeSeeders': 'By seeders',
         'sort.modeSize': 'By size',
-        'sort.modeCustom': 'Custom (advanced)',
-        'sort.custom': 'Custom sort',
-        'sort.bySeeders': 'Sort by seeders',
         'sort.cachedFirst': 'Cached first',
         'sort.cachedFirstHint': 'TorBox cache on top',
         'sort.dubFirst': 'EN/Dub first',
         'sort.dubFirstHint': 'English audio on top',
-        'sort.groupPriority': 'Group priority',
-        'sort.resPriority': 'Resolution priority',
-        'sort.excludeRes': 'Exclude resolutions',
-        'sort.langPriority': 'Language priority',
+        'sort.groupsToggle': 'Group priority',
+        'sort.groupsHint': 'Preferred release groups on top',
+        'sort.resToggle': 'Resolution priority',
+        'sort.resHint': 'Custom 4K/1080p/720p order',
+        'sort.excludeResToggle': 'Exclude resolutions',
+        'sort.excludeResHint': 'Hide selected resolutions',
+        'sort.langsToggle': 'Language priority',
+        'sort.langsHint': 'Preferred audio languages',
         'sort.groupPlaceholder': 'Group name',
         'sort.resPlaceholder': 'Resolution (4K, 1080p,...)',
-        'sort.langPlaceholder': 'Language (CZ, EN,...)',
-        'sort.langHint': 'For NZB — sorts by audio/subtitles',
+        'sort.langPlaceholder': 'Language (en, ja, cs,...)',
         'sort.reset': 'Restore defaults',
         // Anime today
         'today.title': '📅 Anime today',
@@ -617,21 +630,21 @@ const I18N = {
         'sort.modeQualitySize': 'Podle kvality, pak velikosti',
         'sort.modeSeeders': 'Podle seederů',
         'sort.modeSize': 'Podle velikosti',
-        'sort.modeCustom': 'Vlastní (pokročilé)',
-        'sort.custom': 'Vlastní řazení',
-        'sort.bySeeders': 'Řadit podle seeders',
         'sort.cachedFirst': 'Cached první',
         'sort.cachedFirstHint': 'TorBox cache nahoře',
         'sort.dubFirst': 'EN/Dub první',
         'sort.dubFirstHint': 'Anglické audio nahoře',
-        'sort.groupPriority': 'Priorita skupin',
-        'sort.resPriority': 'Priorita rozlišení',
-        'sort.excludeRes': 'Vyloučit rozlišení',
-        'sort.langPriority': 'Priorita jazyků',
+        'sort.groupsToggle': 'Priorita skupin',
+        'sort.groupsHint': 'Preferované skupiny nahoře',
+        'sort.resToggle': 'Priorita rozlišení',
+        'sort.resHint': 'Vlastní pořadí 4K/1080p/720p',
+        'sort.excludeResToggle': 'Vyloučit rozlišení',
+        'sort.excludeResHint': 'Vybraná rozlišení skrýt',
+        'sort.langsToggle': 'Priorita jazyků',
+        'sort.langsHint': 'Preferované audio jazyky',
         'sort.groupPlaceholder': 'Název skupiny',
         'sort.resPlaceholder': 'Rozlišení (4K, 1080p,...)',
-        'sort.langPlaceholder': 'Jazyk (CZ, EN,...)',
-        'sort.langHint': 'Pro NZB — řadí podle audio/titulků',
+        'sort.langPlaceholder': 'Jazyk (en, ja, cs,...)',
         'sort.reset': 'Obnovit výchozí',
         'today.title': '📅 Anime today',
         'today.noAnime': 'Žádné anime',
@@ -1067,7 +1080,13 @@ async function toggleAnime(id,hidden) {
 }
 
 // Sort Preferences
-let sortPrefs = { sortMode:'qualityThenSeeders', customSortEnabled:false, groupPriority:[], resPriority:[], langPriority:[], excludedResolutions:[], sortBySeeders:true, dubFirst:false, cachedFirst:false, defaultGroups:[], defaultResolutions:[], defaultLangs:[] };
+let sortPrefs = {
+    sortMode: 'qualityThenSeeders',
+    groupsEnabled: false, resEnabled: false, excludeResEnabled: false, langsEnabled: false,
+    groupPriority: [], resPriority: [], langPriority: [], excludedResolutions: [],
+    dubFirst: false, cachedFirst: false,
+    defaultGroups: [], defaultResolutions: [], defaultLangs: []
+};
 
 async function loadSortPrefs() {
     try {
@@ -1081,17 +1100,28 @@ async function loadSortPrefs() {
 function renderSortPrefs() {
     const sel = document.getElementById('sort-mode-select');
     if (sel) sel.value = sortPrefs.sortMode || 'qualityThenSeeders';
-    const showAdvanced = (sortPrefs.sortMode === 'custom');
-    document.getElementById('sort-prefs-panel').style.display = showAdvanced ? 'block' : 'none';
-    const stog = document.getElementById('sort-seeders-toggle');
-    stog.className = sortPrefs.sortBySeeders !== false ? 'toggle on' : 'toggle off';
-    const ctog = document.getElementById('sort-cached-toggle');
-    ctog.className = sortPrefs.cachedFirst ? 'toggle on' : 'toggle off';
-    const dtog = document.getElementById('sort-dub-toggle');
-    if (dtog) dtog.className = sortPrefs.dubFirst ? 'toggle on' : 'toggle off';
+
+    // Top-level toggles
+    document.getElementById('sort-cached-toggle').className = sortPrefs.cachedFirst ? 'toggle on' : 'toggle off';
+    document.getElementById('sort-dub-toggle').className = sortPrefs.dubFirst ? 'toggle on' : 'toggle off';
+
+    // Per-filter toggles + dim sections when off
+    document.getElementById('sort-groups-toggle').className = sortPrefs.groupsEnabled ? 'toggle on' : 'toggle off';
+    document.getElementById('sort-res-toggle').className = sortPrefs.resEnabled ? 'toggle on' : 'toggle off';
+    document.getElementById('sort-exclude-res-toggle').className = sortPrefs.excludeResEnabled ? 'toggle on' : 'toggle off';
+    document.getElementById('sort-langs-toggle').className = sortPrefs.langsEnabled ? 'toggle on' : 'toggle off';
+
+    setSectionDim('groups-section', !sortPrefs.groupsEnabled);
+    setSectionDim('res-section', !sortPrefs.resEnabled);
+    setSectionDim('exclude-res-section', !sortPrefs.excludeResEnabled);
+    setSectionDim('langs-section', !sortPrefs.langsEnabled);
+
+    // Lists
     renderSortList('group-list', sortPrefs.groupPriority, 'group');
     renderSortList('res-list', sortPrefs.resPriority, 'res');
     renderSortList('lang-list', sortPrefs.langPriority || [], 'lang');
+
+    // Exclude resolutions checkboxes
     const exDiv = document.getElementById('res-exclude');
     const allRes = sortPrefs.defaultResolutions || ['1080p','720p','4K','480p','DVD'];
     exDiv.innerHTML = allRes.map(r => {
@@ -1100,10 +1130,16 @@ function renderSortPrefs() {
     }).join('');
 }
 
+function setSectionDim(id, dim) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.style.opacity = dim ? '0.45' : '1';
+    el.style.pointerEvents = dim ? 'none' : '';
+}
+
 function onSortModeChange() {
     const sel = document.getElementById('sort-mode-select');
     sortPrefs.sortMode = sel.value;
-    sortPrefs.customSortEnabled = (sel.value === 'custom');
     saveSortPrefs();
     renderSortPrefs();
 }
@@ -1135,9 +1171,12 @@ function renderSortList(containerId, items, type) {
     });
 }
 
-function toggleSortSeeders() { sortPrefs.sortBySeeders = !sortPrefs.sortBySeeders; saveSortPrefs(); renderSortPrefs(); }
 function toggleCachedFirst() { sortPrefs.cachedFirst = !sortPrefs.cachedFirst; saveSortPrefs(); renderSortPrefs(); }
 function toggleDubFirst() { sortPrefs.dubFirst = !sortPrefs.dubFirst; saveSortPrefs(); renderSortPrefs(); }
+function toggleGroupsEnabled() { sortPrefs.groupsEnabled = !sortPrefs.groupsEnabled; saveSortPrefs(); renderSortPrefs(); }
+function toggleResEnabled() { sortPrefs.resEnabled = !sortPrefs.resEnabled; saveSortPrefs(); renderSortPrefs(); }
+function toggleExcludeResEnabled() { sortPrefs.excludeResEnabled = !sortPrefs.excludeResEnabled; saveSortPrefs(); renderSortPrefs(); }
+function toggleLangsEnabled() { sortPrefs.langsEnabled = !sortPrefs.langsEnabled; saveSortPrefs(); renderSortPrefs(); }
 
 function toggleExcludeRes(res, exclude) {
     if (!sortPrefs.excludedResolutions) sortPrefs.excludedResolutions = [];
@@ -1148,7 +1187,7 @@ function toggleExcludeRes(res, exclude) {
 
 function addRes() { const input=document.getElementById('new-res-input'); const name=input.value.trim(); if(!name)return; if(!sortPrefs.resPriority.includes(name)){sortPrefs.resPriority.push(name);saveSortPrefs();renderSortPrefs();} input.value=''; }
 function removeRes(idx) { sortPrefs.resPriority.splice(idx, 1); saveSortPrefs(); renderSortPrefs(); }
-function addLang() { const input=document.getElementById('new-lang-input'); const name=input.value.trim().toUpperCase(); if(!name)return; if(!sortPrefs.langPriority)sortPrefs.langPriority=[]; if(!sortPrefs.langPriority.includes(name)){sortPrefs.langPriority.push(name);saveSortPrefs();renderSortPrefs();} input.value=''; }
+function addLang() { const input=document.getElementById('new-lang-input'); const name=input.value.trim().toLowerCase(); if(!name)return; if(!sortPrefs.langPriority)sortPrefs.langPriority=[]; if(!sortPrefs.langPriority.includes(name)){sortPrefs.langPriority.push(name);saveSortPrefs();renderSortPrefs();} input.value=''; }
 function removeLang(idx) { if(!sortPrefs.langPriority)return; sortPrefs.langPriority.splice(idx, 1); saveSortPrefs(); renderSortPrefs(); }
 function addGroup() { const input=document.getElementById('new-group-input'); const name=input.value.trim(); if(!name)return; if(!sortPrefs.groupPriority.includes(name)){sortPrefs.groupPriority.push(name);saveSortPrefs();renderSortPrefs();} input.value=''; }
 function removeGroup(idx) { sortPrefs.groupPriority.splice(idx, 1); saveSortPrefs(); renderSortPrefs(); }
@@ -1158,7 +1197,10 @@ function resetSortPrefs() {
     sortPrefs.resPriority = [...(sortPrefs.defaultResolutions || [])];
     sortPrefs.langPriority = [...(sortPrefs.defaultLangs || [])];
     sortPrefs.excludedResolutions = [];
-    sortPrefs.sortBySeeders = true;
+    sortPrefs.groupsEnabled = false;
+    sortPrefs.resEnabled = false;
+    sortPrefs.excludeResEnabled = false;
+    sortPrefs.langsEnabled = false;
     sortPrefs.dubFirst = false;
     sortPrefs.cachedFirst = false;
     saveSortPrefs(); renderSortPrefs();
@@ -1171,12 +1213,14 @@ async function saveSortPrefs() {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 sortMode: sortPrefs.sortMode,
-                customSortEnabled: sortPrefs.customSortEnabled,
+                groupsEnabled: sortPrefs.groupsEnabled,
+                resEnabled: sortPrefs.resEnabled,
+                excludeResEnabled: sortPrefs.excludeResEnabled,
+                langsEnabled: sortPrefs.langsEnabled,
                 groupPriority: sortPrefs.groupPriority,
                 resPriority: sortPrefs.resPriority,
                 langPriority: sortPrefs.langPriority,
                 excludedResolutions: sortPrefs.excludedResolutions,
-                sortBySeeders: sortPrefs.sortBySeeders,
                 dubFirst: sortPrefs.dubFirst,
                 cachedFirst: sortPrefs.cachedFirst
             })
