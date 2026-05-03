@@ -1475,6 +1475,7 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
         filesizeBytes: parseInt(r.filesize) || 0,
         source: 'indexer',
         indexer: true,
+        indexerSource: r.source || null,  // 'nyaa' | 'tokyotosho' | 'nekobt' | 'seadex'
         indexerId: r.id || null,
         releaseGroup: r.group_name || '',
         resolution: r.resolution || '',
@@ -1505,6 +1506,7 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
       filesizeBytes: parseInt(r.filesize) || 0,
       source: 'tosho',
       indexer: true,
+      indexerSource: 'tokyotosho',
       tosho: true,
       releaseGroup: r.group_name || '',
       resolution: r.resolution || '',
@@ -1646,7 +1648,6 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
       // === Indexer result: custom formatting ===
       const tags = [];
       if (t.tosho) tags.push('📡 AT');
-      if (t.seadexBest) tags.push('🏆 Best');
       if (t.resolution) tags.push(t.resolution);
       // Language flags
       const langFlags = langToFlags(t.audioLangs);
@@ -1670,11 +1671,12 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
         bodyLine = name;
       }
 
-      // Stats line
+      // Stats line: 👥 seeders · 💾 size · [SOURCE]
       const statsParts = [];
       statsParts.push(`👥 ${parseInt(t.seeders) || 0}`);
       statsParts.push(formatSizeWithIcon(t));
-      if (t.batch && t.fileCount) statsParts.push(`${t.fileCount} files`);
+      const sourceLabel = formatSourceLabel(t.indexerSource, t.seadexBest);
+      if (sourceLabel) statsParts.push(sourceLabel);
       const statsLine = statsParts.join(' · ');
 
       title = `${line1 ? line1 + '\n' : ''}${bodyLine}\n${statsLine}`;
@@ -1849,6 +1851,21 @@ function formatSizeWithIcon(t) {
     return `📦 ${t.filesize || '?'}`;
   }
   return `💾 ${t.filesize || '?'}`;
+}
+
+// ===== Format source label =====
+// Maps indexer source field to user-facing label like [⭐ SEADEX], [🐱 NYAA], [📺 TOSHO], [🐾 NEKOBT]
+// Returns null if source is unknown / missing → no label rendered.
+// SeaDex: only show label when seadex_best=1 (best releases only).
+function formatSourceLabel(indexerSource, seadexBest) {
+  if (!indexerSource) return null;
+  switch (indexerSource) {
+    case 'seadex':     return seadexBest ? '[⭐ SEADEX]' : null;
+    case 'nyaa':       return '[🐱 NYAA]';
+    case 'tokyotosho': return '[📺 TOSHO]';
+    case 'nekobt':     return '[🐾 NEKOBT]';
+    default:           return null;
+  }
 }
 
 // ===== Format filesize from indexer (bytes → human readable) =====
