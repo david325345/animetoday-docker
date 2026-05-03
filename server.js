@@ -1659,12 +1659,15 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
       if (t.audioCodec) tags.push(t.audioCodec);
       const line1 = tags.filter(Boolean).join(' · ');
 
-      // Batch: show matched file on line 3
-      let fileLine = '';
+      // Batch with matched file: replace torrent name (line 2) with matched filename
+      // Single ep / batch without match: keep torrent name on line 2
+      let bodyLine;
       if (t.batch && t.matchedFile) {
         const fName = t.matchedFile.name.replace(/\.mkv$|\.mp4$/i, '');
         const fSize = t.matchedFile.size ? formatIndexerFilesize(t.matchedFile.size) : '';
-        fileLine = `\n📂 ${fName}${fSize ? ' (' + fSize + ')' : ''}`;
+        bodyLine = `📂 ${fName}${fSize ? ' (' + fSize + ')' : ''}`;
+      } else {
+        bodyLine = name;
       }
 
       // Stats line
@@ -1674,7 +1677,7 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
       if (t.batch && t.fileCount) statsParts.push(`${t.fileCount} files`);
       const statsLine = statsParts.join(' · ');
 
-      title = `${line1 ? line1 + '\n' : ''}${name}${fileLine}\n${statsLine}`;
+      title = `${line1 ? line1 + '\n' : ''}${bodyLine}\n${statsLine}`;
       // Build content streamName: "NimeToDex [🏆|📡] QUALITY · AUDIO"
       // Service prefix [RD] / [TB ⚡] / [P2P] is prepended later when building stream objects.
       const audioTag = detectAudioTag(t);
