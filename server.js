@@ -1506,7 +1506,7 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
       filesizeBytes: parseInt(r.filesize) || 0,
       source: 'tosho',
       indexer: true,
-      indexerSource: 'tokyotosho',
+      indexerSource: 'animetosho',
       tosho: true,
       releaseGroup: r.group_name || '',
       resolution: r.resolution || '',
@@ -1647,7 +1647,6 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
     if (t.indexer) {
       // === Indexer result: custom formatting ===
       const tags = [];
-      if (t.tosho) tags.push('📡 AT');
       if (t.resolution) tags.push(t.resolution);
       // Language flags
       const langFlags = langToFlags(t.audioLangs);
@@ -1860,11 +1859,12 @@ function formatSizeWithIcon(t) {
 function formatSourceLabel(indexerSource, seadexBest) {
   if (!indexerSource) return null;
   switch (indexerSource) {
-    case 'seadex':     return seadexBest ? '[⭐ SEADEX]' : null;
-    case 'nyaa':       return '[🐱 NYAA]';
-    case 'tokyotosho': return '[📺 TOSHO]';
-    case 'nekobt':     return '[🐾 NEKOBT]';
-    default:           return null;
+    case 'seadex':      return seadexBest ? '[⭐ SEADEX]' : null;
+    case 'nyaa':        return '[🐱 NYAA]';
+    case 'tokyotosho':  return '[📺 TOSHO]';
+    case 'animetosho':  return '[📡 AT]';
+    case 'nekobt':      return '[🐾 NEKOBT]';
+    default:            return null;
   }
 }
 
