@@ -838,7 +838,7 @@ app.get('/:token/today/catalog/:type/:id.json', (req, res) => {
   for (const s of sorted) {
     // Insert separator when day changes (skip for today = day 0)
     if (s.dayOffset > 0 && s.dayOffset !== lastDay) {
-      const sepPoster = `${BASE_URL}/posters/sep_day${s.dayOffset}.jpg`;
+      const sepPoster = `${BASE_URL}/posters/sep_day${s.dayOffset}.png`;
       metas.push({
         id: `at:sep:${s.dayOffset}`,
         type: 'series',
