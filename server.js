@@ -1852,11 +1852,11 @@ function formatSizeWithIcon(t) {
 function formatSourceLabel(indexerSource, seadexBest) {
   if (!indexerSource) return null;
   switch (indexerSource) {
-    case 'seadex':      return seadexBest ? '[⭐ SeaDex]' : null;
-    case 'nyaa':        return '[🐱 Nyaa]';
-    case 'tokyotosho':  return '[📺 tokyotosho]';
-    case 'animetosho':  return '[📡 AT]';
-    case 'nekobt':      return '[🐾 nekoBT]';
+    case 'seadex':      return seadexBest ? '⭐ SeaDex' : null;
+    case 'nyaa':        return '🐱 Nyaa';
+    case 'tokyotosho':  return '📺 tokyotosho';
+    case 'animetosho':  return '📡 AT';
+    case 'nekobt':      return '🐾 nekoBT';
     default:            return null;
   }
 }
