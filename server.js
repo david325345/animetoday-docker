@@ -10,6 +10,7 @@ const { loadOfflineDB, loadAnimeLists, loadMappingCache, resolveToAniDB, resolve
 const { detectQuality, sortByGroupPriority, DEFAULT_GROUPS, DEFAULT_RESOLUTIONS } = require('./lib/search');
 const { getRDStream, rdInProgress, getCacheKey, serveLoadingVideo, DOWNLOADING_VIDEO_URL, checkInstantAvailability } = require('./lib/realdebrid');
 const { generateAllPosters } = require('./lib/posters');
+const todayAdded = require('./lib/today-added');
 const { formatTimeCET } = require('./lib/simkl');
 const { startRssFetcher, clearRssIndex, searchRssIndex, getRssStats } = require('./lib/rss');
 const { getTBStatus, getTBStream, getTBNZBStream, checkTBCached, tbInProgress } = require('./lib/torbox');
@@ -1064,7 +1065,7 @@ app.get('/:token/nyaa/manifest.json', (req, res) => {
   }
   res.json({
     id: 'cz.nyaa.search.v7',
-    version: '7.3.0',
+    version: '7.4.0',
     name: 'NimeToDex',
     description: 'Anime torrent indexer + RealDebrid/TorBox. Funguje s Cinemeta/Kitsu/Anime Today.',
     logo: `${BASE_URL}/logo-nyaa.png`,
@@ -1088,27 +1089,19 @@ app.get('/:token/nyaa/catalog/:type/:id.json', async (req, res) => {
   if (!user?.indexer_catalog) return res.json({ metas: [] });
 
   try {
-    const resp = await axios.get(`${INDEXER_URL}/api/today-added`, { timeout: 8000 });
-    const items = resp.data?.items || [];
-
-    // Map type: Stremio uses 'series' and 'movie'
-    const typeMap = { TV: 'series', OVA: 'series', SPECIAL: 'series', MOVIE: 'movie' };
+    const items = await todayAdded.getTodayAdded();
+    const typeMap = { TV: 'series', OVA: 'series', SPECIAL: 'series', ONA: 'series', MUSIC: 'series', MOVIE: 'movie' };
 
     const metas = items
       .filter(item => {
         const stremioType = typeMap[item.type] || 'series';
         return stremioType === type && item.imdb_id;
       })
-      .map(item => ({
-        id: item.imdb_id,
-        type: type,
-        name: item.anime_title,
-        poster: `https://images.metahub.space/poster/small/${item.imdb_id}/img`,
-        background: `https://img.anili.st/media/${item.anilist_id}`,
-      }));
+      .map(item => todayAdded.buildMeta(item, BASE_URL))
+      .filter(Boolean);
 
     console.log(`  📋 Today catalog (${type}): ${metas.length} items`);
-    res.json({ metas });
+    res.json({ metas, cacheMaxAge: 3600 });
   } catch (err) {
     console.log(`  📋 Today catalog error: ${err.message}`);
     res.json({ metas: [] });
@@ -2221,6 +2214,7 @@ app.listen(PORT, '0.0.0.0', async () => {
   console.log(`  TMDB: ${config.getTMDBKey() ? '✅' : '❌ (web)'}`);
   console.log(`  Users: ${users.length}`);
   updateCache().catch(err => console.error('❌ Initial cache:', err.message));
+  todayAdded.refreshTodayAdded().catch(err => console.error('❌ today-added pre-warm:', err.message));
   // startRssFetcher(); // disabled — using indexer instead
 });
 
