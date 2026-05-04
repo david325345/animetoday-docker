@@ -1065,7 +1065,7 @@ app.get('/:token/nyaa/manifest.json', (req, res) => {
   }
   res.json({
     id: 'cz.nyaa.search.v7',
-    version: '7.4.0',
+    version: '7.5.0',
     name: 'NimeToDex',
     description: 'Anime torrent indexer + RealDebrid/TorBox. Funguje s Cinemeta/Kitsu/Anime Today.',
     logo: `${BASE_URL}/logo-nyaa.png`,
@@ -1075,7 +1075,7 @@ app.get('/:token/nyaa/manifest.json', (req, res) => {
       { type: 'series', id: 'nimetodex-today', name: 'NimeToDex — Added today', extra: [{ name: 'skip' }] },
       { type: 'movie', id: 'nimetodex-today', name: 'NimeToDex — Added today', extra: [{ name: 'skip' }] }
     ],
-    idPrefixes: ['at:', 'kitsu:', 'tt', 'tvdb:', 'anilist:'],
+    idPrefixes: ['at:', 'kitsu:', 'tt', 'tvdb:', 'anilist:', 'mal:'],
     behaviorHints: { configurable: true, configurationRequired: false }
   });
 });
@@ -1265,6 +1265,7 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
     fullId.startsWith('kitsu:') ? idParts.length >= 4 :
     fullId.startsWith('tt') ? idParts.length >= 3 :
     fullId.startsWith('anilist:') ? idParts.length >= 4 :
+    fullId.startsWith('mal:') ? idParts.length >= 4 :
     fullId.startsWith('tvdb:') ? idParts.length >= 4 : idParts.length >= 3;
 
   // If no explicit episode, check todayAnimeCache for correct episode
@@ -1304,7 +1305,7 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
   }
 
   // ===== UNIFIED ID RESOLVE (before any search) =====
-  const resolved = { anidbId: null, anilistId: null, tvdbId: null, names: [], title: null };
+  const resolved = { anidbId: null, anilistId: null, tvdbId: null, malId: null, kitsuId: null, names: [], title: null };
 
   if (fullId.startsWith('at:')) {
     const alId = parseInt(fullId.split(':')[1]);
@@ -1328,16 +1329,32 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
     if (rec) {
       resolved.anidbId = rec.anidb || null;
       resolved.tvdbId = rec.tvdb || null;
+      resolved.malId = rec.mal || null;
+      resolved.kitsuId = rec.kitsu || null;
       resolved.title = rec.title || null;
       if (rec.title) resolved.names.push(rec.title);
     }
   } else if (fullId.startsWith('kitsu:')) {
     const kitsuId = parseInt(fullId.split(':')[1]);
+    resolved.kitsuId = kitsuId;
     const rec = offlineDB.byKitsu.get(kitsuId);
     if (rec) {
       resolved.anidbId = rec.anidb || null;
       resolved.anilistId = rec.anilist || null;
       resolved.tvdbId = rec.tvdb || null;
+      resolved.malId = rec.mal || null;
+      resolved.title = rec.title || null;
+      if (rec.title) resolved.names.push(rec.title);
+    }
+  } else if (fullId.startsWith('mal:')) {
+    const malId = parseInt(fullId.split(':')[1]);
+    resolved.malId = malId;
+    const rec = offlineDB.byMAL.get(malId);
+    if (rec) {
+      resolved.anidbId = rec.anidb || null;
+      resolved.anilistId = rec.anilist || null;
+      resolved.tvdbId = rec.tvdb || null;
+      resolved.kitsuId = rec.kitsu || null;
       resolved.title = rec.title || null;
       if (rec.title) resolved.names.push(rec.title);
     }
@@ -1350,6 +1367,8 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
       const rec = offlineDB.byAniDB.get(tvdbResolved.anidbId);
       if (rec) {
         resolved.anilistId = rec.anilist || null;
+        resolved.malId = rec.mal || null;
+        resolved.kitsuId = rec.kitsu || null;
         resolved.title = rec.title || null;
         if (rec.title) resolved.names.push(rec.title);
       }
@@ -1362,6 +1381,8 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
         resolved.anilistId = alId;
         resolved.anidbId = rec.anidb || null;
         resolved.tvdbId = rec.tvdb || null;
+        resolved.malId = rec.mal || null;
+        resolved.kitsuId = rec.kitsu || null;
         resolved.title = rec.title || null;
         if (rec.title) resolved.names.push(rec.title);
         break;
@@ -1422,6 +1443,8 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
   if (resolved.anilistId) params.set('anilist', resolved.anilistId);
   if (resolved.tvdbId) params.set('tvdb', resolved.tvdbId);
   if (resolved.anidbId) params.set('anidb', resolved.anidbId);
+  if (resolved.malId) params.set('mal', resolved.malId);
+  if (resolved.kitsuId) params.set('kitsu', resolved.kitsuId);
   if (season != null && !isMovie) params.set('season', season);
   if (episode && !isMovie) params.set('episode', episode);
 
@@ -1696,7 +1719,9 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
       const statsLine = statsParts.join(' · ');
 
       // Combine all lines, skipping empty ones
-      title = [line1, bodyLine, audioLine, subLine, statsLine]
+      // (line1 with resolution/encoding/audioTag intentionally NOT included —
+      //  it's already shown in streamName on Stremio's left side, no need to duplicate)
+      title = [bodyLine, audioLine, subLine, statsLine]
         .filter(Boolean)
         .join('\n');
 
@@ -1824,14 +1849,14 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
 app.get('/:token/nzb/manifest.json', (req, res) => {
   res.json({
     id: 'cz.nzb.search.v2',
-    version: '2.1.0',
+    version: '2.2.0',
     name: 'NimeToDex NZB',
     description: 'Anime NZB from NimeToDex indexer — Usenet streaming via TorBox.',
     logo: `${BASE_URL}/logo-nzb.png`,
     resources: ['stream'],
     types: ['series', 'movie'],
     catalogs: [],
-    idPrefixes: ['at:', 'kitsu:', 'tt', 'tvdb:', 'anilist:'],
+    idPrefixes: ['at:', 'kitsu:', 'tt', 'tvdb:', 'anilist:', 'mal:'],
     behaviorHints: { configurable: true, configurationRequired: false }
   });
 });
@@ -2078,6 +2103,9 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
   let imdbId = null;
   let anilistId = null;
   let anidbId = null;
+  let tvdbId = null;
+  let malId = null;
+  let kitsuId = null;
 
   if (fullId.startsWith('tt')) {
     imdbId = idParts[0];
@@ -2087,22 +2115,43 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
     const rec = offlineDB.byAniList.get(alId);
     if (rec) {
       anidbId = rec.anidb;
+      tvdbId = rec.tvdb;
+      malId = rec.mal;
+      kitsuId = rec.kitsu;
       if (rec.imdb) imdbId = rec.imdb;
     }
   } else if (fullId.startsWith('kitsu:')) {
-    const kitsuId = parseInt(idParts[1]);
+    kitsuId = parseInt(idParts[1]);
     const rec = offlineDB.byKitsu.get(kitsuId);
     if (rec) {
       anilistId = rec.anilist;
       anidbId = rec.anidb;
+      tvdbId = rec.tvdb;
+      malId = rec.mal;
+      if (rec.imdb) imdbId = rec.imdb;
+    }
+  } else if (fullId.startsWith('mal:')) {
+    malId = parseInt(idParts[1]);
+    const rec = offlineDB.byMAL.get(malId);
+    if (rec) {
+      anilistId = rec.anilist;
+      anidbId = rec.anidb;
+      tvdbId = rec.tvdb;
+      kitsuId = rec.kitsu;
       if (rec.imdb) imdbId = rec.imdb;
     }
   } else if (fullId.startsWith('tvdb:')) {
-    const tvdbResolved = resolveViaTVDB(idParts[1], season, episode);
+    tvdbId = idParts[1];
+    const tvdbResolved = resolveViaTVDB(tvdbId, season, episode);
     if (tvdbResolved?.anidbId) {
       anidbId = tvdbResolved.anidbId;
       const rec = offlineDB.byAniDB.get(tvdbResolved.anidbId);
-      if (rec) { anilistId = rec.anilist; if (rec.imdb) imdbId = rec.imdb; }
+      if (rec) {
+        anilistId = rec.anilist;
+        malId = rec.mal;
+        kitsuId = rec.kitsu;
+        if (rec.imdb) imdbId = rec.imdb;
+      }
     }
   }
 
@@ -2111,6 +2160,9 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
   if (imdbId) params.set('imdb', imdbId);
   if (anilistId) params.set('anilist', anilistId);
   if (anidbId) params.set('anidb', anidbId);
+  if (tvdbId) params.set('tvdb', tvdbId);
+  if (malId) params.set('mal', malId);
+  if (kitsuId) params.set('kitsu', kitsuId);
   if (season != null && !isMovie) params.set('season', season);
   if (episode && !isMovie) params.set('episode', episode);
 
