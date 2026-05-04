@@ -1481,6 +1481,10 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
         audioLangs: r.audio_langs || '',
         subtitleLangs: r.subtitle_langs || '',
         audioCodec: r.audio_codec || '',
+        audioChannels: r.audio_channels || '',
+        bitDepth: r.bit_depth || null,
+        encoding: r.encoding || '',
+        multiSubs: !!r.multi_subs,
         fileCount: r.file_count || 0,
         matchedFile: matchedFile,
         fileIdx: matchedFile?.idx != null ? matchedFile.idx : (r.fileIdx != null ? r.fileIdx : null),
@@ -1511,6 +1515,10 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
       audioLangs: r.audio_langs || '',
       subtitleLangs: r.subtitle_langs || '',
       audioCodec: r.audio_codec || '',
+      audioChannels: r.audio_channels || '',
+      bitDepth: r.bit_depth || null,
+      encoding: r.encoding || '',
+      multiSubs: !!r.multi_subs,
       fileCount: r.file_count || 0,
       matchedFile: null,
     }));
@@ -1639,21 +1647,16 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
 
     if (t.indexer) {
       // === Indexer result: custom formatting ===
-      const tags = [];
-      if (t.resolution) tags.push(t.resolution);
-      // Language flags
-      const langFlags = langToFlags(t.audioLangs);
-      const subFlags = langToFlags(t.subtitleLangs);
-      if (langFlags) tags.push(langFlags);
-      if (subFlags) tags.push(`💬${subFlags}`);
-      if (t.dualAudio) tags.push('Dual Audio');
-      if (t.videoSource) tags.push(t.videoSource);
-      if (t.codec) tags.push(t.codec);
-      if (t.audioCodec) tags.push(t.audioCodec);
-      const line1 = tags.filter(Boolean).join(' · ');
 
-      // Batch with matched file: replace torrent name (line 2) with matched filename
-      // Single ep / batch without match: keep torrent name on line 2
+      // Line 1: quality tags (resolution · encoding · bit-depth · dual marker)
+      const qualityTags = [];
+      if (t.resolution) qualityTags.push(t.resolution);
+      if (t.encoding) qualityTags.push(t.encoding);
+      if (t.bitDepth) qualityTags.push(`${t.bitDepth}-bit`);
+      if (t.dualAudio) qualityTags.push('Dual ✅');
+      const line1 = qualityTags.filter(Boolean).join(' · ');
+
+      // Body line: torrent name OR matched batch file
       let bodyLine;
       if (t.batch && t.matchedFile) {
         const fName = t.matchedFile.name.replace(/\.mkv$|\.mp4$/i, '');
@@ -1663,6 +1666,20 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
         bodyLine = name;
       }
 
+      // Audio line: 🔊 flags · codec channels
+      const audioLineParts = [];
+      const audioFlags = langToFlags(t.audioLangs);
+      if (audioFlags) audioLineParts.push(`🔊 ${audioFlags}`);
+      if (t.audioCodec) {
+        const ac = t.audioChannels ? `${t.audioCodec} ${t.audioChannels}` : t.audioCodec;
+        audioLineParts.push(ac);
+      }
+      const audioLine = audioLineParts.join(' · ');
+
+      // Subtitle line: 📝 flags
+      const subFlags = langToFlags(t.subtitleLangs);
+      const subLine = subFlags ? `📝 ${subFlags}` : '';
+
       // Stats line: 👥 seeders · 💾 size · [SOURCE]
       const statsParts = [];
       statsParts.push(`👥 ${parseInt(t.seeders) || 0}`);
@@ -1671,13 +1688,15 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
       if (sourceLabel) statsParts.push(sourceLabel);
       const statsLine = statsParts.join(' · ');
 
-      title = `${line1 ? line1 + '\n' : ''}${bodyLine}\n${statsLine}`;
+      // Combine all lines, skipping empty ones
+      title = [line1, bodyLine, audioLine, subLine, statsLine]
+        .filter(Boolean)
+        .join('\n');
+
       // Build content streamName: "NimeToDex [🏆|📡] QUALITY · AUDIO"
-      // Service prefix [RD] / [TB ⚡] / [P2P] is prepended later when building stream objects.
       const audioTag = detectAudioTag(t);
       const sourceIcon = t.seadexBest ? '🏆 ' : t.tosho ? '📡 ' : '';
       const qualityPart = t.resolution || '';
-      // Mark tags that contain English audio with ✅
       const audioWithMarker = audioTag === 'Dub' || audioTag === 'Dual' ? `${audioTag} ✅` : audioTag;
       const audioPart = audioTag ? ` · ${audioWithMarker}` : '';
       streamName = `NimeToDex ${sourceIcon}${qualityPart}${audioPart}`.trim();
@@ -1907,11 +1926,14 @@ const LANG_FLAGS = {
   sr: '🇷🇸', srp: '🇷🇸', serbian: '🇷🇸',
 };
 
-function langToFlags(langStr) {
+function langToFlags(langStr, prioritize = ['en', 'cs']) {
   if (!langStr) return '';
   const codes = langStr.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
-  const flags = codes.map(c => LANG_FLAGS[c] || c).join('');
-  return flags;
+  // Move priority langs to front (EN, CS by default)
+  const front = prioritize.filter(p => codes.includes(p));
+  const rest = codes.filter(c => !front.includes(c));
+  const ordered = [...front, ...rest];
+  return ordered.map(c => LANG_FLAGS[c] || c.toUpperCase()).join(' ');
 }
 
 function getLangScore(item, langOrder) {
