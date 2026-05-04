@@ -415,6 +415,8 @@ app.get('/api/sort-prefs/:token', (req, res) => {
     // Top-level toggles (apply across all modes)
     dubFirst: user.dubFirst || false,
     cachedFirst: user.cachedFirst || false,
+    langFilterEnabled: user.langFilterEnabled || false,
+    langFilterCodes: user.langFilterCodes || ['en', 'cs'],
     defaultGroups: DEFAULT_GROUPS,
     defaultResolutions: DEFAULT_RESOLUTIONS,
     defaultLangs: []
@@ -428,7 +430,8 @@ app.post('/api/sort-prefs/:token', express.json(), (req, res) => {
     sortMode,
     groupsEnabled, resEnabled, excludeResEnabled, langsEnabled,
     groupPriority, resPriority, langPriority, excludedResolutions,
-    dubFirst, cachedFirst
+    dubFirst, cachedFirst,
+    langFilterEnabled, langFilterCodes
   } = req.body;
   const VALID_MODES = ['qualityThenSeeders', 'qualityThenSize', 'seeders', 'size'];
   if (typeof sortMode === 'string' && VALID_MODES.includes(sortMode)) {
@@ -445,6 +448,14 @@ app.post('/api/sort-prefs/:token', express.json(), (req, res) => {
   if (Array.isArray(excludedResolutions)) user.excludedResolutions = excludedResolutions;
   if (typeof dubFirst === 'boolean') user.dubFirst = dubFirst;
   if (typeof cachedFirst === 'boolean') user.cachedFirst = cachedFirst;
+  if (typeof langFilterEnabled === 'boolean') user.langFilterEnabled = langFilterEnabled;
+  if (Array.isArray(langFilterCodes)) {
+    // Sanitize: only ISO codes 2-3 chars, lowercase
+    user.langFilterCodes = langFilterCodes
+      .filter(c => typeof c === 'string' && /^[a-z]{2,3}$/i.test(c))
+      .map(c => c.toLowerCase())
+      .slice(0, 30); // hard limit
+  }
   config.saveUser(req.params.token, user);
   res.json({ success: true });
 });
@@ -1697,8 +1708,12 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
       }
 
       // Audio line: 🔊 flags · codec channels
+      // Apply per-user language filter if enabled
+      const langFilter = user?.langFilterEnabled && Array.isArray(user?.langFilterCodes) && user.langFilterCodes.length
+        ? user.langFilterCodes
+        : null;
       const audioLineParts = [];
-      const audioFlags = langToFlags(t.audioLangs);
+      const audioFlags = langToFlags(t.audioLangs, ['en', 'cs'], langFilter);
       if (audioFlags) audioLineParts.push(`🔊 ${audioFlags}`);
       if (t.audioCodec) {
         const ac = t.audioChannels ? `${t.audioCodec} ${t.audioChannels}` : t.audioCodec;
@@ -1707,7 +1722,7 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
       const audioLine = audioLineParts.join(' · ');
 
       // Subtitle line: 📝 flags
-      const subFlags = langToFlags(t.subtitleLangs);
+      const subFlags = langToFlags(t.subtitleLangs, ['en', 'cs'], langFilter);
       const subLine = subFlags ? `📝 ${subFlags}` : '';
 
       // Stats line: 👥 seeders · 💾 size · [SOURCE]
@@ -1966,9 +1981,15 @@ const LANG_FLAGS = {
   sr: '🇷🇸', srp: '🇷🇸', serbian: '🇷🇸',
 };
 
-function langToFlags(langStr, prioritize = ['en', 'cs']) {
+function langToFlags(langStr, prioritize = ['en', 'cs'], filter = null) {
   if (!langStr) return '';
-  const codes = langStr.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+  let codes = langStr.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+  // Apply filter if defined (array of allowed lang codes)
+  if (Array.isArray(filter) && filter.length) {
+    const allowed = new Set(filter.map(c => String(c).toLowerCase()));
+    codes = codes.filter(c => allowed.has(c));
+  }
+  if (!codes.length) return '';
   // Move priority langs to front (EN, CS by default)
   const front = prioritize.filter(p => codes.includes(p));
   const rest = codes.filter(c => !front.includes(c));
