@@ -354,6 +354,16 @@
 
             <div class="divider"></div>
 
+            <div class="row">
+                <div class="row-label"><span data-i18n="sort.langFilter">Filter zobrazovaných jazyků</span> <small data-i18n="sort.langFilterHint">Zobrazit jen vybrané vlajky u 🔊 audio a 📝 titulků</small></div>
+                <button class="toggle off" id="sort-langfilter-toggle" onclick="toggleLangFilter()"></button>
+            </div>
+            <div id="langfilter-section" style="margin-top:6px;">
+                <div id="langfilter-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:6px;padding:0 4px;"></div>
+            </div>
+
+            <div class="divider"></div>
+
             <!-- Pokročilé filtry: každý se dá nezávisle zapnout / vypnout -->
             <div class="row">
                 <div class="row-label"><span data-i18n="sort.groupsToggle">Priorita skupin</span> <small data-i18n="sort.groupsHint">Preferované release skupiny nahoře</small></div>
@@ -508,6 +518,8 @@ const I18N = {
         'sort.cachedFirstHint': 'TorBox cache on top',
         'sort.dubFirst': 'EN/Dub first',
         'sort.dubFirstHint': 'English audio on top',
+        'sort.langFilter': 'Language display filter',
+        'sort.langFilterHint': 'Show only selected flags in 🔊 audio and 📝 subtitles',
         'sort.groupsToggle': 'Group priority',
         'sort.groupsHint': 'Preferred release groups on top',
         'sort.resToggle': 'Resolution priority',
@@ -634,6 +646,8 @@ const I18N = {
         'sort.cachedFirstHint': 'TorBox cache nahoře',
         'sort.dubFirst': 'EN/Dub první',
         'sort.dubFirstHint': 'Anglické audio nahoře',
+        'sort.langFilter': 'Filter zobrazovaných jazyků',
+        'sort.langFilterHint': 'Zobrazit jen vybrané vlajky u 🔊 audio a 📝 titulků',
         'sort.groupsToggle': 'Priorita skupin',
         'sort.groupsHint': 'Preferované skupiny nahoře',
         'sort.resToggle': 'Priorita rozlišení',
@@ -1085,6 +1099,7 @@ let sortPrefs = {
     groupsEnabled: false, resEnabled: false, excludeResEnabled: false, langsEnabled: false,
     groupPriority: [], resPriority: [], langPriority: [], excludedResolutions: [],
     dubFirst: false, cachedFirst: false,
+    langFilterEnabled: false, langFilterCodes: ['en', 'cs'],
     defaultGroups: [], defaultResolutions: [], defaultLangs: []
 };
 
@@ -1104,6 +1119,25 @@ function renderSortPrefs() {
     // Top-level toggles
     document.getElementById('sort-cached-toggle').className = sortPrefs.cachedFirst ? 'toggle on' : 'toggle off';
     document.getElementById('sort-dub-toggle').className = sortPrefs.dubFirst ? 'toggle on' : 'toggle off';
+    document.getElementById('sort-langfilter-toggle').className = sortPrefs.langFilterEnabled ? 'toggle on' : 'toggle off';
+
+    // Language filter checkbox grid (top 15 common langs)
+    const LANG_OPTIONS = [
+      ['en', '🇬🇧 EN'], ['cs', '🇨🇿 CS'], ['sk', '🇸🇰 SK'],
+      ['ja', '🇯🇵 JA'], ['de', '🇩🇪 DE'], ['fr', '🇫🇷 FR'],
+      ['es', '🇪🇸 ES'], ['it', '🇮🇹 IT'], ['pt', '🇧🇷 PT'],
+      ['ru', '🇷🇺 RU'], ['ko', '🇰🇷 KO'], ['zh', '🇨🇳 ZH'],
+      ['pl', '🇵🇱 PL'], ['nl', '🇳🇱 NL'], ['sv', '🇸🇪 SV'],
+    ];
+    const langGrid = document.getElementById('langfilter-grid');
+    if (langGrid) {
+      const selected = new Set(sortPrefs.langFilterCodes || []);
+      langGrid.innerHTML = LANG_OPTIONS.map(([code, label]) => {
+        const checked = selected.has(code) ? 'checked' : '';
+        return `<label style="display:flex;align-items:center;gap:6px;padding:4px 6px;cursor:pointer;font-size:13px;"><input type="checkbox" ${checked} onchange="toggleLangCode('${code}', this.checked)"> ${label}</label>`;
+      }).join('');
+    }
+    setSectionDim('langfilter-section', !sortPrefs.langFilterEnabled);
 
     // Per-filter toggles + dim sections when off
     document.getElementById('sort-groups-toggle').className = sortPrefs.groupsEnabled ? 'toggle on' : 'toggle off';
@@ -1173,6 +1207,14 @@ function renderSortList(containerId, items, type) {
 
 function toggleCachedFirst() { sortPrefs.cachedFirst = !sortPrefs.cachedFirst; saveSortPrefs(); renderSortPrefs(); }
 function toggleDubFirst() { sortPrefs.dubFirst = !sortPrefs.dubFirst; saveSortPrefs(); renderSortPrefs(); }
+function toggleLangFilter() { sortPrefs.langFilterEnabled = !sortPrefs.langFilterEnabled; saveSortPrefs(); renderSortPrefs(); }
+function toggleLangCode(code, checked) {
+    const current = new Set(sortPrefs.langFilterCodes || []);
+    if (checked) current.add(code); else current.delete(code);
+    sortPrefs.langFilterCodes = Array.from(current);
+    saveSortPrefs();
+    renderSortPrefs();
+}
 function toggleGroupsEnabled() { sortPrefs.groupsEnabled = !sortPrefs.groupsEnabled; saveSortPrefs(); renderSortPrefs(); }
 function toggleResEnabled() { sortPrefs.resEnabled = !sortPrefs.resEnabled; saveSortPrefs(); renderSortPrefs(); }
 function toggleExcludeResEnabled() { sortPrefs.excludeResEnabled = !sortPrefs.excludeResEnabled; saveSortPrefs(); renderSortPrefs(); }
@@ -1222,7 +1264,9 @@ async function saveSortPrefs() {
                 langPriority: sortPrefs.langPriority,
                 excludedResolutions: sortPrefs.excludedResolutions,
                 dubFirst: sortPrefs.dubFirst,
-                cachedFirst: sortPrefs.cachedFirst
+                cachedFirst: sortPrefs.cachedFirst,
+                langFilterEnabled: sortPrefs.langFilterEnabled,
+                langFilterCodes: sortPrefs.langFilterCodes
             })
         });
     } catch {}
