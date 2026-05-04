@@ -1648,12 +1648,19 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
     if (t.indexer) {
       // === Indexer result: custom formatting ===
 
-      // Line 1: quality tags (resolution · encoding · bit-depth · dual marker)
+      // Detect audio tag once — reuse for both line1 marker and streamName
+      const audioTag = detectAudioTag(t);
+
+      // Line 1: quality tags (resolution · encoding · bit-depth · audio tag)
       const qualityTags = [];
       if (t.resolution) qualityTags.push(t.resolution);
       if (t.encoding) qualityTags.push(t.encoding);
       if (t.bitDepth) qualityTags.push(`${t.bitDepth}-bit`);
-      if (t.dualAudio) qualityTags.push('Dual ✅');
+      // Mark Dub/Dual/Multi with ✅ (= audio includes English or multi-track)
+      if (audioTag) {
+        const showCheck = audioTag === 'Dub' || audioTag === 'Dual' || audioTag === 'Multi';
+        qualityTags.push(showCheck ? `${audioTag} ✅` : audioTag);
+      }
       const line1 = qualityTags.filter(Boolean).join(' · ');
 
       // Body line: torrent name OR matched batch file
@@ -1694,10 +1701,11 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
         .join('\n');
 
       // Build content streamName: "NimeToDex [🏆|📡] QUALITY · AUDIO"
-      const audioTag = detectAudioTag(t);
+      // (audioTag already detected above for line1)
       const sourceIcon = t.seadexBest ? '🏆 ' : t.tosho ? '📡 ' : '';
       const qualityPart = t.resolution || '';
-      const audioWithMarker = audioTag === 'Dub' || audioTag === 'Dual' ? `${audioTag} ✅` : audioTag;
+      const showCheck = audioTag === 'Dub' || audioTag === 'Dual' || audioTag === 'Multi';
+      const audioWithMarker = showCheck ? `${audioTag} ✅` : audioTag;
       const audioPart = audioTag ? ` · ${audioWithMarker}` : '';
       streamName = `NimeToDex ${sourceIcon}${qualityPart}${audioPart}`.trim();
     } else {
@@ -1831,21 +1839,28 @@ app.get('/:token/nzb/manifest.json', (req, res) => {
 // ===== Language score helper for NZB sorting =====
 // Returns lowest index from langOrder found in item's language/subs/title
 // Lower = better match. Items with no match get langOrder.length (worst)
-// ===== Detect audio language tag for stream name (JP / Dub / Dual / Multi) =====
-// Uses indexer-provided dual_audio flag and audio_langs CSV (ISO 639-1 lowercase).
-// Returns null when audio info is unknown — caller should not append a tag.
+// ===== Detect audio language tag for stream name =====
+// Priority:
+//   1. Explicit indexer audio_langs metadata (highest confidence):
+//      - 3+ langs               → Multi
+//      - EN present (with/out others) → Dub
+//      - JP only                → JP
+//   2. Fallback to dual_audio flag (from filename parsing): → Dual
+//   3. Unknown → null (no tag)
 function detectAudioTag(t) {
   const langs = String(t.audioLangs || '').toLowerCase().split(',').map(s => s.trim()).filter(Boolean);
   const hasJa = langs.includes('ja');
   const hasEn = langs.includes('en');
   const hasMulti = langs.includes('multi');
 
+  // Priority 1: explicit metadata from indexer
+  if (langs.length >= 3 || hasMulti) return 'Multi';
+  if (hasEn) return 'Dub';            // EN present (alone or with JP) → Dub
+  if (hasJa && langs.length === 1) return 'JP';  // only JP
+
+  // Priority 2: fallback to filename-parsed dual_audio (when audio_langs missing)
   if (t.dualAudio) return 'Dual';
-  if (hasMulti && langs.length >= 2) return 'Multi'; // multi + extra langs
-  if (hasJa && hasEn) return 'Dual';
-  if (hasJa && !hasEn) return 'JP';
-  if (hasEn && !hasJa) return 'Dub';
-  if (hasMulti) return 'Multi';
+
   return null;
 }
 
