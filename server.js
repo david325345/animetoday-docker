@@ -55,11 +55,16 @@ async function updateCache() {
   const t0 = Date.now();
   try {
     const schedules = await fetchAnimeSchedule();
-    await generateAllPosters(schedules);
-
+    // Update cache IMMEDIATELY so catalog is available with SIMKL posters
+    // while we generate enhanced posters in the background.
     todayAnimeCache = schedules;
     const withImdb = schedules.filter(s => s.imdbId).length;
-    console.log(`✅ Cache: ${todayAnimeCache.length} anime, ${withImdb} with IMDb (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
+    console.log(`✅ Cache: ${todayAnimeCache.length} anime, ${withImdb} with IMDb (${((Date.now() - t0) / 1000).toFixed(1)}s, posters generating...)`);
+
+    // Poster generation runs after; mutates schedule entries in-place
+    // (each gets generatedPoster assigned), so the cache benefits without rewriting.
+    await generateAllPosters(schedules);
+    console.log(`✅ Posters generated for ${schedules.length} anime`);
   } catch (err) { console.error('❌ Cache failed:', err.message); }
 }
 
@@ -882,6 +887,7 @@ app.get('/:token/today/catalog/:type/:id.json', (req, res) => {
   }
 
   res.json({ metas });
+  console.log(`  📅 Anime Today catalog (${req.params.type}): ${metas.length} items returned`);
 });
 
 // ===== STREMIO: ANIME TODAY META ENDPOINT =====
