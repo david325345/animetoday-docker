@@ -1934,7 +1934,7 @@ function formatSourceLabel(indexerSource, seadexBest) {
   switch (indexerSource) {
     case 'seadex':      return seadexBest ? '⭐ SeaDex' : null;
     case 'nyaa':        return '🐱 Nyaa';
-    case 'tokyotosho':  return '📺 tokyotosho';
+    case 'tokyotosho':  return '📺 Tokyotosho';
     case 'animetosho':  return '📡 AT';
     case 'nekobt':      return '🐾 nekoBT';
     default:            return null;
