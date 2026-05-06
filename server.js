@@ -55,6 +55,14 @@ async function updateCache() {
   const t0 = Date.now();
   try {
     const schedules = await fetchAnimeSchedule();
+
+    // Don't overwrite cache with empty result — preserves last known good schedule
+    // when SIMKL has a transient failure (DNS, 5xx, timeout).
+    if (!schedules.length) {
+      console.warn(`⚠️ SIMKL returned 0 schedules — keeping previous cache (${todayAnimeCache.length} entries)`);
+      return;
+    }
+
     // Update cache IMMEDIATELY so catalog is available with SIMKL posters
     // while we generate enhanced posters in the background.
     todayAnimeCache = schedules;
