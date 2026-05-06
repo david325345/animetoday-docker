@@ -832,15 +832,15 @@ app.get('/:token/nzb-refresh/:imdb/:season/:episode/video.mp4', async (req, res)
 // ===== STREMIO: ANIME TODAY ADDON =====
 app.get('/:token/today/manifest.json', (req, res) => {
   res.json({
-    id: 'cz.nyaa.anime.today.v8',
-    version: '8.1.0',
+    id: 'cz.nyaa.anime.today.v9',
+    version: '9.0.0',
     name: 'Anime Today',
     description: 'Anime schedule from SIMKL — today + 2 days ahead with posters and ratings.',
     logo: `${BASE_URL}/logo.png`,
-    resources: ['catalog', 'meta'],
+    resources: ['catalog'],
     types: ['series'],
     catalogs: [{ type: 'series', id: 'anime-today', name: 'Anime Schedule', extra: [{ name: 'skip', isRequired: false }] }],
-    idPrefixes: ['at:'],
+    idPrefixes: ['tt'],
     behaviorHints: { configurable: true, configurationRequired: false }
   });
 });
@@ -861,11 +861,14 @@ app.get('/:token/today/catalog/:type/:id.json', (req, res) => {
   let lastDay = -1;
 
   for (const s of sorted) {
+    // Skip anime without IMDb — Stremio addon now uses tt:season:episode format only
+    if (!s.imdbId) continue;
+
     // Insert separator when day changes (skip for today = day 0)
     if (s.dayOffset > 0 && s.dayOffset !== lastDay) {
       const sepPoster = `${BASE_URL}/posters/sep_day${s.dayOffset}.png`;
       metas.push({
-        id: `at:sep:${s.dayOffset}`,
+        id: `sep:${s.dayOffset}`,
         type: 'series',
         name: getDayLabel(s.dayOffset),
         poster: sepPoster,
@@ -879,7 +882,10 @@ app.get('/:token/today/catalog/:type/:id.json', (req, res) => {
     const poster = s.generatedPoster ? `${BASE_URL}${s.generatedPoster}` : s.posterUrl;
     const bg = s.fanartUrl || poster;
     const time = formatTimeCET(s.airingAt);
-    const id = s.imdbId || `at:${s.anilistId || s.simklId}`;
+    // Episode-level ID: "tt28100731:3:6" deeplinks Stremio detail to that episode.
+    const seasonNum = s.season || 1;
+    const epNum = s.episode || 1;
+    const id = `${s.imdbId}:${seasonNum}:${epNum}`;
 
     metas.push({
       id, type: 'series',
