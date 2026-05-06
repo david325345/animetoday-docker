@@ -833,7 +833,7 @@ app.get('/:token/nzb-refresh/:imdb/:season/:episode/video.mp4', async (req, res)
 app.get('/:token/today/manifest.json', (req, res) => {
   res.json({
     id: 'cz.nyaa.anime.today.v9',
-    version: '9.0.0',
+    version: '9.1.0',
     name: 'Anime Today',
     description: 'Anime schedule from SIMKL — today + 2 days ahead with posters and ratings.',
     logo: `${BASE_URL}/logo.png`,
@@ -882,10 +882,9 @@ app.get('/:token/today/catalog/:type/:id.json', (req, res) => {
     const poster = s.generatedPoster ? `${BASE_URL}${s.generatedPoster}` : s.posterUrl;
     const bg = s.fanartUrl || poster;
     const time = formatTimeCET(s.airingAt);
-    // Episode-level ID: "tt28100731:3:6" deeplinks Stremio detail to that episode.
-    const seasonNum = s.season || 1;
-    const epNum = s.episode || 1;
-    const id = `${s.imdbId}:${seasonNum}:${epNum}`;
+    // Stremio doesn't deeplink to specific episode on detail page (architectural limitation),
+    // so we use the clean show-level IMDb id. Stremio defaults to last-watched or S1E1.
+    const id = s.imdbId;
 
     metas.push({
       id, type: 'series',
