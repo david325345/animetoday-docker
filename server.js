@@ -1310,7 +1310,7 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
       // 1. Try direct IMDb match in offline-db
       for (const s of todayAnimeCache) {
         const rec = offlineDB.byAniList.get(s.anilistId);
-        if (rec?.imdb === imdbBase) { episode = s.episode; season = 1; matchedByImdb = true; console.log(`  📅 Today (imdb): ${imdbBase} → ep${episode}`); break; }
+        if (rec?.imdb === imdbBase) { episode = s.episode; season = s.season || 1; matchedByImdb = true; console.log(`  📅 Today (imdb): ${imdbBase} → S${season}E${episode}`); break; }
       }
       // 2. Fallback: resolve IMDb → AniDB via anime-lists, then match AniDB in cache
       if (!matchedByImdb) {
@@ -1319,7 +1319,7 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
           if (resolved?.anidb) {
             for (const s of todayAnimeCache) {
               const rec = offlineDB.byAniList.get(s.anilistId);
-              if (rec?.anidb === resolved.anidb) { episode = s.episode; season = 1; matchedByImdb = true; console.log(`  📅 Today (anidb): ${imdbBase} → AniDB ${resolved.anidb} → ep${episode}`); break; }
+              if (rec?.anidb === resolved.anidb) { episode = s.episode; season = s.season || 1; matchedByImdb = true; console.log(`  📅 Today (anidb): ${imdbBase} → AniDB ${resolved.anidb} → S${season}E${episode}`); break; }
             }
           }
         } catch {}
@@ -1328,8 +1328,8 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
     if (!matchedByImdb) {
       for (const s of todayAnimeCache) {
         const rec = offlineDB.byAniList.get(s.anilistId);
-        if (kitsuId && rec?.kitsu === kitsuId) { episode = s.episode; season = 1; console.log(`  📅 Today: kitsu:${kitsuId} → ep${episode}`); break; }
-        if (anilistIdNum && s.anilistId === anilistIdNum) { episode = s.episode; season = 1; console.log(`  📅 Today: anilist:${anilistIdNum} → ep${episode}`); break; }
+        if (kitsuId && rec?.kitsu === kitsuId) { episode = s.episode; season = s.season || 1; console.log(`  📅 Today: kitsu:${kitsuId} → S${season}E${episode}`); break; }
+        if (anilistIdNum && s.anilistId === anilistIdNum) { episode = s.episode; season = s.season || 1; console.log(`  📅 Today: anilist:${anilistIdNum} → S${season}E${episode}`); break; }
       }
     }
   }
