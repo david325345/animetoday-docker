@@ -1972,7 +1972,7 @@ function formatSourceLabel(indexerSource, seadexBest) {
     case 'seadex':      return seadexBest ? '⭐ SeaDex' : null;
     case 'nyaa':        return '🐱 Nyaa';
     case 'tokyotosho':  return '📺 Tokyotosho';
-    case 'animetosho':  return 'Anime Tosho';
+    case 'animetosho':  return '🐙 Anime Tosho';
     case 'nekobt':      return '🐾 nekoBT';
     default:            return null;
   }
@@ -2258,7 +2258,7 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
       size: parseInt(t.filesize) || 0,
       r2_key: t.r2_key || null,
       source: 'animetosho',
-      sourceLabel: 'Anime Tosho',
+      sourceLabel: '🐙 Anime Tosho',
     })),
   ].filter(n => n.r2_key); // Only show NZBs that are on R2
 
