@@ -1987,6 +1987,29 @@ function formatIndexerFilesize(bytes) {
   return (n / 1024).toFixed(0) + ' KB';
 }
 
+// ===== Format publication date as relative age =====
+// "5h ago" / "12d ago" / "8mo ago" / "2y ago"
+// Accepts ISO string or RFC string (NZBGeek pubDate / Tosho date_posted)
+function formatRelativeAge(date) {
+  if (!date) return null;
+  const t = new Date(date).getTime();
+  if (isNaN(t)) return null;
+  const diffMs = Date.now() - t;
+  if (diffMs < 0) return null; // future date
+  const sec = Math.floor(diffMs / 1000);
+  const min = Math.floor(sec / 60);
+  const hour = Math.floor(min / 60);
+  const day = Math.floor(hour / 24);
+  const month = Math.floor(day / 30);
+  const year = Math.floor(day / 365);
+  if (year >= 1) return `${year}y ago`;
+  if (month >= 1) return `${month}mo ago`;
+  if (day >= 1) return `${day}d ago`;
+  if (hour >= 1) return `${hour}h ago`;
+  if (min >= 1) return `${min}m ago`;
+  return 'just now';
+}
+
 const LANG_FLAGS = {
   ja: '🇯🇵', jp: '🇯🇵', japanese: '🇯🇵',
   en: '🇬🇧', eng: '🇬🇧', english: '🇬🇧',
@@ -2243,22 +2266,72 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
     console.log(`  📰 NZB indexer error: ${err.message}`);
   }
 
-  // Normalize both sources into unified format
-  const allNzb = [
-    ...nzbResults.map(n => ({
-      name: n.title || n.name || 'Unknown',
-      size: parseInt(n.size) || n.filesize || 0,
-      r2_key: n.r2_key || null,
-      source: n.source || 'nzbgeek',
-      sourceLabel: '📰 NZBgeek',
-    })),
-    ...toshoNzbResults.map(t => ({
+  // Normalize both sources into unified format.
+  // Tosho NZBs come from tosho_results (= same DB record as torrents) so they have
+  // full metadata: file_list, fileIdx, audio_langs, subtitle_langs, batch flag, resolution etc.
+  // NZBGeek results have only basic info (title + size + pubDate + source).
+
+  const normalizeToshoNzb = (t) => {
+    // Parse file_list and find matched file (same logic as mapToshoResults — trust file_index)
+    let matchedFile = null;
+    if (t.batch && t.file_list && (t.fileIdx != null || t.file_index != null)) {
+      try {
+        const files = typeof t.file_list === 'string' ? JSON.parse(t.file_list) : t.file_list;
+        if (Array.isArray(files)) {
+          const idx = t.fileIdx != null ? t.fileIdx : t.file_index;
+          const file = files.find(f => f.idx === idx);
+          if (file) {
+            const fname = file.filename || file.name || '';
+            const fsize = file.filesize || file.size || 0;
+            matchedFile = { name: fname.split('/').pop(), size: fsize, idx: file.idx };
+          }
+        }
+      } catch {}
+    }
+    return {
       name: t.name || 'Unknown',
       size: parseInt(t.filesize) || 0,
       r2_key: t.r2_key || null,
       source: 'animetosho',
       sourceLabel: '🐙 Anime Tosho',
-    })),
+      pubDate: t.date_posted || null,
+      // Full tosho metadata (so NZB layout matches torrent layout)
+      resolution: t.resolution || '',
+      bitDepth: t.bit_depth || null,
+      codec: t.codec || '',
+      audioCodec: t.audio_codec || '',
+      audioLangs: t.audio_langs || '',
+      subtitleLangs: t.subtitle_langs || '',
+      dualAudio: !!t.dual_audio,
+      batch: !!t.batch,
+      filesizeBytes: parseInt(t.filesize) || 0,
+      matchedFile,
+      hasMeta: true, // Has full metadata → use rich layout
+    };
+  };
+
+  const normalizeNzbGeek = (n) => ({
+    name: n.title || n.name || 'Unknown',
+    size: parseInt(n.size) || n.filesize || 0,
+    r2_key: n.r2_key || null,
+    source: n.source || 'nzbgeek',
+    sourceLabel: '🤓 NZBGeek',
+    pubDate: n.pubDate || null,
+    // No file_list / langs — basic info only
+    resolution: '',
+    audioLangs: '',
+    subtitleLangs: '',
+    audioCodec: '',
+    dualAudio: false,
+    batch: false,
+    filesizeBytes: parseInt(n.size) || n.filesize || 0,
+    matchedFile: null,
+    hasMeta: false, // Basic layout (just title + size + age + source)
+  });
+
+  const allNzb = [
+    ...nzbResults.map(normalizeNzbGeek),
+    ...toshoNzbResults.map(normalizeToshoNzb),
   ].filter(n => n.r2_key); // Only show NZBs that are on R2
 
   // Filter and sort NZB results using user preferences (4 preset modes + per-filter toggles)
@@ -2268,7 +2341,7 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
 
   const resOrder = user?.resPriority || DEFAULT_RESOLUTIONS;
   const getNzbResRank = (t) => {
-    const res = detectQuality(t.name);
+    const res = t.resolution || detectQuality(t.name);
     if (!res) return resOrder.length;
     const idx = resOrder.indexOf(res);
     return idx >= 0 ? idx : resOrder.length;
@@ -2279,8 +2352,8 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
     const excludedRes = new Set((user.excludedResolutions || []).map(r => r.toLowerCase()));
     if (excludedRes.size) {
       sorted = sorted.filter(t => {
-        const res = detectQuality(t.name);
-        if (res && excludedRes.has(res.toLowerCase())) return false;
+        const res = (t.resolution || detectQuality(t.name) || '').toLowerCase();
+        if (res && excludedRes.has(res)) return false;
         return true;
       });
     }
@@ -2298,20 +2371,87 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
   }
   const topNzb = sorted.slice(0, 20);
 
+  // Per-user language filter (same as torrents)
+  const langFilter = user?.langFilterEnabled && Array.isArray(user?.langFilterCodes) && user.langFilterCodes.length
+    ? user.langFilterCodes
+    : null;
+
   // Build streams
   const streams = [];
   const epNum = isMovie ? 0 : episode;
 
   for (const t of topNzb) {
-    const quality = detectQuality(t.name);
+    const quality = t.resolution || detectQuality(t.name);
     const size = t.size ? formatIndexerFilesize(t.size) : '?';
+    const age = formatRelativeAge(t.pubDate);
 
-    const tags = [quality, t.sourceLabel, `📦 ${size}`].filter(Boolean);
-    const title = `${tags.join(' · ')}\n${t.name}`;
+    let title;
+
+    if (t.hasMeta) {
+      // === Tosho NZB: full layout matching torrent stream layout ===
+      // Body line: 📂 matched file (batch with fileIdx) OR plain torrent name
+      let bodyLine;
+      if (t.batch && t.matchedFile) {
+        const fName = t.matchedFile.name.replace(/\.mkv$|\.mp4$/i, '');
+        bodyLine = `📂 ${fName}`;
+      } else {
+        bodyLine = t.name;
+      }
+
+      // Audio line: 🔊 flags · codec
+      const audioLineParts = [];
+      const audioFlags = langToFlags(t.audioLangs, ['en', 'cs'], langFilter);
+      if (audioFlags) audioLineParts.push(`🔊 ${audioFlags}`);
+      if (t.audioCodec) audioLineParts.push(t.audioCodec);
+      const audioLine = audioLineParts.join(' · ');
+
+      // Subtitle line: 📝 flags
+      const subFlags = langToFlags(t.subtitleLangs, ['en', 'cs'], langFilter);
+      const subLine = subFlags ? `📝 ${subFlags}` : '';
+
+      // Stats line: 📅 age · 💾 size [/ 📦 batch] · source
+      const statsParts = [];
+      if (age) statsParts.push(`📅 ${age}`);
+      if (t.matchedFile?.size && t.filesizeBytes) {
+        statsParts.push(`💾 ${formatIndexerFilesize(t.matchedFile.size)} / 📦 ${formatIndexerFilesize(t.filesizeBytes)}`);
+      } else if (t.batch && t.filesizeBytes) {
+        statsParts.push(`📦 ${formatIndexerFilesize(t.filesizeBytes)}`);
+      } else {
+        statsParts.push(`💾 ${size}`);
+      }
+      statsParts.push(t.sourceLabel);
+      const statsLine = statsParts.join(' · ');
+
+      title = [bodyLine, audioLine, subLine, statsLine].filter(Boolean).join('\n');
+    } else {
+      // === NZBGeek: basic layout (no file_list / langs available) ===
+      const statsParts = [];
+      if (age) statsParts.push(`📅 ${age}`);
+      statsParts.push(`💾 ${size}`);
+      statsParts.push(t.sourceLabel);
+      const statsLine = statsParts.join(' · ');
+      title = `${t.name}\n${statsLine}`;
+    }
+
+    // Stream name (left column): "NimeToDexNZB\n[resolution] · [audio tag]"
+    // Mirrors torrent layout but with NZB suffix and no [RD] / 🏆 prefixes.
+    let streamName = 'NimeToDexNZB';
+    if (t.hasMeta) {
+      const audioTag = detectAudioTag(t);
+      const showCheck = audioTag === 'Dub' || audioTag === 'Dual' || audioTag === 'Multi';
+      const audioWithMarker = showCheck ? `${audioTag} ✅` : audioTag;
+      const qualityPart = t.resolution || quality || '';
+      const audioPart = audioTag ? ` · ${audioWithMarker}` : '';
+      if (qualityPart || audioPart) {
+        streamName = `NimeToDexNZB\n${qualityPart}${audioPart}`.trim();
+      }
+    } else if (quality) {
+      streamName = `NimeToDexNZB\n${quality}`;
+    }
 
     const nzbUrl = `${R2_NZB_BASE}/${t.r2_key}`;
     streams.push({
-      name: `📰 NZB`,
+      name: streamName,
       title,
       url: `${BASE_URL}/${token}/play-nzb/${storeNZB(nzbUrl, t.name)}/${epNum}/video.mp4`,
       behaviorHints: { bingeGroup: 'nzb-indexer', notWebReady: true }
