@@ -1759,9 +1759,9 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
         .filter(Boolean)
         .join('\n');
 
-      // Build content streamName: "NimeToDex [🏆|📡] QUALITY · AUDIO"
+      // Build content streamName: "NimeToDex [🏆] QUALITY · AUDIO"
       // (audioTag already detected above for line1)
-      const sourceIcon = t.seadexBest ? '🏆 ' : t.tosho ? '📡 ' : '';
+      const sourceIcon = t.seadexBest ? '🏆 ' : '';
       const qualityPart = t.resolution || '';
       const showCheck = audioTag === 'Dub' || audioTag === 'Dual' || audioTag === 'Multi';
       const audioWithMarker = showCheck ? `${audioTag} ✅` : audioTag;
@@ -1948,7 +1948,7 @@ function formatSourceLabel(indexerSource, seadexBest) {
     case 'seadex':      return seadexBest ? '⭐ SeaDex' : null;
     case 'nyaa':        return '🐱 Nyaa';
     case 'tokyotosho':  return '📺 Tokyotosho';
-    case 'animetosho':  return '📡 AT';
+    case 'animetosho':  return 'Anime Tosho';
     case 'nekobt':      return '🐾 nekoBT';
     default:            return null;
   }
@@ -2234,7 +2234,7 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
       size: parseInt(t.filesize) || 0,
       r2_key: t.r2_key || null,
       source: 'animetosho',
-      sourceLabel: '📡 AT',
+      sourceLabel: 'Anime Tosho',
     })),
   ].filter(n => n.r2_key); // Only show NZBs that are on R2
 
