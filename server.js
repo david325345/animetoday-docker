@@ -1546,35 +1546,59 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
 
   const mapToshoResults = (results) => results
     .filter(r => r.magnet || r.infohash)
-    .map(r => ({
-      name: r.name || 'Unknown',
-      magnet: r.magnet || (r.infohash ? `magnet:?xt=urn:btih:${r.infohash}` : null),
-      infohash: r.infohash || null,
-      seeders: String(r.seeders || 0),
-      leechers: String(r.leechers || 0),
-      filesize: r.filesize ? formatIndexerFilesize(r.filesize) : '?',
-      filesizeBytes: parseInt(r.filesize) || 0,
-      source: 'tosho',
-      indexer: true,
-      indexerSource: 'animetosho',
-      tosho: true,
-      releaseGroup: r.group_name || '',
-      resolution: r.resolution || '',
-      dualAudio: !!r.dual_audio,
-      seadexBest: !!r.seadex_best,
-      batch: !!r.batch,
-      videoSource: r.video_source || '',
-      codec: r.codec || '',
-      audioLangs: r.audio_langs || '',
-      subtitleLangs: r.subtitle_langs || '',
-      audioCodec: r.audio_codec || '',
-      audioChannels: r.audio_channels || '',
-      bitDepth: r.bit_depth || null,
-      encoding: r.encoding || '',
-      multiSubs: !!r.multi_subs,
-      fileCount: r.file_count || 0,
-      matchedFile: null,
-    }));
+    .map(r => {
+      // Find matching episode file in batch.
+      // Animetosho dump only — trust indexer's `file_index` if present (validated torrent-meta order).
+      // No regex fallback: tosho file_list is dump-order (often size-sorted), not torrent-meta order,
+      // so picking by name would yield correct name but wrong idx → Stremio plays wrong file.
+      let matchedFile = null;
+      if (r.batch && r.file_list && (r.fileIdx != null || r.file_index != null)) {
+        try {
+          const files = typeof r.file_list === 'string' ? JSON.parse(r.file_list) : r.file_list;
+          if (Array.isArray(files)) {
+            const idx = r.fileIdx != null ? r.fileIdx : r.file_index;
+            const file = files.find(f => f.idx === idx);
+            if (file) {
+              // Tosho dump format uses `filename`/`filesize`; fallback to `name`/`size` for safety
+              const fname = file.filename || file.name || '';
+              const fsize = file.filesize || file.size || 0;
+              matchedFile = { name: fname.split('/').pop(), size: fsize, idx: file.idx };
+            }
+          }
+        } catch {}
+      }
+
+      return {
+        name: r.name || 'Unknown',
+        magnet: r.magnet || (r.infohash ? `magnet:?xt=urn:btih:${r.infohash}` : null),
+        infohash: r.infohash || null,
+        seeders: String(r.seeders || 0),
+        leechers: String(r.leechers || 0),
+        filesize: r.filesize ? formatIndexerFilesize(r.filesize) : '?',
+        filesizeBytes: parseInt(r.filesize) || 0,
+        source: 'tosho',
+        indexer: true,
+        indexerSource: 'animetosho',
+        tosho: true,
+        releaseGroup: r.group_name || '',
+        resolution: r.resolution || '',
+        dualAudio: !!r.dual_audio,
+        seadexBest: !!r.seadex_best,
+        batch: !!r.batch,
+        videoSource: r.video_source || '',
+        codec: r.codec || '',
+        audioLangs: r.audio_langs || '',
+        subtitleLangs: r.subtitle_langs || '',
+        audioCodec: r.audio_codec || '',
+        audioChannels: r.audio_channels || '',
+        bitDepth: r.bit_depth || null,
+        encoding: r.encoding || '',
+        multiSubs: !!r.multi_subs,
+        fileCount: r.file_count || 0,
+        matchedFile: matchedFile,
+        fileIdx: matchedFile?.idx != null ? matchedFile.idx : (r.fileIdx != null ? r.fileIdx : (r.file_index != null ? r.file_index : null)),
+      };
+    });
 
   // Run indexer search
   let indexerResults = [];
