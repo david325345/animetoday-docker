@@ -1744,8 +1744,7 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
       let bodyLine;
       if (t.batch && t.matchedFile) {
         const fName = t.matchedFile.name.replace(/\.mkv$|\.mp4$/i, '');
-        const fSize = t.matchedFile.size ? formatIndexerFilesize(t.matchedFile.size) : '';
-        bodyLine = `📂 ${fName}${fSize ? ' (' + fSize + ')' : ''}`;
+        bodyLine = `📂 ${fName}`;
       } else {
         bodyLine = name;
       }
