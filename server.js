@@ -2256,12 +2256,29 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
 
   let nzbResults = [];
   let toshoNzbResults = [];
+  let newEndpointResults = [];
   try {
-    const resp = await axios.get(`${INDEXER_URL}/search?${params.toString()}`, { timeout: 8000 });
-    nzbResults = resp.data?.nzb_results || [];
+    // Build new endpoint URL: /api/stream/imdb/:imdb/:season/:episode (or /movie)
+    const newEndpointPath = isMovie
+      ? `/api/stream/imdb/${imdbId}/movie`
+      : `/api/stream/imdb/${imdbId}/${season || 0}/${episode || 0}`;
+
+    // Call /search + new endpoint in parallel — failure on new endpoint is silent (current /search still works)
+    const [searchResp, newResp] = await Promise.all([
+      axios.get(`${INDEXER_URL}/search?${params.toString()}`, { timeout: 8000 }),
+      imdbId
+        ? axios.get(`${INDEXER_URL}${newEndpointPath}`, { timeout: 8000 }).catch(err => {
+            console.log(`  📰 NZB new endpoint error: ${err.message}`);
+            return null;
+          })
+        : Promise.resolve(null),
+    ]);
+
+    nzbResults = searchResp.data?.nzb_results || [];
     // Tosho results that have r2_key = NZB available on R2
-    toshoNzbResults = (resp.data?.tosho_results || []).filter(t => t.r2_key);
-    console.log(`  📰 NZB: ${nzbResults.length} geek + ${toshoNzbResults.length} tosho from indexer (${resp.data?.searchedBy || '?'})`);
+    toshoNzbResults = (searchResp.data?.tosho_results || []).filter(t => t.r2_key);
+    newEndpointResults = newResp?.data?.streams || [];
+    console.log(`  📰 NZB: ${nzbResults.length} geek + ${toshoNzbResults.length} tosho + ${newEndpointResults.length} new from indexer (${searchResp.data?.searchedBy || '?'})`);
   } catch (err) {
     console.log(`  📰 NZB indexer error: ${err.message}`);
   }
@@ -2289,9 +2306,11 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
       } catch {}
     }
     return {
+      guid: null,
       name: t.name || 'Unknown',
       size: parseInt(t.filesize) || 0,
       r2_key: t.r2_key || null,
+      r2_url: null, // tosho uses r2_key + R2_NZB_BASE
       source: 'animetosho',
       sourceLabel: '🐙 Anime Tosho',
       pubDate: t.date_posted || null,
@@ -2311,9 +2330,11 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
   };
 
   const normalizeNzbGeek = (n) => ({
+    guid: n.guid || null,
     name: n.title || n.name || 'Unknown',
     size: parseInt(n.size) || n.filesize || 0,
     r2_key: n.r2_key || null,
+    r2_url: null, // legacy NZBGeek uses r2_key + R2_NZB_BASE
     source: n.source || 'nzbgeek',
     sourceLabel: '🤓 NZBGeek',
     pubDate: n.pubDate || null,
@@ -2329,10 +2350,58 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
     hasMeta: false, // Basic layout (just title + size + age + source)
   });
 
+  // New /api/stream/imdb/... endpoint — same NZBGeek data, but with optional parsed metadata fields
+  // (resolution, group, audio_langs, subs, is_batch, file_index, anime_title).
+  // Today many fields are null; over time the indexer will populate them.
+  // We adapt layout dynamically: if audio_langs / subs are populated, show flag lines (like Tosho NZB).
+  const normalizeNewEndpoint = (s) => {
+    const audioCsv = Array.isArray(s.audio_langs) ? s.audio_langs.join(',') : (s.audio_langs || '');
+    const subsCsv = Array.isArray(s.subs) ? s.subs.join(',') : (s.subs || '');
+    const hasRichMeta = !!(s.resolution || audioCsv || subsCsv || s.is_batch);
+    let matchedFile = null;
+    // For batches with file_index (set by indexer per requested episode), build matchedFile.
+    // No file_list in this endpoint, so name is unknown — but fileIdx will still propagate to Stremio.
+    if (s.is_batch && s.file_index != null) {
+      matchedFile = { name: null, size: null, idx: s.file_index };
+    }
+    return {
+      guid: s.guid || null,
+      name: s.title || 'Unknown',
+      size: parseInt(s.size) || 0,
+      r2_key: null,        // not used for new endpoint
+      r2_url: s.r2_url || null, // pre-built full URL
+      source: 'nzbgeek',
+      sourceLabel: '🤓 NZBGeek',
+      pubDate: s.pub_date || null,
+      resolution: s.resolution || '',
+      audioLangs: audioCsv,
+      subtitleLangs: subsCsv,
+      audioCodec: '',
+      dualAudio: (audioCsv.split(',').filter(Boolean).length >= 2),
+      batch: !!s.is_batch,
+      filesizeBytes: parseInt(s.size) || 0,
+      matchedFile,
+      hasMeta: hasRichMeta, // rich layout when metadata is populated
+    };
+  };
+
+  // Build allNzb with dedup: prefer new endpoint over /search nzb_results when guid/title overlap
+  // (new endpoint has metadata fields that will eventually be populated).
+  const newNzb = newEndpointResults.map(normalizeNewEndpoint).filter(n => n.r2_url);
+  const seenGuids = new Set(newNzb.map(n => n.guid).filter(Boolean));
+  const seenTitles = new Set(newNzb.map(n => (n.name || '').trim()).filter(Boolean));
+
+  const oldNzb = nzbResults
+    .map(normalizeNzbGeek)
+    .filter(n => n.r2_key)
+    .filter(n => !(n.guid && seenGuids.has(n.guid)))
+    .filter(n => !seenTitles.has((n.name || '').trim()));
+
   const allNzb = [
-    ...nzbResults.map(normalizeNzbGeek),
-    ...toshoNzbResults.map(normalizeToshoNzb),
-  ].filter(n => n.r2_key); // Only show NZBs that are on R2
+    ...oldNzb,
+    ...newNzb,
+    ...toshoNzbResults.map(normalizeToshoNzb).filter(n => n.r2_key),
+  ];
 
   // Filter and sort NZB results using user preferences (4 preset modes + per-filter toggles)
   let sorted = allNzb;
@@ -2449,13 +2518,19 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
       streamName = `NimeToDexNZB\n${quality}`;
     }
 
-    const nzbUrl = `${R2_NZB_BASE}/${t.r2_key}`;
-    streams.push({
+    // New endpoint provides full r2_url; legacy NZB sources provide r2_key + R2_NZB_BASE
+    const nzbUrl = t.r2_url || `${R2_NZB_BASE}/${t.r2_key}`;
+    const stream = {
       name: streamName,
       title,
       url: `${BASE_URL}/${token}/play-nzb/${storeNZB(nzbUrl, t.name)}/${epNum}/video.mp4`,
       behaviorHints: { bingeGroup: 'nzb-indexer', notWebReady: true }
-    });
+    };
+    // For batch NZB with file_index: tell Stremio which file to play
+    if (t.matchedFile?.idx != null) {
+      stream.behaviorHints.fileIdx = t.matchedFile.idx;
+    }
+    streams.push(stream);
   }
 
   // Add "Refresh NZB" at the bottom (only if permitted)
