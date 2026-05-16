@@ -2365,14 +2365,20 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
     if (s.is_batch && s.file_index != null) {
       matchedFile = { name: null, size: null, idx: s.file_index };
     }
+    // Source label by indexer source field.
+    // - 'animetosho' from this endpoint = NEW Anime Tosho NZB feed (distinct from old tosho dump
+    //   which goes through normalizeToshoNzb with 🐙). Marked with torii gate ⛩️.
+    // - Anything else (or missing) = NZBGeek default.
+    const src = s.source || 'nzbgeek';
+    const sourceLabel = src === 'animetosho' ? '⛩️ Anime Tosho' : '🤓 NZBGeek';
     return {
       guid: s.guid || null,
       name: s.title || 'Unknown',
       size: parseInt(s.size) || 0,
       r2_key: null,        // not used for new endpoint
       r2_url: s.r2_url || null, // pre-built full URL
-      source: 'nzbgeek',
-      sourceLabel: '🤓 NZBGeek',
+      source: src,
+      sourceLabel,
       pubDate: s.pub_date || null,
       resolution: s.resolution || '',
       audioLangs: audioCsv,
