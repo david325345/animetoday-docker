@@ -2375,11 +2375,16 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
     if (s.is_batch && s.file_index != null) {
       matchedFile = { name: null, size: null, idx: s.file_index };
     }
-    // Source label by indexer source field.
-    // - 'animetosho' from this endpoint = NEW Anime Tosho NZB feed (distinct from old tosho dump
-    //   which goes through normalizeToshoNzb with 🐙). Marked with torii gate ⛩️.
-    // - Anything else (or missing) = NZBGeek default.
-    const src = s.source || 'nzbgeek';
+    // Source detection: /api/stream/imdb/... currently doesn't propagate the `source` field,
+    // but the r2_url storage path encodes it deterministically:
+    //   /nzb/     → NZBGeek (default)
+    //   /nzb-at/  → AnimeTosho NZB live feed (new) → ⛩️
+    // We honor an explicit s.source first (forward-compat for when indexer adds the field),
+    // then fall back to URL path detection.
+    let src = s.source;
+    if (!src) {
+      src = /\/nzb-at\//.test(s.r2_url || '') ? 'animetosho' : 'nzbgeek';
+    }
     const sourceLabel = src === 'animetosho' ? '⛩️ Anime Tosho' : '🤓 NZBGeek';
     return {
       guid: s.guid || null,
@@ -2419,6 +2424,15 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
     ...newNzb,
     ...toshoNzbResults.map(normalizeToshoNzb).filter(n => n.r2_key),
   ];
+
+  // Debug: breakdown of final allNzb by source label (post-dedup) — confirms ⛩️ vs 🤓 mix
+  if (allNzb.length) {
+    const bySource = allNzb.reduce((acc, n) => {
+      acc[n.source || '?'] = (acc[n.source || '?'] || 0) + 1;
+      return acc;
+    }, {});
+    console.log(`  📰 NZB after dedup: ${allNzb.length} total → ${JSON.stringify(bySource)}`);
+  }
 
   // Filter and sort NZB results using user preferences (4 preset modes + per-filter toggles)
   let sorted = allNzb;
