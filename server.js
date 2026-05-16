@@ -1683,7 +1683,8 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
   }
 
   // Combined priority sort: cachedFirst + dubFirst combine into a 4-bucket priority order.
-  // When both toggles are ON: cached+EN > uncached+EN > cached+JP > uncached+JP (EN priority, cache as tie-breaker).
+  // When both toggles are ON: cached+EN > cached+JP > uncached+EN > uncached+JP (cache priority, EN as tie-breaker).
+  // Rationale: cached = instant playback (hard UX win). EN preference is subjective; cache dominates.
   // When only one is ON: simple 2-bucket partition for that dimension.
   // Inside each bucket the preset sort is applied for consistent ordering.
   const cacheActive = tbCacheCheck && user?.cachedFirst && Object.keys(tbCacheMap).length > 0;
@@ -1699,8 +1700,8 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
       return langs.includes('en');
     };
 
-    // Higher score = higher priority. EN weight=2, cache weight=1 → EN dominates, cache as tie-breaker.
-    const score = t => (dubActive && hasEN(t) ? 2 : 0) + (cacheActive && isCached(t) ? 1 : 0);
+    // Higher score = higher priority. Cache weight=2, EN weight=1 → cache dominates, EN as tie-breaker.
+    const score = t => (cacheActive && isCached(t) ? 2 : 0) + (dubActive && hasEN(t) ? 1 : 0);
 
     const buckets = { 3: [], 2: [], 1: [], 0: [] };
     for (const t of allResults) buckets[score(t)].push(t);
@@ -1711,7 +1712,7 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
       ...sortByGroupPriority(buckets[0], user || null),
     ];
 
-    console.log(`  🎯 priority sort: cached+EN=${buckets[3].length} | EN=${buckets[2].length} | cached=${buckets[1].length} | rest=${buckets[0].length}`);
+    console.log(`  🎯 priority sort: cached+EN=${buckets[3].length} | cached=${buckets[2].length} | EN=${buckets[1].length} | rest=${buckets[0].length}`);
   }
 
   const streams = [];
