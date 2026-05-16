@@ -2279,7 +2279,9 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
     // Tosho results that have r2_key = NZB available on R2
     toshoNzbResults = (searchResp.data?.tosho_results || []).filter(t => t.r2_key);
     newEndpointResults = newResp?.data?.streams || [];
-    console.log(`  📰 NZB: ${nzbResults.length} geek + ${toshoNzbResults.length} tosho + ${newEndpointResults.length} new from indexer (${searchResp.data?.searchedBy || '?'})`);
+    const nzbGeekCount = nzbResults.filter(n => (n.source || 'nzbgeek') === 'nzbgeek').length;
+    const nzbAtCount = nzbResults.filter(n => n.source === 'animetosho').length;
+    console.log(`  📰 NZB: ${nzbGeekCount} geek + ${nzbAtCount} AT-nzb + ${toshoNzbResults.length} tosho-dump + ${newEndpointResults.length} new from indexer (${searchResp.data?.searchedBy || '?'})`);
   } catch (err) {
     console.log(`  📰 NZB indexer error: ${err.message}`);
   }
@@ -2330,26 +2332,34 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
     };
   };
 
-  const normalizeNzbGeek = (n) => ({
-    guid: n.guid || null,
-    name: n.title || n.name || 'Unknown',
-    size: parseInt(n.size) || n.filesize || 0,
-    r2_key: n.r2_key || null,
-    r2_url: null, // legacy NZBGeek uses r2_key + R2_NZB_BASE
-    source: n.source || 'nzbgeek',
-    sourceLabel: '🤓 NZBGeek',
-    pubDate: n.pubDate || null,
-    // No file_list / langs — basic info only
-    resolution: '',
-    audioLangs: '',
-    subtitleLangs: '',
-    audioCodec: '',
-    dualAudio: false,
-    batch: false,
-    filesizeBytes: parseInt(n.size) || n.filesize || 0,
-    matchedFile: null,
-    hasMeta: false, // Basic layout (just title + size + age + source)
-  });
+  const normalizeNzbGeek = (n) => {
+    // /search nzb_results carries source field from indexer:
+    // - 'nzbgeek'    → NZBGeek (default)
+    // - 'animetosho' → new AnimeTosho NZB live feed (distinct from offline tosho dump,
+    //                  which comes through tosho_results → normalizeToshoNzb with 🐙).
+    const src = n.source || 'nzbgeek';
+    const sourceLabel = src === 'animetosho' ? '⛩️ Anime Tosho' : '🤓 NZBGeek';
+    return {
+      guid: n.guid || null,
+      name: n.title || n.name || 'Unknown',
+      size: parseInt(n.size) || n.filesize || 0,
+      r2_key: n.r2_key || null,
+      r2_url: null, // legacy NZBGeek uses r2_key + R2_NZB_BASE
+      source: src,
+      sourceLabel,
+      pubDate: n.pubDate || null,
+      // No file_list / langs — basic info only
+      resolution: '',
+      audioLangs: '',
+      subtitleLangs: '',
+      audioCodec: '',
+      dualAudio: false,
+      batch: false,
+      filesizeBytes: parseInt(n.size) || n.filesize || 0,
+      matchedFile: null,
+      hasMeta: false, // Basic layout (just title + size + age + source)
+    };
+  };
 
   // New /api/stream/imdb/... endpoint — same NZBGeek data, but with optional parsed metadata fields
   // (resolution, group, audio_langs, subs, is_batch, file_index, anime_title).
