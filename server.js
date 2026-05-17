@@ -93,6 +93,16 @@ function storeNZB(nzbUrl, torrentName) {
   return hash;
 }
 
+// NzbDav is allowed for a token when ALL of:
+//   1. Server has NZBDAV_URL + credentials configured (env vars)
+//   2. The account has permissions.nzbdav === true (admin gate)
+// User toggle (user.useNzbDav) is checked separately at the URL-routing site.
+function nzbDavAllowedForToken(token) {
+  if (!nzbdav.isConfigured()) return false;
+  const acc = config.getAccountByToken(token);
+  return !!(acc && acc.permissions && acc.permissions.nzbdav === true);
+}
+
 // ===== Express =====
 const app = express();
 app.use(express.json());
@@ -103,15 +113,29 @@ app.use((req, res, next) => {
   if (req.method === 'OPTIONS') return res.sendStatus(200);
   next();
 });
-// Debug: log all NzbDav-related requests with timing (so we can see Stremio's behavior)
+// Debug: log NzbDav-related requests with timing.
+// To keep logs readable during playback (libmpv re-requests for every seek),
+// only the first request per (hash) is verbose; subsequent fast ones are silent
+// unless they're slow (>500ms) or fail.
+const nzbDavSeenHashes = new Set();
 app.use((req, res, next) => {
   if (req.path.includes('play-nzb-dav') || req.path.includes('nzbdav-stream')) {
-    const range = req.headers.range || '-';
-    const ua = (req.headers['user-agent'] || '').slice(0, 50);
-    console.log(`  📥 ${req.method} ${req.path}  Range=${range}  UA="${ua}"`);
     const t0 = Date.now();
+    const hashMatch = req.path.match(/(play-nzb-dav|nzbdav-stream)\/([^/]+)/);
+    const hash = hashMatch ? hashMatch[2] : '';
+    const isNew = hash && !nzbDavSeenHashes.has(hash);
+    if (isNew) {
+      nzbDavSeenHashes.add(hash);
+      const range = req.headers.range || '-';
+      console.log(`  📥 ${req.method} ${req.path.slice(0, 80)}...  Range=${range}`);
+    }
     res.on('finish', () => {
-      console.log(`  📤 ${req.method} ${req.path}  ← ${res.statusCode}  (${Date.now() - t0}ms)`);
+      const ms = Date.now() - t0;
+      // Log if: first time for this hash, slow, or error
+      if (isNew || ms > 500 || res.statusCode >= 400) {
+        const range = req.headers.range || '-';
+        console.log(`  📤 ${req.method} [${hash.slice(0, 12)}]  ${range}  ← ${res.statusCode} (${ms}ms)`);
+      }
     });
   }
   next();
@@ -443,7 +467,7 @@ app.get('/api/sort-prefs/:token', (req, res) => {
     dubFirst: user.dubFirst || false,
     cachedFirst: user.cachedFirst || false,
     useNzbDav: user.useNzbDav || false,
-    nzbDavAvailable: nzbdav.isConfigured(),
+    nzbDavAvailable: nzbDavAllowedForToken(req.params.token),
     langFilterEnabled: user.langFilterEnabled || false,
     langFilterCodes: user.langFilterCodes || ['en', 'cs'],
     defaultGroups: DEFAULT_GROUPS,
@@ -800,28 +824,66 @@ app.get('/:token/play-nzb/:hash/:episode/video.mp4', async (req, res) => {
 
 // ===== NZBDAV: STREAM RESOLVER =====
 // First click hits this endpoint. Resolves the NZB to a mounted WebDAV file path,
-// then 302-redirects to the proxy URL below. On subsequent clicks the history
-// lookup hits and returns within ~1s (no re-upload).
+// then 302-redirects to the proxy URL below.
+//
+// libmpv (Stremio's player) re-fetches the original URL for EVERY range request
+// (MKV seeks to header + Cues + many positions). Without caching, every range
+// would trigger a full ensureReady() (history lookup + PROPFIND), adding 200ms-1s
+// of latency per request. nzbDavResolveCache short-circuits subsequent requests
+// from a single Stremio session: hash → {jobName, filePath}.
+const nzbDavResolveCache = new Map();
+const NZBDAV_CACHE_TTL_MS = 30 * 60 * 1000; // 30 min — long enough for full episode playback
+
+function getCachedResolve(hash) {
+  const entry = nzbDavResolveCache.get(hash);
+  if (!entry) return null;
+  if (Date.now() - entry.at > NZBDAV_CACHE_TTL_MS) {
+    nzbDavResolveCache.delete(hash);
+    return null;
+  }
+  return entry;
+}
+
+function setCachedResolve(hash, jobName, filePath) {
+  nzbDavResolveCache.set(hash, { jobName, filePath, at: Date.now() });
+}
+
+// Periodic cleanup of expired entries (every 10 min)
+setInterval(() => {
+  const now = Date.now();
+  for (const [hash, entry] of nzbDavResolveCache.entries()) {
+    if (now - entry.at > NZBDAV_CACHE_TTL_MS) nzbDavResolveCache.delete(hash);
+  }
+}, 10 * 60 * 1000).unref();
+
 app.get('/:token/play-nzb-dav/:hash/:episode/video.mp4', async (req, res) => {
   const user = config.getUser(req.params.token);
   if (!user) return serveLoadingVideo(res);
-  if (!nzbdav.isConfigured()) {
-    console.log('  📡 NzbDav: not configured (missing env vars)');
+  if (!nzbDavAllowedForToken(req.params.token)) {
+    console.log('  📡 NzbDav: not allowed for this token (missing env vars or admin permission)');
     return serveLoadingVideo(res);
   }
 
   const nzb = nzbStore.get(req.params.hash);
   if (!nzb) return serveLoadingVideo(res);
 
-  try {
-    const { jobName, filePath } = await nzbdav.ensureReady(nzb.url, '');
-    // Redirect Stremio to the range-proxy endpoint.
-    // We append the original file extension as a suffix so Stremio detects the video type
-    // from the URL (some clients refuse to play if URL doesn't end with a media extension).
+  // Build a redirect URL from a {jobName, filePath} pair.
+  const buildRedirect = (jobName, filePath) => {
     const extMatch = filePath.match(/\.(mkv|mp4|avi|m4v|mov|webm|ts)$/i);
     const ext = extMatch ? extMatch[1].toLowerCase() : 'mkv';
-    const redirectUrl = `${BASE_URL}/${req.params.token}/nzbdav-stream/${encodeURIComponent(jobName)}/${encodeURIComponent(filePath)}/video.${ext}`;
-    return res.redirect(302, redirectUrl);
+    return `${BASE_URL}/${req.params.token}/nzbdav-stream/${encodeURIComponent(jobName)}/${encodeURIComponent(filePath)}/video.${ext}`;
+  };
+
+  // Fast path: cached resolve — no NzbDav round-trip at all
+  const cached = getCachedResolve(req.params.hash);
+  if (cached) {
+    return res.redirect(302, buildRedirect(cached.jobName, cached.filePath));
+  }
+
+  try {
+    const { jobName, filePath } = await nzbdav.ensureReady(nzb.url, '');
+    setCachedResolve(req.params.hash, jobName, filePath);
+    return res.redirect(302, buildRedirect(jobName, filePath));
   } catch (err) {
     console.log(`  📡 NzbDav resolve failed: ${err.message}`);
     return serveLoadingVideo(res);
@@ -838,7 +900,7 @@ app.all('/:token/nzbdav-stream/:jobName/:filePath/:filename', async (req, res) =
   if (req.method !== 'GET' && req.method !== 'HEAD') {
     return res.status(405).send('Method Not Allowed');
   }
-  if (!nzbdav.isConfigured()) return res.status(503).send('NzbDav not configured');
+  if (!nzbDavAllowedForToken(req.params.token)) return res.status(503).send('NzbDav not allowed for this token');
   const user = config.getUser(req.params.token);
   if (!user) return res.status(404).send('Not found');
 
@@ -2234,10 +2296,10 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
   const nzbPerms = nzbAccount?.permissions || {};
   const isMovie = type === 'movie';
 
-  // NZB addon requires either TorBox-with-NZB OR NzbDav for playback.
+  // NZB addon requires either TorBox-with-NZB OR NzbDav (with admin permission) for playback.
   // (Both produce a streamable URL; TorBox downloads, NzbDav mounts.)
   const tbReady = !!(user?.tb_api_key && user?.tb_use_nzb);
-  const navReady = !!user?.useNzbDav && nzbdav.isConfigured();
+  const navReady = !!user?.useNzbDav && nzbDavAllowedForToken(token);
   if (!tbReady && !navReady) {
     return res.json({ streams: [] });
   }
@@ -2634,7 +2696,7 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
     // Per-user routing:
     //   useNzbDav ON  → /play-nzb-dav → NzbDav mount + WebDAV range proxy (instant streaming)
     //   useNzbDav OFF → /play-nzb     → TorBox NZB download (legacy flow)
-    const useNzbDav = !!user?.useNzbDav && nzbdav.isConfigured();
+    const useNzbDav = !!user?.useNzbDav && nzbDavAllowedForToken(token);
     const proxyPath = useNzbDav ? 'play-nzb-dav' : 'play-nzb';
     const stream = {
       name: streamName,
