@@ -16,6 +16,7 @@ const { startRssFetcher, clearRssIndex, searchRssIndex, getRssStats } = require(
 const { getTBStatus, getTBStream, getTBNZBStream, checkTBCached, tbInProgress } = require('./lib/torbox');
 const { validateApiKey: validateNekobtKey } = require('./lib/nekobt');
 const { searchByTVDB: nzbgeekSearch, searchByIMDb: nzbgeekMovieSearch, validateApiKey: validateNzbgeekKey } = require('./lib/nzbgeek');
+const nzbdav = require('./lib/nzbdav');
 // SeaDex / NekoBT direct search removed — all torrent results come from our own indexer now.
 // API endpoints and lib files are kept for backward compatibility / future re-enabling.
 
@@ -428,6 +429,8 @@ app.get('/api/sort-prefs/:token', (req, res) => {
     // Top-level toggles (apply across all modes)
     dubFirst: user.dubFirst || false,
     cachedFirst: user.cachedFirst || false,
+    useNzbDav: user.useNzbDav || false,
+    nzbDavAvailable: nzbdav.isConfigured(),
     langFilterEnabled: user.langFilterEnabled || false,
     langFilterCodes: user.langFilterCodes || ['en', 'cs'],
     defaultGroups: DEFAULT_GROUPS,
@@ -443,7 +446,7 @@ app.post('/api/sort-prefs/:token', express.json(), (req, res) => {
     sortMode,
     groupsEnabled, resEnabled, excludeResEnabled, langsEnabled,
     groupPriority, resPriority, langPriority, excludedResolutions,
-    dubFirst, cachedFirst,
+    dubFirst, cachedFirst, useNzbDav,
     langFilterEnabled, langFilterCodes
   } = req.body;
   const VALID_MODES = ['qualityThenSeeders', 'qualityThenSize', 'seeders', 'size'];
@@ -461,6 +464,7 @@ app.post('/api/sort-prefs/:token', express.json(), (req, res) => {
   if (Array.isArray(excludedResolutions)) user.excludedResolutions = excludedResolutions;
   if (typeof dubFirst === 'boolean') user.dubFirst = dubFirst;
   if (typeof cachedFirst === 'boolean') user.cachedFirst = cachedFirst;
+  if (typeof useNzbDav === 'boolean') user.useNzbDav = useNzbDav;
   if (typeof langFilterEnabled === 'boolean') user.langFilterEnabled = langFilterEnabled;
   if (Array.isArray(langFilterCodes)) {
     // Sanitize: only ISO codes 2-3 chars, lowercase
@@ -779,6 +783,57 @@ app.get('/:token/play-nzb/:hash/:episode/video.mp4', async (req, res) => {
   const url = await getTBNZBStream(nzb.url, user.tb_api_key, episode, nzb.name);
   if (url) return res.redirect(302, url);
   serveLoadingVideo(res);
+});
+
+// ===== NZBDAV: STREAM RESOLVER =====
+// First click hits this endpoint. Resolves the NZB to a mounted WebDAV file path,
+// then 302-redirects to the proxy URL below. On subsequent clicks the history
+// lookup hits and returns within ~1s (no re-upload).
+app.get('/:token/play-nzb-dav/:hash/:episode/video.mp4', async (req, res) => {
+  const user = config.getUser(req.params.token);
+  if (!user) return serveLoadingVideo(res);
+  if (!nzbdav.isConfigured()) {
+    console.log('  📡 NzbDav: not configured (missing env vars)');
+    return serveLoadingVideo(res);
+  }
+
+  const nzb = nzbStore.get(req.params.hash);
+  if (!nzb) return serveLoadingVideo(res);
+
+  try {
+    const { jobName, filePath } = await nzbdav.ensureReady(nzb.url, '');
+    // Redirect Stremio to the range-proxy endpoint.
+    // filePath is /content/.../<file>.mkv — encode minimally for URL safety.
+    const redirectUrl = `${BASE_URL}/${req.params.token}/nzbdav-stream/${encodeURIComponent(jobName)}/${encodeURIComponent(filePath)}`;
+    return res.redirect(302, redirectUrl);
+  } catch (err) {
+    console.log(`  📡 NzbDav resolve failed: ${err.message}`);
+    return serveLoadingVideo(res);
+  }
+});
+
+// ===== NZBDAV: RANGE PROXY =====
+// Stremio hits this for the actual playback bytes. Forwards Range, returns 206.
+// HEAD also supported (Stremio probes for Content-Length first).
+app.all('/:token/nzbdav-stream/:jobName/:filePath', async (req, res) => {
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
+    return res.status(405).send('Method Not Allowed');
+  }
+  if (!nzbdav.isConfigured()) return res.status(503).send('NzbDav not configured');
+  const user = config.getUser(req.params.token);
+  if (!user) return res.status(404).send('Not found');
+
+  // filePath was encoded as a single segment; decode back to its full path form
+  let filePath;
+  try {
+    filePath = decodeURIComponent(req.params.filePath);
+  } catch (e) {
+    return res.status(400).send('Bad file path');
+  }
+  // Sanity: must be under /content/
+  if (!filePath.startsWith('/content/')) return res.status(400).send('Invalid path');
+
+  await nzbdav.proxyStream(req, res, filePath);
 });
 
 // ===== NZB REFRESH TRIGGER =====
@@ -2408,7 +2463,10 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
   };
 
   // Build allNzb with dedup: prefer new endpoint over /search nzb_results when guid/title overlap
-  // (new endpoint has metadata fields that will eventually be populated).
+  // (new endpoint has rich metadata: resolution, audio_langs, subs, group, etc.).
+  // No fuzzy/normalized matching — only exact GUID or exact title. Cross-source duplicates
+  // (e.g. NZBGeek vs AnimeTosho live with similar but differently-formatted titles) are kept
+  // as separate entries; sort modes will rank them by user preference.
   const newNzb = newEndpointResults.map(normalizeNewEndpoint).filter(n => n.r2_url);
   const seenGuids = new Set(newNzb.map(n => n.guid).filter(Boolean));
   const seenTitles = new Set(newNzb.map(n => (n.name || '').trim()).filter(Boolean));
@@ -2425,13 +2483,13 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
     ...toshoNzbResults.map(normalizeToshoNzb).filter(n => n.r2_key),
   ];
 
-  // Debug: breakdown of final allNzb by source label (post-dedup) — confirms ⛩️ vs 🤓 mix
+  // Debug: breakdown of final allNzb by source label — confirms ⛩️ vs 🤓 mix
   if (allNzb.length) {
     const bySource = allNzb.reduce((acc, n) => {
       acc[n.source || '?'] = (acc[n.source || '?'] || 0) + 1;
       return acc;
     }, {});
-    console.log(`  📰 NZB after dedup: ${allNzb.length} total → ${JSON.stringify(bySource)}`);
+    console.log(`  📰 NZB final: ${allNzb.length} total → ${JSON.stringify(bySource)}`);
   }
 
   // Filter and sort NZB results using user preferences (4 preset modes + per-filter toggles)
@@ -2551,10 +2609,15 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
 
     // New endpoint provides full r2_url; legacy NZB sources provide r2_key + R2_NZB_BASE
     const nzbUrl = t.r2_url || `${R2_NZB_BASE}/${t.r2_key}`;
+    // Per-user routing:
+    //   useNzbDav ON  → /play-nzb-dav → NzbDav mount + WebDAV range proxy (instant streaming)
+    //   useNzbDav OFF → /play-nzb     → TorBox NZB download (legacy flow)
+    const useNzbDav = !!user?.useNzbDav && nzbdav.isConfigured();
+    const proxyPath = useNzbDav ? 'play-nzb-dav' : 'play-nzb';
     const stream = {
       name: streamName,
       title,
-      url: `${BASE_URL}/${token}/play-nzb/${storeNZB(nzbUrl, t.name)}/${epNum}/video.mp4`,
+      url: `${BASE_URL}/${token}/${proxyPath}/${storeNZB(nzbUrl, t.name)}/${epNum}/video.mp4`,
       behaviorHints: { bingeGroup: 'nzb-indexer', notWebReady: true }
     };
     // For batch NZB with file_index: tell Stremio which file to play
