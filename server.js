@@ -856,7 +856,11 @@ setInterval(() => {
   }
 }, 10 * 60 * 1000).unref();
 
-app.get('/:token/play-nzb-dav/:hash/:episode/video.mp4', async (req, res) => {
+// Two route shapes:
+//   /play-nzb-dav/:hash/:episode/video.mp4               — legacy / single-file (no hints)
+//   /play-nzb-dav/:hash/:episode/:hintToken/video.mp4    — with batch file hints
+// `hintToken` is base64url-encoded JSON {n: filename, s: size} or 'x' for no hints.
+async function handlePlayNzbDav(req, res, hintToken) {
   const user = config.getUser(req.params.token);
   if (!user) return serveLoadingVideo(res);
   if (!nzbDavAllowedForToken(req.params.token)) {
@@ -867,27 +871,50 @@ app.get('/:token/play-nzb-dav/:hash/:episode/video.mp4', async (req, res) => {
   const nzb = nzbStore.get(req.params.hash);
   if (!nzb) return serveLoadingVideo(res);
 
-  // Build a redirect URL from a {jobName, filePath} pair.
+  // Decode hints
+  let hints = null;
+  if (hintToken && hintToken !== 'x') {
+    try {
+      hints = JSON.parse(Buffer.from(hintToken, 'base64url').toString('utf8'));
+    } catch (e) {
+      hints = null;
+    }
+  }
+
+  // Cache key: hash alone is not enough — different episodes in the same batch share the hash
+  // (same NZB job) but different matched files. Include hint token in key to keep them separate.
+  const cacheKey = `${req.params.hash}|${hintToken || 'x'}`;
+
+  // Build redirect URL preserving hintToken so the proxy keeps working on subsequent range requests.
   const buildRedirect = (jobName, filePath) => {
     const extMatch = filePath.match(/\.(mkv|mp4|avi|m4v|mov|webm|ts)$/i);
     const ext = extMatch ? extMatch[1].toLowerCase() : 'mkv';
     return `${BASE_URL}/${req.params.token}/nzbdav-stream/${encodeURIComponent(jobName)}/${encodeURIComponent(filePath)}/video.${ext}`;
   };
 
-  // Fast path: cached resolve — no NzbDav round-trip at all
-  const cached = getCachedResolve(req.params.hash);
+  // Fast path: cached resolve
+  const cached = getCachedResolve(cacheKey);
   if (cached) {
     return res.redirect(302, buildRedirect(cached.jobName, cached.filePath));
   }
 
   try {
-    const { jobName, filePath } = await nzbdav.ensureReady(nzb.url, '');
-    setCachedResolve(req.params.hash, jobName, filePath);
+    const { jobName, filePath } = await nzbdav.ensureReady(nzb.url, '', hints);
+    setCachedResolve(cacheKey, jobName, filePath);
     return res.redirect(302, buildRedirect(jobName, filePath));
   } catch (err) {
     console.log(`  📡 NzbDav resolve failed: ${err.message}`);
     return serveLoadingVideo(res);
   }
+}
+
+// Route with hintToken (NzbDav-only, used for batches)
+app.get('/:token/play-nzb-dav/:hash/:episode/:hintToken/video.mp4', (req, res) => {
+  return handlePlayNzbDav(req, res, req.params.hintToken);
+});
+// Legacy route without hintToken (single-file streams)
+app.get('/:token/play-nzb-dav/:hash/:episode/video.mp4', (req, res) => {
+  return handlePlayNzbDav(req, res, 'x');
 });
 
 // ===== NZBDAV: RANGE PROXY =====
@@ -2622,7 +2649,17 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
   const streams = [];
   const epNum = isMovie ? 0 : episode;
 
+  // When NzbDav is the playback target, hide batches we can't reliably match a file for.
+  // Tosho dump batches carry full `matchedFile.name` (from file_list) → robust filename match in WebDAV.
+  // Geek / new-endpoint batches lack file_list → only `fileIdx` exists, which doesn't map to WebDAV listing order.
+  // Filtering them out is safer than guessing and playing the wrong episode.
+  const nzbDavActive = !!user?.useNzbDav && nzbDavAllowedForToken(token);
+
   for (const t of topNzb) {
+    if (nzbDavActive && t.batch && !t.matchedFile?.name) {
+      continue; // skip batch with no reliable filename hint
+    }
+
     const quality = t.resolution || detectQuality(t.name);
     const size = t.size ? formatIndexerFilesize(t.size) : '?';
     const age = formatRelativeAge(t.pubDate);
@@ -2698,14 +2735,24 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
     //   useNzbDav OFF → /play-nzb     → TorBox NZB download (legacy flow)
     const useNzbDav = !!user?.useNzbDav && nzbDavAllowedForToken(token);
     const proxyPath = useNzbDav ? 'play-nzb-dav' : 'play-nzb';
+
+    // For NzbDav batches: encode file match hints (name + size) into URL.
+    // 'x' = no hints (single file or non-NzbDav). Token is base64url-encoded JSON.
+    let hintToken = 'x';
+    if (useNzbDav && t.batch && t.matchedFile?.name) {
+      const hints = { n: t.matchedFile.name, s: t.matchedFile.size || 0 };
+      hintToken = Buffer.from(JSON.stringify(hints), 'utf8').toString('base64url');
+    }
+
+    const baseUrl = `${BASE_URL}/${token}/${proxyPath}/${storeNZB(nzbUrl, t.name)}/${epNum}`;
     const stream = {
       name: streamName,
       title,
-      url: `${BASE_URL}/${token}/${proxyPath}/${storeNZB(nzbUrl, t.name)}/${epNum}/video.mp4`,
+      url: useNzbDav ? `${baseUrl}/${hintToken}/video.mp4` : `${baseUrl}/video.mp4`,
       behaviorHints: { bingeGroup: 'nzb-indexer', notWebReady: true }
     };
-    // For batch NZB with file_index: tell Stremio which file to play
-    if (t.matchedFile?.idx != null) {
+    // For batch NZB with file_index: tell Stremio which file to play (TorBox flow only — NzbDav uses hintToken).
+    if (!useNzbDav && t.matchedFile?.idx != null) {
       stream.behaviorHints.fileIdx = t.matchedFile.idx;
     }
     streams.push(stream);
