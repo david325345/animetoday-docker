@@ -103,6 +103,19 @@ app.use((req, res, next) => {
   if (req.method === 'OPTIONS') return res.sendStatus(200);
   next();
 });
+// Debug: log all NzbDav-related requests with timing (so we can see Stremio's behavior)
+app.use((req, res, next) => {
+  if (req.path.includes('play-nzb-dav') || req.path.includes('nzbdav-stream')) {
+    const range = req.headers.range || '-';
+    const ua = (req.headers['user-agent'] || '').slice(0, 50);
+    console.log(`  📥 ${req.method} ${req.path}  Range=${range}  UA="${ua}"`);
+    const t0 = Date.now();
+    res.on('finish', () => {
+      console.log(`  📤 ${req.method} ${req.path}  ← ${res.statusCode}  (${Date.now() - t0}ms)`);
+    });
+  }
+  next();
+});
 app.use(express.static(path.join(__dirname, 'public')));
 
 // ===== User middleware =====
@@ -803,8 +816,11 @@ app.get('/:token/play-nzb-dav/:hash/:episode/video.mp4', async (req, res) => {
   try {
     const { jobName, filePath } = await nzbdav.ensureReady(nzb.url, '');
     // Redirect Stremio to the range-proxy endpoint.
-    // filePath is /content/.../<file>.mkv — encode minimally for URL safety.
-    const redirectUrl = `${BASE_URL}/${req.params.token}/nzbdav-stream/${encodeURIComponent(jobName)}/${encodeURIComponent(filePath)}`;
+    // We append the original file extension as a suffix so Stremio detects the video type
+    // from the URL (some clients refuse to play if URL doesn't end with a media extension).
+    const extMatch = filePath.match(/\.(mkv|mp4|avi|m4v|mov|webm|ts)$/i);
+    const ext = extMatch ? extMatch[1].toLowerCase() : 'mkv';
+    const redirectUrl = `${BASE_URL}/${req.params.token}/nzbdav-stream/${encodeURIComponent(jobName)}/${encodeURIComponent(filePath)}/video.${ext}`;
     return res.redirect(302, redirectUrl);
   } catch (err) {
     console.log(`  📡 NzbDav resolve failed: ${err.message}`);
@@ -815,7 +831,10 @@ app.get('/:token/play-nzb-dav/:hash/:episode/video.mp4', async (req, res) => {
 // ===== NZBDAV: RANGE PROXY =====
 // Stremio hits this for the actual playback bytes. Forwards Range, returns 206.
 // HEAD also supported (Stremio probes for Content-Length first).
-app.all('/:token/nzbdav-stream/:jobName/:filePath', async (req, res) => {
+// Path: /:token/nzbdav-stream/:jobName/:filePath/video.:ext
+//   filePath is encoded full WebDAV path (single segment, double-encoded by 302 redirect)
+//   video.:ext is a cosmetic suffix so Stremio detects type from URL
+app.all('/:token/nzbdav-stream/:jobName/:filePath/:filename', async (req, res) => {
   if (req.method !== 'GET' && req.method !== 'HEAD') {
     return res.status(405).send('Method Not Allowed');
   }
