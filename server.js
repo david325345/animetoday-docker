@@ -2215,8 +2215,11 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
   const nzbPerms = nzbAccount?.permissions || {};
   const isMovie = type === 'movie';
 
-  // NZB addon requires TorBox with NZB enabled
-  if (!user?.tb_api_key || !user?.tb_use_nzb) {
+  // NZB addon requires either TorBox-with-NZB OR NzbDav for playback.
+  // (Both produce a streamable URL; TorBox downloads, NzbDav mounts.)
+  const tbReady = !!(user?.tb_api_key && user?.tb_use_nzb);
+  const navReady = !!user?.useNzbDav && nzbdav.isConfigured();
+  if (!tbReady && !navReady) {
     return res.json({ streams: [] });
   }
 
