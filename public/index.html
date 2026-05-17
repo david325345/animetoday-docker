@@ -195,6 +195,7 @@
                 <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;">
                     <label style="font-size:11px;color:var(--dim);display:flex;align-items:center;gap:4px;"><input type="checkbox" id="perm-torrents" checked> <span data-i18n="admin.permTorrents">Torrenty</span></label>
                     <label style="font-size:11px;color:var(--dim);display:flex;align-items:center;gap:4px;"><input type="checkbox" id="perm-nzb"> <span data-i18n="admin.permNzb">NZB</span></label>
+                    <label style="font-size:11px;color:var(--dim);display:flex;align-items:center;gap:4px;"><input type="checkbox" id="perm-nzbdav"> <span data-i18n="admin.permNzbdav">NzbDav</span></label>
                     <label style="font-size:11px;color:var(--dim);display:flex;align-items:center;gap:4px;"><input type="checkbox" id="perm-subtitles"> <span data-i18n="admin.permSubtitles">Titulky</span></label>
                     <label style="font-size:11px;color:var(--dim);display:flex;align-items:center;gap:4px;"><input type="checkbox" id="perm-catalog"> <span data-i18n="admin.permCatalog">Katalog</span></label>
                     <label style="font-size:11px;color:var(--dim);display:flex;align-items:center;gap:4px;"><input type="checkbox" id="perm-ondemand" checked> <span data-i18n="admin.permOndemand">On-demand</span></label>
@@ -471,6 +472,7 @@ const I18N = {
         'admin.create': 'Create',
         'admin.permTorrents': 'Torrents',
         'admin.permNzb': 'NZB',
+        'admin.permNzbdav': 'NzbDav',
         'admin.permSubtitles': 'Subtitles',
         'admin.permCatalog': 'Catalog',
         'admin.permOndemand': 'On-demand',
@@ -611,6 +613,7 @@ const I18N = {
         'admin.create': 'Vytvořit',
         'admin.permTorrents': 'Torrenty',
         'admin.permNzb': 'NZB',
+        'admin.permNzbdav': 'NzbDav',
         'admin.permSubtitles': 'Titulky',
         'admin.permCatalog': 'Katalog',
         'admin.permOndemand': 'On-demand',
@@ -833,7 +836,7 @@ async function loadAccountsList() {
         const d=await r.json();
         const list=document.getElementById('accounts-list');
         if(!d.accounts?.length){list.innerHTML=`<div style="color:var(--dim);font-size:13px;">${t('admin.noAccounts')}</div>`;return;}
-        const PERM_KEYS=['torrents','nzb','subtitles','catalog','ondemand','animetoday'];
+        const PERM_KEYS=['torrents','nzb','nzbdav','subtitles','catalog','ondemand','animetoday'];
         list.innerHTML=d.accounts.map(a=>{
             const perms=a.permissions||{};
             const isSuperAdmin=a.role==='superadmin';
@@ -882,6 +885,7 @@ async function createNewAccount() {
     const permissions={
         torrents:document.getElementById('perm-torrents').checked,
         nzb:document.getElementById('perm-nzb').checked,
+        nzbdav:document.getElementById('perm-nzbdav').checked,
         subtitles:document.getElementById('perm-subtitles').checked,
         catalog:document.getElementById('perm-catalog').checked,
         ondemand:document.getElementById('perm-ondemand').checked,
