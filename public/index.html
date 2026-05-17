@@ -352,6 +352,11 @@
                 <button class="toggle off" id="sort-cached-toggle" onclick="toggleCachedFirst()"></button>
             </div>
 
+            <div class="row" id="nzbdav-row" style="display:none;">
+                <div class="row-label"><span data-i18n="sort.useNzbDav">NzbDav instant stream</span> <small id="nzbdav-hint" data-i18n="sort.useNzbDavHint">Streamuje NZB přes WebDAV, nestahuje</small></div>
+                <button class="toggle off" id="sort-nzbdav-toggle" onclick="toggleUseNzbDav()"></button>
+            </div>
+
             <div class="divider"></div>
 
             <div class="row">
@@ -518,6 +523,8 @@ const I18N = {
         'sort.cachedFirstHint': 'TorBox cache on top',
         'sort.dubFirst': 'EN/Dub first',
         'sort.dubFirstHint': 'English audio on top',
+        'sort.useNzbDav': 'NzbDav instant stream',
+        'sort.useNzbDavHint': 'Stream NZB via WebDAV without downloading',
         'sort.langFilter': 'Language display filter',
         'sort.langFilterHint': 'Show only selected flags in 🔊 audio and 📝 subtitles',
         'sort.groupsToggle': 'Group priority',
@@ -646,6 +653,8 @@ const I18N = {
         'sort.cachedFirstHint': 'TorBox cache nahoře',
         'sort.dubFirst': 'EN/Dub první',
         'sort.dubFirstHint': 'Anglické audio nahoře',
+        'sort.useNzbDav': 'NzbDav instant stream',
+        'sort.useNzbDavHint': 'Streamuje NZB přes WebDAV, nestahuje',
         'sort.langFilter': 'Filter zobrazovaných jazyků',
         'sort.langFilterHint': 'Zobrazit jen vybrané vlajky u 🔊 audio a 📝 titulků',
         'sort.groupsToggle': 'Priorita skupin',
@@ -1098,7 +1107,7 @@ let sortPrefs = {
     sortMode: 'qualityThenSeeders',
     groupsEnabled: false, resEnabled: false, excludeResEnabled: false, langsEnabled: false,
     groupPriority: [], resPriority: [], langPriority: [], excludedResolutions: [],
-    dubFirst: false, cachedFirst: false,
+    dubFirst: false, cachedFirst: false, useNzbDav: false, nzbDavAvailable: false,
     langFilterEnabled: false, langFilterCodes: ['en', 'cs'],
     defaultGroups: [], defaultResolutions: [], defaultLangs: []
 };
@@ -1119,6 +1128,13 @@ function renderSortPrefs() {
     // Top-level toggles
     document.getElementById('sort-cached-toggle').className = sortPrefs.cachedFirst ? 'toggle on' : 'toggle off';
     document.getElementById('sort-dub-toggle').className = sortPrefs.dubFirst ? 'toggle on' : 'toggle off';
+    // NzbDav row visibility + state — only shown when server has NZBDAV_URL/credentials configured.
+    const nzbdavRow = document.getElementById('nzbdav-row');
+    if (nzbdavRow) {
+      nzbdavRow.style.display = sortPrefs.nzbDavAvailable ? '' : 'none';
+      const nzbdavToggle = document.getElementById('sort-nzbdav-toggle');
+      if (nzbdavToggle) nzbdavToggle.className = sortPrefs.useNzbDav ? 'toggle on' : 'toggle off';
+    }
     document.getElementById('sort-langfilter-toggle').className = sortPrefs.langFilterEnabled ? 'toggle on' : 'toggle off';
 
     // Language filter checkbox grid (top 15 common langs)
@@ -1207,6 +1223,7 @@ function renderSortList(containerId, items, type) {
 
 function toggleCachedFirst() { sortPrefs.cachedFirst = !sortPrefs.cachedFirst; saveSortPrefs(); renderSortPrefs(); }
 function toggleDubFirst() { sortPrefs.dubFirst = !sortPrefs.dubFirst; saveSortPrefs(); renderSortPrefs(); }
+function toggleUseNzbDav() { sortPrefs.useNzbDav = !sortPrefs.useNzbDav; saveSortPrefs(); renderSortPrefs(); }
 function toggleLangFilter() { sortPrefs.langFilterEnabled = !sortPrefs.langFilterEnabled; saveSortPrefs(); renderSortPrefs(); }
 function toggleLangCode(code, checked) {
     const current = new Set(sortPrefs.langFilterCodes || []);
@@ -1245,6 +1262,7 @@ function resetSortPrefs() {
     sortPrefs.langsEnabled = false;
     sortPrefs.dubFirst = false;
     sortPrefs.cachedFirst = false;
+    sortPrefs.useNzbDav = false;
     saveSortPrefs(); renderSortPrefs();
     toast(t('toast.sortReset'));
 }
@@ -1265,6 +1283,7 @@ async function saveSortPrefs() {
                 excludedResolutions: sortPrefs.excludedResolutions,
                 dubFirst: sortPrefs.dubFirst,
                 cachedFirst: sortPrefs.cachedFirst,
+                useNzbDav: sortPrefs.useNzbDav,
                 langFilterEnabled: sortPrefs.langFilterEnabled,
                 langFilterCodes: sortPrefs.langFilterCodes
             })
