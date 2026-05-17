@@ -328,6 +328,18 @@
             </div>
         </div>
 
+        <!-- NzbDav -->
+        <div class="section" id="section-nzbdav" style="display:none;">
+            <div class="section-title"><span data-i18n="nzbdav.title">⛩️ NzbDav</span> <span class="badge on" data-i18n="badge.available">Dostupné</span></div>
+            <div class="row">
+                <div class="row-label">
+                    <span data-i18n="nzbdav.toggle">NzbDav instant stream</span>
+                    <small data-i18n="nzbdav.toggleHint">Streamuje NZB přes WebDAV bez stahování. Funguje pro 🤓 NZBGeek, ⛩️ Anime Tosho i 🐙 Tosho dump.</small>
+                </div>
+                <button class="toggle off" id="sort-nzbdav-toggle" onclick="toggleUseNzbDav()"></button>
+            </div>
+        </div>
+
         <!-- Řazení -->
         <div class="section">
             <div class="section-title" data-i18n="sort.title">⚙️ Řazení výsledků</div>
@@ -350,11 +362,6 @@
             <div class="row">
                 <div class="row-label"><span data-i18n="sort.cachedFirst">Cached první</span> <small data-i18n="sort.cachedFirstHint">TorBox cache nahoře</small></div>
                 <button class="toggle off" id="sort-cached-toggle" onclick="toggleCachedFirst()"></button>
-            </div>
-
-            <div class="row" id="nzbdav-row" style="display:none;">
-                <div class="row-label"><span data-i18n="sort.useNzbDav">NzbDav instant stream</span> <small id="nzbdav-hint" data-i18n="sort.useNzbDavHint">Streamuje NZB přes WebDAV, nestahuje</small></div>
-                <button class="toggle off" id="sort-nzbdav-toggle" onclick="toggleUseNzbDav()"></button>
             </div>
 
             <div class="divider"></div>
@@ -525,6 +532,10 @@ const I18N = {
         'sort.dubFirstHint': 'English audio on top',
         'sort.useNzbDav': 'NzbDav instant stream',
         'sort.useNzbDavHint': 'Stream NZB via WebDAV without downloading',
+        'nzbdav.title': '⛩️ NzbDav',
+        'nzbdav.toggle': 'NzbDav instant stream',
+        'nzbdav.toggleHint': 'Stream NZB via WebDAV without downloading. Works for 🤓 NZBGeek, ⛩️ Anime Tosho and 🐙 Tosho dump.',
+        'badge.available': 'Available',
         'sort.langFilter': 'Language display filter',
         'sort.langFilterHint': 'Show only selected flags in 🔊 audio and 📝 subtitles',
         'sort.groupsToggle': 'Group priority',
@@ -655,6 +666,10 @@ const I18N = {
         'sort.dubFirstHint': 'Anglické audio nahoře',
         'sort.useNzbDav': 'NzbDav instant stream',
         'sort.useNzbDavHint': 'Streamuje NZB přes WebDAV, nestahuje',
+        'nzbdav.title': '⛩️ NzbDav',
+        'nzbdav.toggle': 'NzbDav instant stream',
+        'nzbdav.toggleHint': 'Streamuje NZB přes WebDAV bez stahování. Funguje pro 🤓 NZBGeek, ⛩️ Anime Tosho i 🐙 Tosho dump.',
+        'badge.available': 'Dostupné',
         'sort.langFilter': 'Filter zobrazovaných jazyků',
         'sort.langFilterHint': 'Zobrazit jen vybrané vlajky u 🔊 audio a 📝 titulků',
         'sort.groupsToggle': 'Priorita skupin',
@@ -1128,10 +1143,10 @@ function renderSortPrefs() {
     // Top-level toggles
     document.getElementById('sort-cached-toggle').className = sortPrefs.cachedFirst ? 'toggle on' : 'toggle off';
     document.getElementById('sort-dub-toggle').className = sortPrefs.dubFirst ? 'toggle on' : 'toggle off';
-    // NzbDav row visibility + state — only shown when server has NZBDAV_URL/credentials configured.
-    const nzbdavRow = document.getElementById('nzbdav-row');
-    if (nzbdavRow) {
-      nzbdavRow.style.display = sortPrefs.nzbDavAvailable ? '' : 'none';
+    // NzbDav section visibility + toggle state — section only shown when server has NZBDAV_URL/credentials configured.
+    const nzbdavSection = document.getElementById('section-nzbdav');
+    if (nzbdavSection) {
+      nzbdavSection.style.display = sortPrefs.nzbDavAvailable ? '' : 'none';
       const nzbdavToggle = document.getElementById('sort-nzbdav-toggle');
       if (nzbdavToggle) nzbdavToggle.className = sortPrefs.useNzbDav ? 'toggle on' : 'toggle off';
     }
