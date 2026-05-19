@@ -871,6 +871,13 @@ async function handlePlayNzbDav(req, res, hintToken) {
   const nzb = nzbStore.get(req.params.hash);
   if (!nzb) return serveLoadingVideo(res);
 
+  // CDN bypass: don't let CDN cache the 302 redirect. The Location header
+  // points at a per-job path that may become invalid (history rotation,
+  // re-upload under suffix) — cached redirects would point at stale paths.
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+  res.setHeader('CDN-Cache-Control', 'no-store');
+  res.setHeader('Surrogate-Control', 'no-store');
+
   // Decode hints
   let hints = null;
   if (hintToken && hintToken !== 'x') {
@@ -940,6 +947,14 @@ app.all('/:token/nzbdav-stream/:jobName/:filePath/:filename', async (req, res) =
   }
   // Sanity: must be under /content/
   if (!filePath.startsWith('/content/')) return res.status(400).send('Invalid path');
+
+  // CDN bypass: tell intermediary caches (Bunny CDN, Cloudflare, etc.) NOT to cache
+  // or buffer the response. Range requests must be forwarded transparently or seeking
+  // breaks (CDN fetches whole 1.5GB file instead of the requested 1MB slice).
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+  res.setHeader('CDN-Cache-Control', 'no-store');         // Bunny-specific
+  res.setHeader('Surrogate-Control', 'no-store');         // generic CDN convention
+  res.setHeader('X-Accel-Buffering', 'no');               // disable nginx buffering downstream
 
   await nzbdav.proxyStream(req, res, filePath);
 });
