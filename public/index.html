@@ -329,7 +329,7 @@
             </div>
         </div>
 
-        <!-- NzbDav -->
+        <!-- NzbDav / AltMount mount engine -->
         <div class="section" id="section-nzbdav" style="display:none;">
             <div class="section-title"><span data-i18n="nzbdav.title">⛩️ NzbDav</span> <span class="badge on" data-i18n="badge.available">Dostupné</span></div>
             <div class="row">
@@ -338,6 +338,17 @@
                     <small data-i18n="nzbdav.toggleHint">Streamuje NZB přes WebDAV bez stahování. Funguje pro 🤓 NZBGeek, ⛩️ Anime Tosho i 🐙 Tosho dump.</small>
                 </div>
                 <button class="toggle off" id="sort-nzbdav-toggle" onclick="toggleUseNzbDav()"></button>
+            </div>
+            <!-- Mount engine selector — only shown when AltMount is also available -->
+            <div class="row" id="mount-backend-row" style="display:none;">
+                <div class="row-label">
+                    <span data-i18n="mount.engine">Stream engine</span>
+                    <small data-i18n="mount.engineHint">NzbDav nebo AltMount (testování rychlosti)</small>
+                </div>
+                <select id="mount-backend-select" onchange="setMountBackend(this.value)" style="background:var(--card);color:var(--fg);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:13px;">
+                    <option value="nzbdav">NzbDav</option>
+                    <option value="altmount">AltMount</option>
+                </select>
             </div>
         </div>
 
@@ -537,6 +548,8 @@ const I18N = {
         'nzbdav.title': '⛩️ NzbDav',
         'nzbdav.toggle': 'NzbDav instant stream',
         'nzbdav.toggleHint': 'Stream NZB via WebDAV without downloading. Works for 🤓 NZBGeek, ⛩️ Anime Tosho and 🐙 Tosho dump.',
+        'mount.engine': 'Stream engine',
+        'mount.engineHint': 'NzbDav or AltMount (speed testing)',
         'badge.available': 'Available',
         'sort.langFilter': 'Language display filter',
         'sort.langFilterHint': 'Show only selected flags in 🔊 audio and 📝 subtitles',
@@ -672,6 +685,8 @@ const I18N = {
         'nzbdav.title': '⛩️ NzbDav',
         'nzbdav.toggle': 'NzbDav instant stream',
         'nzbdav.toggleHint': 'Streamuje NZB přes WebDAV bez stahování. Funguje pro 🤓 NZBGeek, ⛩️ Anime Tosho i 🐙 Tosho dump.',
+        'mount.engine': 'Stream engine',
+        'mount.engineHint': 'NzbDav nebo AltMount (testování rychlosti)',
         'badge.available': 'Dostupné',
         'sort.langFilter': 'Filter zobrazovaných jazyků',
         'sort.langFilterHint': 'Zobrazit jen vybrané vlajky u 🔊 audio a 📝 titulků',
@@ -1127,6 +1142,7 @@ let sortPrefs = {
     groupsEnabled: false, resEnabled: false, excludeResEnabled: false, langsEnabled: false,
     groupPriority: [], resPriority: [], langPriority: [], excludedResolutions: [],
     dubFirst: false, cachedFirst: false, useNzbDav: false, nzbDavAvailable: false,
+    altMountAvailable: false, mountBackend: 'nzbdav',
     langFilterEnabled: false, langFilterCodes: ['en', 'cs'],
     defaultGroups: [], defaultResolutions: [], defaultLangs: []
 };
@@ -1147,12 +1163,18 @@ function renderSortPrefs() {
     // Top-level toggles
     document.getElementById('sort-cached-toggle').className = sortPrefs.cachedFirst ? 'toggle on' : 'toggle off';
     document.getElementById('sort-dub-toggle').className = sortPrefs.dubFirst ? 'toggle on' : 'toggle off';
-    // NzbDav section visibility + toggle state — section only shown when server has NZBDAV_URL/credentials configured.
+    // Mount section visibility + toggle state — shown when server has NzbDav OR AltMount configured.
     const nzbdavSection = document.getElementById('section-nzbdav');
     if (nzbdavSection) {
-      nzbdavSection.style.display = sortPrefs.nzbDavAvailable ? '' : 'none';
+      const anyMount = sortPrefs.nzbDavAvailable || sortPrefs.altMountAvailable;
+      nzbdavSection.style.display = anyMount ? '' : 'none';
       const nzbdavToggle = document.getElementById('sort-nzbdav-toggle');
       if (nzbdavToggle) nzbdavToggle.className = sortPrefs.useNzbDav ? 'toggle on' : 'toggle off';
+      // Engine selector only when AltMount is also available (otherwise NzbDav is the only option)
+      const backendRow = document.getElementById('mount-backend-row');
+      const backendSelect = document.getElementById('mount-backend-select');
+      if (backendRow) backendRow.style.display = sortPrefs.altMountAvailable ? '' : 'none';
+      if (backendSelect) backendSelect.value = sortPrefs.mountBackend || 'nzbdav';
     }
     document.getElementById('sort-langfilter-toggle').className = sortPrefs.langFilterEnabled ? 'toggle on' : 'toggle off';
 
@@ -1243,6 +1265,7 @@ function renderSortList(containerId, items, type) {
 function toggleCachedFirst() { sortPrefs.cachedFirst = !sortPrefs.cachedFirst; saveSortPrefs(); renderSortPrefs(); }
 function toggleDubFirst() { sortPrefs.dubFirst = !sortPrefs.dubFirst; saveSortPrefs(); renderSortPrefs(); }
 function toggleUseNzbDav() { sortPrefs.useNzbDav = !sortPrefs.useNzbDav; saveSortPrefs(); renderSortPrefs(); }
+function setMountBackend(v) { sortPrefs.mountBackend = (v === 'altmount') ? 'altmount' : 'nzbdav'; saveSortPrefs(); renderSortPrefs(); }
 function toggleLangFilter() { sortPrefs.langFilterEnabled = !sortPrefs.langFilterEnabled; saveSortPrefs(); renderSortPrefs(); }
 function toggleLangCode(code, checked) {
     const current = new Set(sortPrefs.langFilterCodes || []);
@@ -1303,6 +1326,7 @@ async function saveSortPrefs() {
                 dubFirst: sortPrefs.dubFirst,
                 cachedFirst: sortPrefs.cachedFirst,
                 useNzbDav: sortPrefs.useNzbDav,
+                mountBackend: sortPrefs.mountBackend,
                 langFilterEnabled: sortPrefs.langFilterEnabled,
                 langFilterCodes: sortPrefs.langFilterCodes
             })
