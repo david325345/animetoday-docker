@@ -17,6 +17,7 @@ const { getTBStatus, getTBStream, getTBNZBStream, checkTBCached, tbInProgress } 
 const { validateApiKey: validateNekobtKey } = require('./lib/nekobt');
 const { searchByTVDB: nzbgeekSearch, searchByIMDb: nzbgeekMovieSearch, validateApiKey: validateNzbgeekKey } = require('./lib/nzbgeek');
 const nzbdav = require('./lib/nzbdav');
+const altmount = require('./lib/altmount');
 // SeaDex / NekoBT direct search removed — all torrent results come from our own indexer now.
 // API endpoints and lib files are kept for backward compatibility / future re-enabling.
 
@@ -101,6 +102,43 @@ function nzbDavAllowedForToken(token) {
   if (!nzbdav.isConfigured()) return false;
   const acc = config.getAccountByToken(token);
   return !!(acc && acc.permissions && acc.permissions.nzbdav === true);
+}
+
+// AltMount is allowed for a token when ALL of:
+//   1. Server has ALTMOUNT_URL + credentials configured (env vars)
+//   2. The account has permissions.nzbdav === true (reuse same admin gate as NzbDav —
+//      both are "mount-based NZB streaming" and share the same permission for now)
+function altMountAllowedForToken(token) {
+  if (!altmount.isConfigured()) return false;
+  const acc = config.getAccountByToken(token);
+  return !!(acc && acc.permissions && acc.permissions.nzbdav === true);
+}
+
+// Resolve which mount backend a user wants for NZB streaming.
+// Returns { client, kind } where kind is 'nzbdav' | 'altmount' | null.
+//   - user.mountBackend === 'altmount' → AltMount (if allowed)
+//   - otherwise (default / 'nzbdav')   → NzbDav (if allowed)
+// A user has a working mount backend only if useNzbDav toggle is ON and the chosen
+// backend is both configured and permitted.
+function getMountBackend(token, user) {
+  if (!user || !user.useNzbDav) return { client: null, kind: null };
+  const pref = user.mountBackend === 'altmount' ? 'altmount' : 'nzbdav';
+  if (pref === 'altmount' && altMountAllowedForToken(token)) {
+    return { client: altmount, kind: 'altmount' };
+  }
+  if (pref === 'nzbdav' && nzbDavAllowedForToken(token)) {
+    return { client: nzbdav, kind: 'nzbdav' };
+  }
+  // Fallback: if preferred backend unavailable, try the other one (so a misconfigured
+  // preference still streams if the alternative is available).
+  if (nzbDavAllowedForToken(token)) return { client: nzbdav, kind: 'nzbdav' };
+  if (altMountAllowedForToken(token)) return { client: altmount, kind: 'altmount' };
+  return { client: null, kind: null };
+}
+
+// Either mount backend allowed for this token (for nav/permission checks).
+function anyMountAllowedForToken(token) {
+  return nzbDavAllowedForToken(token) || altMountAllowedForToken(token);
 }
 
 // ===== Express =====
@@ -468,6 +506,8 @@ app.get('/api/sort-prefs/:token', (req, res) => {
     cachedFirst: user.cachedFirst || false,
     useNzbDav: user.useNzbDav || false,
     nzbDavAvailable: nzbDavAllowedForToken(req.params.token),
+    altMountAvailable: altMountAllowedForToken(req.params.token),
+    mountBackend: user.mountBackend || 'nzbdav',
     langFilterEnabled: user.langFilterEnabled || false,
     langFilterCodes: user.langFilterCodes || ['en', 'cs'],
     defaultGroups: DEFAULT_GROUPS,
@@ -483,7 +523,7 @@ app.post('/api/sort-prefs/:token', express.json(), (req, res) => {
     sortMode,
     groupsEnabled, resEnabled, excludeResEnabled, langsEnabled,
     groupPriority, resPriority, langPriority, excludedResolutions,
-    dubFirst, cachedFirst, useNzbDav,
+    dubFirst, cachedFirst, useNzbDav, mountBackend,
     langFilterEnabled, langFilterCodes
   } = req.body;
   const VALID_MODES = ['qualityThenSeeders', 'qualityThenSize', 'seeders', 'size'];
@@ -502,6 +542,7 @@ app.post('/api/sort-prefs/:token', express.json(), (req, res) => {
   if (typeof dubFirst === 'boolean') user.dubFirst = dubFirst;
   if (typeof cachedFirst === 'boolean') user.cachedFirst = cachedFirst;
   if (typeof useNzbDav === 'boolean') user.useNzbDav = useNzbDav;
+  if (mountBackend === 'nzbdav' || mountBackend === 'altmount') user.mountBackend = mountBackend;
   if (typeof langFilterEnabled === 'boolean') user.langFilterEnabled = langFilterEnabled;
   if (Array.isArray(langFilterCodes)) {
     // Sanitize: only ISO codes 2-3 chars, lowercase
@@ -863,8 +904,11 @@ setInterval(() => {
 async function handlePlayNzbDav(req, res, hintToken) {
   const user = config.getUser(req.params.token);
   if (!user) return serveLoadingVideo(res);
-  if (!nzbDavAllowedForToken(req.params.token)) {
-    console.log('  📡 NzbDav: not allowed for this token (missing env vars or admin permission)');
+
+  // Pick the mount backend (NzbDav or AltMount) for this user.
+  const { client, kind } = getMountBackend(req.params.token, user);
+  if (!client) {
+    console.log('  📡 Mount: no backend allowed for this token (missing env vars or admin permission)');
     return serveLoadingVideo(res);
   }
 
@@ -889,14 +933,15 @@ async function handlePlayNzbDav(req, res, hintToken) {
   }
 
   // Cache key: hash alone is not enough — different episodes in the same batch share the hash
-  // (same NZB job) but different matched files. Include hint token in key to keep them separate.
-  const cacheKey = `${req.params.hash}|${hintToken || 'x'}`;
+  // (same NZB job) but different matched files. Include hint token + backend in key.
+  const cacheKey = `${kind}|${req.params.hash}|${hintToken || 'x'}`;
 
-  // Build redirect URL preserving hintToken so the proxy keeps working on subsequent range requests.
+  // Build redirect URL. Backend kind is embedded so the range-proxy knows which
+  // mount client to use for the actual bytes.
   const buildRedirect = (jobName, filePath) => {
     const extMatch = filePath.match(/\.(mkv|mp4|avi|m4v|mov|webm|ts)$/i);
     const ext = extMatch ? extMatch[1].toLowerCase() : 'mkv';
-    return `${BASE_URL}/${req.params.token}/nzbdav-stream/${encodeURIComponent(jobName)}/${encodeURIComponent(filePath)}/video.${ext}`;
+    return `${BASE_URL}/${req.params.token}/nzbdav-stream/${kind}/${encodeURIComponent(jobName)}/${encodeURIComponent(filePath)}/video.${ext}`;
   };
 
   // Fast path: cached resolve
@@ -906,11 +951,11 @@ async function handlePlayNzbDav(req, res, hintToken) {
   }
 
   try {
-    const { jobName, filePath } = await nzbdav.ensureReady(nzb.url, '', hints);
+    const { jobName, filePath } = await client.ensureReady(nzb.url, '', hints);
     setCachedResolve(cacheKey, jobName, filePath);
     return res.redirect(302, buildRedirect(jobName, filePath));
   } catch (err) {
-    console.log(`  📡 NzbDav resolve failed: ${err.message}`);
+    console.log(`  📡 ${kind} resolve failed: ${err.message}`);
     return serveLoadingVideo(res);
   }
 }
@@ -930,11 +975,22 @@ app.get('/:token/play-nzb-dav/:hash/:episode/video.mp4', (req, res) => {
 // Path: /:token/nzbdav-stream/:jobName/:filePath/video.:ext
 //   filePath is encoded full WebDAV path (single segment, double-encoded by 302 redirect)
 //   video.:ext is a cosmetic suffix so Stremio detects type from URL
-app.all('/:token/nzbdav-stream/:jobName/:filePath/:filename', async (req, res) => {
+// New route with backend segment: /:token/nzbdav-stream/:backend/:jobName/:filePath/:filename
+async function handleMountStream(req, res, backendKind) {
   if (req.method !== 'GET' && req.method !== 'HEAD') {
     return res.status(405).send('Method Not Allowed');
   }
-  if (!nzbDavAllowedForToken(req.params.token)) return res.status(503).send('NzbDav not allowed for this token');
+  // Select client by backend kind from URL (falls back to nzbdav for legacy URLs).
+  let client, allowed;
+  if (backendKind === 'altmount') {
+    client = altmount;
+    allowed = altMountAllowedForToken(req.params.token);
+  } else {
+    client = nzbdav;
+    allowed = nzbDavAllowedForToken(req.params.token);
+  }
+  if (!allowed) return res.status(503).send('Mount backend not allowed for this token');
+
   const user = config.getUser(req.params.token);
   if (!user) return res.status(404).send('Not found');
 
@@ -945,18 +1001,31 @@ app.all('/:token/nzbdav-stream/:jobName/:filePath/:filename', async (req, res) =
   } catch (e) {
     return res.status(400).send('Bad file path');
   }
-  // Sanity: must be under /content/
-  if (!filePath.startsWith('/content/')) return res.status(400).send('Invalid path');
+  // Sanity: path must be under a known mount root (NzbDav /content/, AltMount /webdav/)
+  if (!filePath.startsWith('/content/') && !filePath.startsWith('/webdav/')) {
+    return res.status(400).send('Invalid path');
+  }
 
   // CDN bypass: tell intermediary caches (Bunny CDN, Cloudflare, etc.) NOT to cache
   // or buffer the response. Range requests must be forwarded transparently or seeking
-  // breaks (CDN fetches whole 1.5GB file instead of the requested 1MB slice).
+  // breaks (CDN fetches whole file instead of the requested slice).
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
-  res.setHeader('CDN-Cache-Control', 'no-store');         // Bunny-specific
-  res.setHeader('Surrogate-Control', 'no-store');         // generic CDN convention
-  res.setHeader('X-Accel-Buffering', 'no');               // disable nginx buffering downstream
+  res.setHeader('CDN-Cache-Control', 'no-store');
+  res.setHeader('Surrogate-Control', 'no-store');
+  res.setHeader('X-Accel-Buffering', 'no');
 
-  await nzbdav.proxyStream(req, res, filePath);
+  await client.proxyStream(req, res, filePath);
+}
+
+// Backend-aware route
+app.all('/:token/nzbdav-stream/:backend/:jobName/:filePath/:filename', (req, res) => {
+  const backend = req.params.backend === 'altmount' ? 'altmount' : 'nzbdav';
+  return handleMountStream(req, res, backend);
+});
+// Legacy route without backend segment (defaults to nzbdav) — backward compat for
+// any in-flight Stremio URLs from before AltMount support.
+app.all('/:token/nzbdav-stream/:jobName/:filePath/:filename', (req, res) => {
+  return handleMountStream(req, res, 'nzbdav');
 });
 
 // ===== NZB REFRESH TRIGGER =====
@@ -2341,7 +2410,7 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
   // NZB addon requires either TorBox-with-NZB OR NzbDav (with admin permission) for playback.
   // (Both produce a streamable URL; TorBox downloads, NzbDav mounts.)
   const tbReady = !!(user?.tb_api_key && user?.tb_use_nzb);
-  const navReady = !!user?.useNzbDav && nzbDavAllowedForToken(token);
+  const navReady = !!user?.useNzbDav && anyMountAllowedForToken(token);
   if (!tbReady && !navReady) {
     return res.json({ streams: [] });
   }
@@ -2664,11 +2733,11 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
   const streams = [];
   const epNum = isMovie ? 0 : episode;
 
-  // When NzbDav is the playback target, hide batches we can't reliably match a file for.
-  // Tosho dump batches carry full `matchedFile.name` (from file_list) → robust filename match in WebDAV.
-  // Geek / new-endpoint batches lack file_list → only `fileIdx` exists, which doesn't map to WebDAV listing order.
-  // Filtering them out is safer than guessing and playing the wrong episode.
-  const nzbDavActive = !!user?.useNzbDav && nzbDavAllowedForToken(token);
+  // When a mount backend (NzbDav or AltMount) is the playback target, hide batches
+  // we can't reliably match a file for. Both mount engines find files by name/size
+  // in WebDAV, so a batch without matchedFile.name can't be reliably resolved.
+  const mountSel = getMountBackend(token, user);
+  const nzbDavActive = !!mountSel.client;
 
   for (const t of topNzb) {
     if (nzbDavActive && t.batch && !t.matchedFile?.name) {
@@ -2746,13 +2815,13 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
     // New endpoint provides full r2_url; legacy NZB sources provide r2_key + R2_NZB_BASE
     const nzbUrl = t.r2_url || `${R2_NZB_BASE}/${t.r2_key}`;
     // Per-user routing:
-    //   useNzbDav ON  → /play-nzb-dav → NzbDav mount + WebDAV range proxy (instant streaming)
-    //   useNzbDav OFF → /play-nzb     → TorBox NZB download (legacy flow)
-    const useNzbDav = !!user?.useNzbDav && nzbDavAllowedForToken(token);
+    //   mount backend (NzbDav/AltMount) → /play-nzb-dav → mount + WebDAV range proxy
+    //   no mount backend               → /play-nzb     → TorBox NZB download (legacy flow)
+    const useNzbDav = !!mountSel.client;
     const proxyPath = useNzbDav ? 'play-nzb-dav' : 'play-nzb';
 
-    // For NzbDav batches: encode file match hints (name + size) into URL.
-    // 'x' = no hints (single file or non-NzbDav). Token is base64url-encoded JSON.
+    // For mount batches: encode file match hints (name + size) into URL.
+    // 'x' = no hints (single file or non-mount). Token is base64url-encoded JSON.
     let hintToken = 'x';
     if (useNzbDav && t.batch && t.matchedFile?.name) {
       const hints = { n: t.matchedFile.name, s: t.matchedFile.size || 0 };
@@ -2766,7 +2835,7 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
       url: useNzbDav ? `${baseUrl}/${hintToken}/video.mp4` : `${baseUrl}/video.mp4`,
       behaviorHints: { bingeGroup: 'nzb-indexer', notWebReady: true }
     };
-    // For batch NZB with file_index: tell Stremio which file to play (TorBox flow only — NzbDav uses hintToken).
+    // For batch NZB with file_index: tell Stremio which file to play (TorBox flow only — mount uses hintToken).
     if (!useNzbDav && t.matchedFile?.idx != null) {
       stream.behaviorHints.fileIdx = t.matchedFile.idx;
     }
