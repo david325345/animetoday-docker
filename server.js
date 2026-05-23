@@ -106,12 +106,17 @@ function nzbDavAllowedForToken(token) {
 
 // AltMount is allowed for a token when ALL of:
 //   1. Server has ALTMOUNT_URL + credentials configured (env vars)
-//   2. The account has permissions.nzbdav === true (reuse same admin gate as NzbDav —
-//      both are "mount-based NZB streaming" and share the same permission for now)
+//   2. The account has permissions.altmount === true (dedicated admin gate).
+//      Falls back to permissions.nzbdav for accounts created before the split, so
+//      existing nzbdav-permitted users don't lose AltMount until re-saved.
 function altMountAllowedForToken(token) {
   if (!altmount.isConfigured()) return false;
   const acc = config.getAccountByToken(token);
-  return !!(acc && acc.permissions && acc.permissions.nzbdav === true);
+  if (!acc || !acc.permissions) return false;
+  if (acc.permissions.altmount === true) return true;
+  // back-compat: legacy accounts only had `nzbdav` which gated both
+  if (acc.permissions.altmount === undefined && acc.permissions.nzbdav === true) return true;
+  return false;
 }
 
 // Resolve which mount backend a user wants for NZB streaming.
