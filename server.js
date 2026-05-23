@@ -1002,7 +1002,10 @@ async function handleMountStream(req, res, backendKind) {
     return res.status(400).send('Bad file path');
   }
   // Sanity: path must be under a known mount root (NzbDav /content/, AltMount /webdav/)
-  if (!filePath.startsWith('/content/') && !filePath.startsWith('/webdav/')) {
+  // Sanity: path must be under a known mount root.
+  //   NzbDav:   /content/<category>/...
+  //   AltMount: /complete/...  (from /api/files/stream?path=) or /webdav/... (legacy)
+  if (!filePath.startsWith('/content/') && !filePath.startsWith('/webdav/') && !filePath.startsWith('/complete/')) {
     return res.status(400).send('Invalid path');
   }
 
