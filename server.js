@@ -889,6 +889,10 @@ function setCachedResolve(hash, jobName, filePath) {
   nzbDavResolveCache.set(hash, { jobName, filePath, at: Date.now() });
 }
 
+function invalidateCachedResolve(hash) {
+  nzbDavResolveCache.delete(hash);
+}
+
 // Periodic cleanup of expired entries (every 10 min)
 setInterval(() => {
   const now = Date.now();
@@ -944,10 +948,23 @@ async function handlePlayNzbDav(req, res, hintToken) {
     return `${BASE_URL}/${req.params.token}/nzbdav-stream/${kind}/${encodeURIComponent(jobName)}/${encodeURIComponent(filePath)}/video.${ext}`;
   };
 
-  // Fast path: cached resolve
+  // Fast path: cached resolve. For AltMount, validate the cached path still exists
+  // (HEAD) — paths can "rot" if AltMount's queue item was cleared / files deleted,
+  // and a stale cached path would 400 forever and hang Stremio. NzbDav paths are
+  // stable so we skip validation there to avoid the extra round-trip.
   const cached = getCachedResolve(cacheKey);
   if (cached) {
-    return res.redirect(302, buildRedirect(cached.jobName, cached.filePath));
+    if (kind === 'altmount') {
+      const ok = await client.validatePath(cached.filePath);
+      if (ok) {
+        return res.redirect(302, buildRedirect(cached.jobName, cached.filePath));
+      }
+      // Rotten cache → drop it and fall through to fresh resolve below.
+      console.log(`  📡 AltMount: cached path rotten (${cached.filePath}), re-resolving`);
+      invalidateCachedResolve(cacheKey);
+    } else {
+      return res.redirect(302, buildRedirect(cached.jobName, cached.filePath));
+    }
   }
 
   try {
