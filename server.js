@@ -1881,8 +1881,14 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
 
       indexerResults = [...mapResults(results), ...mapToshoResults(toshoResults)];
 
-      // Fallback: try fulltext search if nothing found
-      if (!indexerResults.length) {
+      // Fallback: fulltext search if ID-based search found nothing.
+      // DISABLED by default — for an anime addon, fulltext (q=<name>) mixes in
+      // irrelevant results: e.g. searching "Avatar" (a non-anime film with 0 ID
+      // matches) returns unrelated anime. The 6 ID types (imdb/anilist/anidb/tvdb/
+      // mal/kitsu) cover anime well, so 0 ID matches almost always means "not in the
+      // anime indexer" — better to show nothing than wrong results.
+      // Set INDEXER_FULLTEXT_FALLBACK=true to re-enable.
+      if (process.env.INDEXER_FULLTEXT_FALLBACK === 'true' && !indexerResults.length) {
         let searchName = null;
         try {
           const r2 = await resolveToAniDB(type, fullId);
