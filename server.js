@@ -1739,14 +1739,35 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
     }] });
   }
 
-  // Build indexer query
+  // Build indexer query.
+  //
+  // We send ONLY ONE ID (in priority order: imdb > tvdb > anidb) instead of all
+  // known IDs. The indexer has its own offlineDB that resolves the other IDs
+  // internally — and crucially, when it receives an external ID it doesn't know
+  // (most often `anilist=...` for newer anime), its search returns
+  // `searchedBy: 'imdb (anilist-miss)'` and drops tosho results to 0, even when
+  // the other IDs would have worked alone. Sending only the most reliable ID
+  // (imdb is the strongest Stremio/Cinemeta key) avoids that "anilist-miss"
+  // cancellation and gives the indexer a clean signal to do its own mapping.
+  //
+  // Verified empirically against the live indexer (see SESSION_SUMMARY):
+  //   imdb=tt9054364                       -> 2 results + 49 tosho ✅
+  //   imdb + anilist=<unknown>             -> 2 + 0 ❌ (anilist-miss zeros tosho)
+  //   tvdb=352408                          -> 2 + 49 ✅
   const params = new URLSearchParams();
-  if (fullId.startsWith('tt')) params.set('imdb', fullId.split(':')[0]);
-  if (resolved.anilistId) params.set('anilist', resolved.anilistId);
-  if (resolved.tvdbId) params.set('tvdb', resolved.tvdbId);
-  if (resolved.anidbId) params.set('anidb', resolved.anidbId);
-  if (resolved.malId) params.set('mal', resolved.malId);
-  if (resolved.kitsuId) params.set('kitsu', resolved.kitsuId);
+  if (fullId.startsWith('tt')) {
+    params.set('imdb', fullId.split(':')[0]);
+  } else if (resolved.tvdbId) {
+    params.set('tvdb', resolved.tvdbId);
+  } else if (resolved.anidbId) {
+    params.set('anidb', resolved.anidbId);
+  } else if (resolved.malId) {
+    params.set('mal', resolved.malId);
+  } else if (resolved.kitsuId) {
+    params.set('kitsu', resolved.kitsuId);
+  } else if (resolved.anilistId) {
+    params.set('anilist', resolved.anilistId);
+  }
   if (season != null && !isMovie) params.set('season', season);
   if (episode && !isMovie) params.set('episode', episode);
 
@@ -2523,14 +2544,25 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
     }
   }
 
-  // Build indexer search params
+  // Build indexer search params — same single-ID priority as torrent search
+  // above (imdb > tvdb > anidb > mal > kitsu > anilist). See the long comment
+  // there for why we send only one ID: the indexer's "anilist-miss" failure
+  // mode zeros out tosho results when an unknown anilist is sent alongside
+  // otherwise-valid IDs.
   const params = new URLSearchParams();
-  if (imdbId) params.set('imdb', imdbId);
-  if (anilistId) params.set('anilist', anilistId);
-  if (anidbId) params.set('anidb', anidbId);
-  if (tvdbId) params.set('tvdb', tvdbId);
-  if (malId) params.set('mal', malId);
-  if (kitsuId) params.set('kitsu', kitsuId);
+  if (imdbId) {
+    params.set('imdb', imdbId);
+  } else if (tvdbId) {
+    params.set('tvdb', tvdbId);
+  } else if (anidbId) {
+    params.set('anidb', anidbId);
+  } else if (malId) {
+    params.set('mal', malId);
+  } else if (kitsuId) {
+    params.set('kitsu', kitsuId);
+  } else if (anilistId) {
+    params.set('anilist', anilistId);
+  }
   if (season != null && !isMovie) params.set('season', season);
   if (episode && !isMovie) params.set('episode', episode);
 
