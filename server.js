@@ -7,7 +7,7 @@ const axios = require('axios');
 const config = require('./lib/config');
 const { fetchAnimeSchedule, formatTimeCET: simklFormatTime, getDayLabel } = require('./lib/simkl');
 const { loadOfflineDB, loadAnimeLists, loadMappingCache, resolveToAniDB, resolveEpisode, resolveViaTVDB, parseEpisodeAndSeason, weeklyUpdate, offlineDB, getTVDBFromAniDB, getTVDBInfoFromAniDB } = require('./lib/idmap');
-const { detectQuality, sortByGroupPriority, DEFAULT_GROUPS, DEFAULT_RESOLUTIONS } = require('./lib/search');
+const { detectQuality, sortByGroupPriority, canonicalResTier, DEFAULT_GROUPS, DEFAULT_RESOLUTIONS } = require('./lib/search');
 const { getRDStream, rdInProgress, getCacheKey, serveLoadingVideo, DOWNLOADING_VIDEO_URL, checkInstantAvailability } = require('./lib/realdebrid');
 const { generateAllPosters } = require('./lib/posters');
 const todayAdded = require('./lib/today-added');
@@ -2760,41 +2760,38 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
     console.log(`  📰 NZB final: ${allNzb.length} total → ${JSON.stringify(bySource)}`);
   }
 
-  // Filter and sort NZB results using user preferences (4 preset modes + per-filter toggles)
-  let sorted = allNzb;
-  let sortMode = user?.sortMode;
-  if (!sortMode || sortMode === 'custom') sortMode = 'qualityThenSeeders';
+  // Filter and sort NZB results using the SAME sort pipeline as torrents
+  // (sortByGroupPriority handles excludeResolutions + sortMode preset +
+  // per-filter toggles for groups / resolutions / languages). NZB has no
+  // magnet/seeders, so we feed a `magnet: '_nzb'` placeholder to satisfy
+  // sortByGroupPriority's `.filter(t => t.magnet)` gate — the function only
+  // checks for presence, not value. NZB also has no TorBox cache, so the
+  // cachedFirst bucket logic is skipped (only dubFirst applies).
+  const nzbForSort = allNzb.map(t => ({
+    ...t,
+    magnet: t.magnet || '_nzb', // sentinel so sortByGroupPriority's gate passes
+  }));
+  let sorted = sortByGroupPriority(nzbForSort, user || null);
 
-  const resOrder = user?.resPriority || DEFAULT_RESOLUTIONS;
-  const getNzbResRank = (t) => {
-    const res = t.resolution || detectQuality(t.name);
-    if (!res) return resOrder.length;
-    const idx = resOrder.indexOf(res);
-    return idx >= 0 ? idx : resOrder.length;
-  };
-
-  // Pre-filter: exclude resolutions if toggle ON
-  if (user?.excludeResEnabled) {
-    const excludedRes = new Set((user.excludedResolutions || []).map(r => r.toLowerCase()));
-    if (excludedRes.size) {
-      sorted = sorted.filter(t => {
-        const res = (t.resolution || detectQuality(t.name) || '').toLowerCase();
-        if (res && excludedRes.has(res)) return false;
-        return true;
-      });
-    }
+  // EN/Dub first — same 2-bucket partition as torrents, minus the cache axis.
+  // Each bucket is internally ordered by sortByGroupPriority (already applied).
+  if (user?.dubFirst) {
+    const hasEN = (t) => {
+      if (t.dualAudio) return true;
+      const langs = String(t.audioLangs || '').toLowerCase().split(',').map(s => s.trim()).filter(Boolean);
+      if (langs.includes('en')) return true;
+      // Fallback: regex on title for releases without audio_langs metadata
+      const title = String(t.title || t.name || '');
+      if (/\b(?:dub|dual|multi|multiaudio|dual-audio|dualaudio|multi-audio)\b/i.test(title)) return true;
+      return false;
+    };
+    const enList = [];
+    const restList = [];
+    for (const t of sorted) (hasEN(t) ? enList : restList).push(t);
+    sorted = [...enList, ...restList];
+    console.log(`  🎯 NZB priority sort: EN=${enList.length} | rest=${restList.length}`);
   }
 
-  // Sort (NZB has no seeders, so all modes effectively use size as secondary)
-  if (sortMode === 'qualityThenSeeders' || sortMode === 'qualityThenSize') {
-    sorted.sort((a, b) => {
-      const r = getNzbResRank(a) - getNzbResRank(b);
-      if (r !== 0) return r;
-      return (b.size || 0) - (a.size || 0);
-    });
-  } else if (sortMode === 'seeders' || sortMode === 'size') {
-    sorted.sort((a, b) => (b.size || 0) - (a.size || 0));
-  }
   const topNzb = sorted.slice(0, 20);
 
   // Per-user language filter (same as torrents)
