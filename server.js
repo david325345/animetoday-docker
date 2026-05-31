@@ -2228,7 +2228,11 @@ app.get('/:token/nzb/manifest.json', (req, res) => {
 //      - EN present (with/out others) → Dub
 //      - JP only                → JP
 //   2. Fallback to dual_audio flag (from filename parsing): → Dual
-//   3. Unknown → null (no tag)
+//   3. Fallback regex on the release title for MULTI / DUAL tags that release
+//      groups put in filenames (e.g. "...Remux.MULTi.FLAC..." or "...DUAL-AUDIO...").
+//      The indexer doesn't always populate audio_langs for these — without this
+//      fallback the stream renders unlabeled.
+//   4. Unknown → null (no tag)
 function detectAudioTag(t) {
   const langs = String(t.audioLangs || '').toLowerCase().split(',').map(s => s.trim()).filter(Boolean);
   const hasJa = langs.includes('ja');
@@ -2242,6 +2246,12 @@ function detectAudioTag(t) {
 
   // Priority 2: fallback to filename-parsed dual_audio (when audio_langs missing)
   if (t.dualAudio) return 'Dual';
+
+  // Priority 3: regex on title for MULTI / DUAL markers used by release groups.
+  // Word-boundary match so we don't trigger on "multi" inside other words.
+  const title = String(t.title || t.name || '');
+  if (/\b(?:multi|multiaudio|multi-audio)\b/i.test(title)) return 'Multi';
+  if (/\b(?:dual|dual-audio|dualaudio)\b/i.test(title)) return 'Dual';
 
   return null;
 }
