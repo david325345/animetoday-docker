@@ -81,19 +81,22 @@ async function updateCache() {
 cron.schedule('0 4 * * *', () => { clearRssIndex(); updateCache(); });
 
 // ===== Magnet store (for clean RD stream URLs) =====
-// Stores magnet URI + optional indexer hint (matchedFile name/size) under an md5
-// of the magnet. The hint lets the /play-tb handler match the right file inside
-// a multi-episode batch by content (basename / size) instead of by index — TB
-// returns files in its own order, so the indexer's fileIdx can't be trusted.
+// Stores magnet URI + optional indexer hint (matchedFile name/size) under a hash
+// derived from the magnet AND the hint name. Including the hint in the hash is
+// essential: the same magnet (one batch torrent) contains many episodes, so
+// each episode's stream URL needs a distinct key — otherwise the second
+// storeMagnet() call for that batch would overwrite the first one's hint, and
+// every episode's URL would resolve to whichever hint was stored last.
+//
+// Layout:
+//   key = md5(magnet + ':' + (hint.name || ''))
+//   value = { magnet, hint }
 const magnetStore = new Map();
 const nzbStore = new Map();
 function storeMagnet(magnet, hint = null) {
-  const hash = crypto.createHash('md5').update(magnet).digest('hex');
-  // Preserve any existing hint if the same magnet was stored earlier with one
-  // (so a later hint-less call doesn't wipe it). New hint replaces if provided.
-  const prev = magnetStore.get(hash);
-  const entry = (typeof prev === 'object' && prev !== null && 'magnet' in prev) ? prev : { magnet };
-  entry.magnet = magnet;
+  const keyMaterial = magnet + ':' + (hint?.name || '');
+  const hash = crypto.createHash('md5').update(keyMaterial).digest('hex');
+  const entry = { magnet };
   if (hint && (hint.name || hint.size)) entry.hint = hint;
   magnetStore.set(hash, entry);
   return hash;
@@ -101,7 +104,7 @@ function storeMagnet(magnet, hint = null) {
 function getMagnet(hash) {
   const v = magnetStore.get(hash);
   if (!v) return null;
-  // Back-compat: legacy entries were plain strings, not { magnet, hint } objects.
+  // Back-compat: legacy entries were plain strings (no hint).
   if (typeof v === 'string') return { magnet: v, hint: null };
   return v;
 }
