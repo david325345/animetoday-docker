@@ -108,9 +108,16 @@ function getMagnet(hash) {
   if (typeof v === 'string') return { magnet: v, hint: null };
   return v;
 }
-function storeNZB(nzbUrl, torrentName) {
-  const hash = crypto.createHash('md5').update(nzbUrl).digest('hex');
-  nzbStore.set(hash, { url: nzbUrl, name: torrentName });
+function storeNZB(nzbUrl, torrentName, hint = null) {
+  // Hash includes hint name so different episodes of the same batch NZB
+  // (same URL, different matched file) get distinct keys — otherwise the
+  // second storeNZB() call would overwrite the first's hint and every
+  // episode in a batch would resolve to whichever hint was stored last.
+  const keyMaterial = nzbUrl + ':' + (hint?.name || '');
+  const hash = crypto.createHash('md5').update(keyMaterial).digest('hex');
+  const entry = { url: nzbUrl, name: torrentName };
+  if (hint && (hint.name || hint.size)) entry.hint = hint;
+  nzbStore.set(hash, entry);
   return hash;
 }
 
@@ -888,7 +895,10 @@ app.get('/:token/play-nzb/:hash/:episode/video.mp4', async (req, res) => {
   if (!nzb) return serveLoadingVideo(res);
 
   const episode = parseInt(req.params.episode) || 0;
-  const url = await getTBNZBStream(nzb.url, user.tb_api_key, episode, nzb.name);
+  // Hint (matchedFile.name + size) lets getTBNZBStream pick the right file in
+  // a batch NZB by content, not by index — TB returns files in its own order.
+  const hint = nzb.hint || null;
+  const url = await getTBNZBStream(nzb.url, user.tb_api_key, episode, nzb.name, hint);
   if (url) return res.redirect(302, url);
   serveLoadingVideo(res);
 });
@@ -2925,7 +2935,10 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
       hintToken = Buffer.from(JSON.stringify(hints), 'utf8').toString('base64url');
     }
 
-    const baseUrl = `${BASE_URL}/${token}/${proxyPath}/${storeNZB(nzbUrl, t.name)}/${epNum}`;
+    // Hint propagation for TorBox NZB path: pass matchedFile to storeNZB so
+    // batch episodes don't collide on the same hash (same NZB URL).
+    const nzbHint = t.matchedFile ? { name: t.matchedFile.name, size: t.matchedFile.size } : null;
+    const baseUrl = `${BASE_URL}/${token}/${proxyPath}/${storeNZB(nzbUrl, t.name, nzbHint)}/${epNum}`;
     const stream = {
       name: streamName,
       title,
