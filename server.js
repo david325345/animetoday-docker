@@ -81,12 +81,29 @@ async function updateCache() {
 cron.schedule('0 4 * * *', () => { clearRssIndex(); updateCache(); });
 
 // ===== Magnet store (for clean RD stream URLs) =====
+// Stores magnet URI + optional indexer hint (matchedFile name/size) under an md5
+// of the magnet. The hint lets the /play-tb handler match the right file inside
+// a multi-episode batch by content (basename / size) instead of by index — TB
+// returns files in its own order, so the indexer's fileIdx can't be trusted.
 const magnetStore = new Map();
 const nzbStore = new Map();
-function storeMagnet(magnet) {
+function storeMagnet(magnet, hint = null) {
   const hash = crypto.createHash('md5').update(magnet).digest('hex');
-  magnetStore.set(hash, magnet);
+  // Preserve any existing hint if the same magnet was stored earlier with one
+  // (so a later hint-less call doesn't wipe it). New hint replaces if provided.
+  const prev = magnetStore.get(hash);
+  const entry = (typeof prev === 'object' && prev !== null && 'magnet' in prev) ? prev : { magnet };
+  entry.magnet = magnet;
+  if (hint && (hint.name || hint.size)) entry.hint = hint;
+  magnetStore.set(hash, entry);
   return hash;
+}
+function getMagnet(hash) {
+  const v = magnetStore.get(hash);
+  if (!v) return null;
+  // Back-compat: legacy entries were plain strings, not { magnet, hint } objects.
+  if (typeof v === 'string') return { magnet: v, hint: null };
+  return v;
 }
 function storeNZB(nzbUrl, torrentName) {
   const hash = crypto.createHash('md5').update(nzbUrl).digest('hex');
@@ -786,8 +803,9 @@ app.get('/:token/play/:hash/:episode/video.mp4', async (req, res) => {
   const user = config.getUser(req.params.token);
   if (!user?.rd_api_key) return serveLoadingVideo(res);
 
-  const magnet = magnetStore.get(req.params.hash);
-  if (!magnet) return serveLoadingVideo(res);
+  const stored = getMagnet(req.params.hash);
+  if (!stored) return serveLoadingVideo(res);
+  const magnet = stored.magnet;
 
   // Parse episode param: "fi3" = fileIdx 3, "5" = episode 5
   const epParam = req.params.episode;
@@ -821,8 +839,10 @@ app.get('/:token/play-tb/:hash/:episode/video.mp4', async (req, res) => {
   const user = config.getUser(req.params.token);
   if (!user?.tb_api_key) return serveLoadingVideo(res);
 
-  const magnet = magnetStore.get(req.params.hash);
-  if (!magnet) return serveLoadingVideo(res);
+  const stored = getMagnet(req.params.hash);
+  if (!stored) return serveLoadingVideo(res);
+  const magnet = stored.magnet;
+  const hint = stored.hint || null;
 
   // Parse episode param: "fi3" = fileIdx 3, "5" = episode 5
   const epParam = req.params.episode;
@@ -830,7 +850,9 @@ app.get('/:token/play-tb/:hash/:episode/video.mp4', async (req, res) => {
   const episode = isFileIdx ? parseInt(epParam.slice(2)) : (parseInt(epParam) || 0);
 
   const hashMatch = magnet.match(/btih:([a-zA-Z0-9]+)/i);
-  const cacheKey = `tb:${(hashMatch?.[1] || '').toLowerCase()}:${isFileIdx ? 'fi' : ''}${episode}`;
+  // Include hint in cache key so different files in same torrent don't collide
+  const hintKey = hint?.name ? `:n=${hint.name}` : '';
+  const cacheKey = `tb:${(hashMatch?.[1] || '').toLowerCase()}:${isFileIdx ? 'fi' : ''}${episode}${hintKey}`;
 
   // Already in progress — let other request finish, serve loading video
   if (tbInProgress.has(cacheKey)) return serveLoadingVideo(res);
@@ -840,7 +862,7 @@ app.get('/:token/play-tb/:hash/:episode/video.mp4', async (req, res) => {
   // Race full TB flow against an 8s timeout. If TB doesn't deliver in 8s,
   // serve loading video and let the work finish in background (cache for next click).
   const timeoutP = new Promise(r => setTimeout(() => r(null), 8000));
-  const tbP = getTBStream(magnet, user.tb_api_key, episode, isFileIdx);
+  const tbP = getTBStream(magnet, user.tb_api_key, episode, isFileIdx, hint);
   const url = await Promise.race([tbP, timeoutP]);
 
   if (url) {
@@ -2157,8 +2179,9 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
       if (hasRD) {
         const bingeGroup = buildBinge('-rd');
         const playEp = t.fileIdx != null ? `fi${t.fileIdx}` : String(epNum);
+        const hint = t.matchedFile ? { name: t.matchedFile.name, size: t.matchedFile.size } : null;
         const rdStream = { name: `[RD]\n${streamName}`, title,
-          url: `${BASE_URL}/${token}/play/${storeMagnet(t.magnet)}/${playEp}/video.mp4`,
+          url: `${BASE_URL}/${token}/play/${storeMagnet(t.magnet, hint)}/${playEp}/video.mp4`,
           behaviorHints: { bingeGroup, notWebReady: true } };
         if (t.matchedFile) {
           if (t.matchedFile.size) rdStream.behaviorHints.videoSize = t.matchedFile.size;
@@ -2173,8 +2196,9 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
         const tbTitle = title;
         const bingeGroup = buildBinge('-tb');
         const playEp = t.fileIdx != null ? `fi${t.fileIdx}` : String(epNum);
+        const hint = t.matchedFile ? { name: t.matchedFile.name, size: t.matchedFile.size } : null;
         const tbStream = { name: tbName, title: tbTitle,
-          url: `${BASE_URL}/${token}/play-tb/${storeMagnet(t.magnet)}/${playEp}/video.mp4`,
+          url: `${BASE_URL}/${token}/play-tb/${storeMagnet(t.magnet, hint)}/${playEp}/video.mp4`,
           behaviorHints: { bingeGroup, notWebReady: true } };
         if (t.matchedFile) {
           if (t.matchedFile.size) tbStream.behaviorHints.videoSize = t.matchedFile.size;
