@@ -1477,6 +1477,44 @@ app.get('/:token/nyaa/meta/:type/:id.json', async (req, res) => {
       return res.json({ meta });
     }
     console.log(`  ⚠️ Cinemeta no data for ${imdbId}`);
+
+    // Fallback: try TMDB by IMDb id. Recent movies (released within the last
+    // few months) are commonly missing from Cinemeta but already indexed in
+    // TMDB. Without this, Stremio gets `meta: null` and refuses to render the
+    // detail page, hiding the streams the addon already has.
+    const tmdbKey = config.getTMDBKey();
+    if (tmdbKey) {
+      try {
+        const findResp = await axios.get(`https://api.themoviedb.org/3/find/${imdbId}`, {
+          params: { api_key: tmdbKey, external_source: 'imdb_id' },
+          timeout: 5000
+        });
+        const movieHit = findResp.data?.movie_results?.[0];
+        const tvHit = findResp.data?.tv_results?.[0];
+        const hit = movieHit || tvHit;
+        if (hit) {
+          const kind = movieHit ? 'movie' : 'series';
+          const posterPath = hit.poster_path ? `https://image.tmdb.org/t/p/w500${hit.poster_path}` : undefined;
+          const backdropPath = hit.backdrop_path ? `https://image.tmdb.org/t/p/w1280${hit.backdrop_path}` : undefined;
+          const meta = {
+            id: fullId,
+            type: kind,
+            name: hit.title || hit.name || 'Unknown',
+            description: hit.overview || '',
+            poster: posterPath,
+            background: backdropPath,
+            releaseInfo: (hit.release_date || hit.first_air_date || '').slice(0, 4),
+            imdbRating: hit.vote_average ? hit.vote_average.toFixed(1) : undefined,
+            genres: [], // not in /find response — would need a second call
+          };
+          console.log(`  📤 IMDb Meta (TMDB fallback): ${meta.name} (${kind})`);
+          return res.json({ meta });
+        }
+      } catch (err) {
+        console.log(`  ⚠️ TMDB fallback error: ${err.message}`);
+      }
+    }
+
     return res.json({ meta: null });
   }
 
