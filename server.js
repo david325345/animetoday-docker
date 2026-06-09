@@ -1811,7 +1811,10 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
     .map(r => {
       // Find matching episode file in batch
       let matchedFile = null;
-      if (r.batch && r.file_list) {
+      // Build hint from file_list whenever available — including non-batch
+      // releases (movies with extras: 1 main file + N bonus files have batch=0
+      // but still need the hint to pick the actual movie).
+      if (r.file_list) {
         try {
           const files = typeof r.file_list === 'string' ? JSON.parse(r.file_list) : r.file_list;
           if (Array.isArray(files)) {
@@ -1823,7 +1826,7 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
                 matchedFile = { name: (file.name || '').split('/').pop(), size: file.size, idx: file.idx };
               }
             }
-            // Priority 2: Regex match by episode number
+            // Priority 2: Regex match by episode number (skipped for movies — episode is undefined/0)
             if (!matchedFile && episode) {
               const epPad = String(episode).padStart(2, '0');
               const sPad = String(season || 0).padStart(2, '0');
@@ -1880,7 +1883,13 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
       // No regex fallback: tosho file_list is dump-order (often size-sorted), not torrent-meta order,
       // so picking by name would yield correct name but wrong idx → Stremio plays wrong file.
       let matchedFile = null;
-      if (r.batch && r.file_list && (r.fileIdx != null || r.file_index != null)) {
+      // Build hint from file_list whenever the indexer provides one with an
+      // explicit fileIdx/file_index — even for non-batch releases. A movie
+      // packaged with extras (1 main file + N bonus files) has `batch=0` but
+      // still needs the hint to pick the right file (TB sorts files in its own
+      // order, so without the hint pickTBFile falls back to videoFiles[0],
+      // which may be an extras clip instead of the movie itself).
+      if (r.file_list && (r.fileIdx != null || r.file_index != null)) {
         try {
           const files = typeof r.file_list === 'string' ? JSON.parse(r.file_list) : r.file_list;
           if (Array.isArray(files)) {
@@ -2652,9 +2661,12 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
   // NZBGeek results have only basic info (title + size + pubDate + source).
 
   const normalizeToshoNzb = (t) => {
-    // Parse file_list and find matched file (same logic as mapToshoResults — trust file_index)
+    // Parse file_list and find matched file (same logic as mapToshoResults — trust file_index).
+    // Build hint even for non-batch releases: movies packaged with extras have
+    // batch=0 but still need the hint so getTBNZBStream / mount backend can
+    // pick the actual movie file instead of a random extras clip.
     let matchedFile = null;
-    if (t.batch && t.file_list && (t.fileIdx != null || t.file_index != null)) {
+    if (t.file_list && (t.fileIdx != null || t.file_index != null)) {
       try {
         const files = typeof t.file_list === 'string' ? JSON.parse(t.file_list) : t.file_list;
         if (Array.isArray(files)) {
