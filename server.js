@@ -2348,7 +2348,12 @@ function formatSizeWithIcon(t) {
   const isBatch = t.batch === true || (t.matchedFile != null) || (t.fileCount > 1);
   if (isBatch) {
     if (t.matchedFile?.size && t.filesizeBytes) {
-      return `💾 ${formatIndexerFilesize(t.matchedFile.size)} / 📦 ${formatIndexerFilesize(t.filesizeBytes)}`;
+      const fileStr = formatIndexerFilesize(t.matchedFile.size);
+      const totalStr = formatIndexerFilesize(t.filesizeBytes);
+      // Single-file release: matchedFile IS the whole torrent, so both render
+      // the same → drop the redundant 📦 and show just 💾. Real batches always
+      // have file < total (different render), so they keep the dual display.
+      return fileStr === totalStr ? `💾 ${fileStr}` : `💾 ${fileStr} / 📦 ${totalStr}`;
     }
     return `📦 ${t.filesize || '?'}`;
   }
@@ -2933,7 +2938,10 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
       const statsParts = [];
       if (age) statsParts.push(`📅 ${age}`);
       if (t.matchedFile?.size && t.filesizeBytes) {
-        statsParts.push(`💾 ${formatIndexerFilesize(t.matchedFile.size)} / 📦 ${formatIndexerFilesize(t.filesizeBytes)}`);
+        const fileStr = formatIndexerFilesize(t.matchedFile.size);
+        const totalStr = formatIndexerFilesize(t.filesizeBytes);
+        // Single-file release renders file == total → show just 💾 (no redundant 📦).
+        statsParts.push(fileStr === totalStr ? `💾 ${fileStr}` : `💾 ${fileStr} / 📦 ${totalStr}`);
       } else if (t.batch && t.filesizeBytes) {
         statsParts.push(`📦 ${formatIndexerFilesize(t.filesizeBytes)}`);
       } else {
