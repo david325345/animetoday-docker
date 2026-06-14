@@ -80,6 +80,10 @@ async function updateCache() {
 
 cron.schedule('0 4 * * *', () => { clearRssIndex(); updateCache(); });
 
+// today-added: proactive hourly refresh so overlays stay warm without relying
+// on user traffic (matches the airing cache's background-only refresh model).
+cron.schedule('0 * * * *', () => { todayAdded.refreshTodayAdded(); });
+
 // ===== Magnet store (for clean RD stream URLs) =====
 // Stores magnet URI + optional indexer hint (matchedFile name/size) under a hash
 // derived from the magnet AND the hint name. Including the hint in the hash is
