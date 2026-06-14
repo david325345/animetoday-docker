@@ -2826,11 +2826,47 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
     };
   };
 
-  // Build allNzb with dedup: prefer new endpoint over /search nzb_results when guid/title overlap
-  // (new endpoint has rich metadata: resolution, audio_langs, subs, group, etc.).
-  // No fuzzy/normalized matching — only exact GUID or exact title. Cross-source duplicates
-  // (e.g. NZBGeek vs AnimeTosho live with similar but differently-formatted titles) are kept
-  // as separate entries; sort modes will rank them by user preference.
+  // ===== Cross-source NZB de-duplication =====
+  // The same physical release is frequently indexed by more than one source at
+  // once — most commonly the AnimeTosho live feed (⛩️) and the offline Tosho
+  // dump (🐙), which are literally the same files, plus occasional NZBGeek (🤓)
+  // overlap. Titles are formatted differently per source, so exact-title match
+  // misses them. We collapse by a content fingerprint and keep the richest copy.
+  //
+  // Fingerprint (high precision, conservative — never merges distinct episodes):
+  //   1. CRC32 — anime releases embed an 8-hex CRC in brackets ([A1B2C3D4]).
+  //      Identical bracketed CRC === byte-identical file regardless of title
+  //      formatting. This catches the dominant tosho-live vs tosho-dump dupes.
+  //   2. Normalized title — CRC absent: lowercase, drop extension + bracketed
+  //      tags + separators, collapse identical cores. Short/empty cores are
+  //      kept unique to avoid over-merging unrelated entries.
+  const nzbFingerprint = (n, i) => {
+    const raw = String(n.name || '');
+    const m = raw.match(/[\[(]\s*([0-9A-Fa-f]{8})\s*[\])]/);
+    if (m) return 'crc:' + m[1].toLowerCase();
+    const norm = raw.toLowerCase()
+      .replace(/\.(mkv|mp4|avi|nzb)$/i, '')   // container extension
+      .replace(/[\[(][^\])]*[\])]/g, ' ')      // bracketed tags (group/crc/source)
+      .replace(/[^a-z0-9]+/g, '');             // separators / punctuation
+    return norm.length >= 6 ? 'nm:' + norm : 'uniq:' + (n.guid || n.r2_key || n.r2_url || i);
+  };
+  // When fingerprints collide, keep the copy with the most usable metadata
+  // (rich layout + correct file pick beat a bare NZBGeek title).
+  const nzbQuality = (n) =>
+    (n.hasMeta ? 4 : 0) + (n.matchedFile ? 2 : 0) + (n.resolution ? 1 : 0) + ((n.r2_url || n.r2_key) ? 1 : 0);
+  const dedupeNzb = (rows) => {
+    const best = new Map();
+    rows.forEach((n, i) => {
+      const key = nzbFingerprint(n, i);
+      const prev = best.get(key);
+      if (!prev || nzbQuality(n) > nzbQuality(prev)) best.set(key, n);
+    });
+    return [...best.values()];
+  };
+
+  // Pre-filter: prefer the rich new-endpoint copy over /search nzb_results when
+  // they share a GUID or exact title (cheap, exact). Cross-source/fuzzy dupes
+  // are then collapsed by dedupeNzb below.
   const newNzb = newEndpointResults.map(normalizeNewEndpoint).filter(n => n.r2_url);
   const seenGuids = new Set(newNzb.map(n => n.guid).filter(Boolean));
   const seenTitles = new Set(newNzb.map(n => (n.name || '').trim()).filter(Boolean));
@@ -2841,11 +2877,15 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
     .filter(n => !(n.guid && seenGuids.has(n.guid)))
     .filter(n => !seenTitles.has((n.name || '').trim()));
 
-  const allNzb = [
+  const unionNzb = [
     ...oldNzb,
     ...newNzb,
     ...toshoNzbResults.map(normalizeToshoNzb).filter(n => n.r2_key),
   ];
+  const allNzb = dedupeNzb(unionNzb);
+  if (unionNzb.length !== allNzb.length) {
+    console.log(`  📰 NZB dedup: ${unionNzb.length} → ${allNzb.length} (-${unionNzb.length - allNzb.length} duplicates)`);
+  }
 
   // Debug: breakdown of final allNzb by source label — confirms ⛩️ vs 🤓 mix
   if (allNzb.length) {
