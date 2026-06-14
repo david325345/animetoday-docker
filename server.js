@@ -547,6 +547,9 @@ app.get('/api/sort-prefs/:token', (req, res) => {
     mountBackend: user.mountBackend || 'nzbdav',
     langFilterEnabled: user.langFilterEnabled || false,
     langFilterCodes: user.langFilterCodes || ['en', 'cs'],
+    // 🏷️ parsed release-info line under the title
+    infoLineEnabled: user.infoLineEnabled !== false, // default ON
+    infoLinePosition: user.infoLinePosition || 2,    // 1..5 (2 = under the title)
     defaultGroups: DEFAULT_GROUPS,
     defaultResolutions: DEFAULT_RESOLUTIONS,
     defaultLangs: []
@@ -561,7 +564,8 @@ app.post('/api/sort-prefs/:token', express.json(), (req, res) => {
     groupsEnabled, resEnabled, excludeResEnabled, langsEnabled,
     groupPriority, resPriority, langPriority, excludedResolutions,
     dubFirst, cachedFirst, useNzbDav, mountBackend,
-    langFilterEnabled, langFilterCodes
+    langFilterEnabled, langFilterCodes,
+    infoLineEnabled, infoLinePosition
   } = req.body;
   const VALID_MODES = ['qualityThenSeeders', 'qualityThenSize', 'seeders', 'size'];
   if (typeof sortMode === 'string' && VALID_MODES.includes(sortMode)) {
@@ -588,6 +592,9 @@ app.post('/api/sort-prefs/:token', express.json(), (req, res) => {
       .map(c => c.toLowerCase())
       .slice(0, 30); // hard limit
   }
+  if (typeof infoLineEnabled === 'boolean') user.infoLineEnabled = infoLineEnabled;
+  const infoPos = parseInt(infoLinePosition, 10);
+  if (infoPos >= 1 && infoPos <= 5) user.infoLinePosition = infoPos;
   config.saveUser(req.params.token, user);
   res.json({ success: true });
 });
@@ -2166,14 +2173,11 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
       // the raw torrent name — source/platform, codec, audio, layout, subs,
       // flags, group. Cheap (~µs); the formatter skips fields it didn't find.
       const parsedInfo = formatReleaseLine(parseRelease(t.name || name));
-      const parsedLine = parsedInfo ? `🏷️ ${parsedInfo}` : '';
+      const infoLine = parsedInfo ? `🏷️ ${parsedInfo}` : '';
 
-      // Combine all lines, skipping empty ones
-      // (line1 with resolution/encoding/audioTag intentionally NOT included —
-      //  it's already shown in streamName on Stremio's left side, no need to duplicate)
-      title = [bodyLine, parsedLine, audioLine, subLine, statsLine]
-        .filter(Boolean)
-        .join('\n');
+      // Combine all lines (line1 quality tags omitted — already in streamName).
+      // The 🏷️ info line is placed/hidden per user prefs (see buildTitleWithInfo).
+      title = buildTitleWithInfo({ body: bodyLine, audio: audioLine, sub: subLine, stats: statsLine }, infoLine, user);
 
       // Build content streamName: "NimeToDex [🏆] QUALITY · AUDIO"
       // (audioTag already detected above for line1)
@@ -2369,6 +2373,25 @@ function formatSizeWithIcon(t) {
     return `📦 ${t.filesize || '?'}`;
   }
   return `💾 ${t.filesize || '?'}`;
+}
+
+// ===== Assemble stream title with the optional 🏷️ parsed-info line =====
+// Per-user controls (from sort-prefs):
+//   user.infoLineEnabled  — false hides the line entirely (default: shown)
+//   user.infoLinePosition — 1..5: which line the 🏷️ info occupies in the final
+//                           layout (default 2 = directly under the title).
+// `parts` = { body, audio, sub, stats } (audio/sub may be empty strings). The
+// info line is inserted among the non-empty base lines; a position higher than
+// the available line count clamps to the end (e.g. NZBGeek has only 2 lines).
+function buildTitleWithInfo(parts, infoLine, user) {
+  const base = [parts.body, parts.audio, parts.sub, parts.stats].filter(Boolean);
+  const enabled = !user || user.infoLineEnabled !== false; // default ON
+  if (!enabled || !infoLine) return base.join('\n');
+  let pos = parseInt(user && user.infoLinePosition, 10);
+  if (!Number.isFinite(pos)) pos = 2;                       // default: under the title
+  pos = Math.max(1, Math.min(pos, base.length + 1));        // clamp to 1..(lines+1)
+  base.splice(pos - 1, 0, infoLine);
+  return base.join('\n');
 }
 
 // ===== Format source label =====
@@ -3002,8 +3025,8 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
       const statsLine = statsParts.join(' · ');
 
       const parsedNzb = formatReleaseLine(parseRelease(t.name));
-      const parsedLine = parsedNzb ? `🏷️ ${parsedNzb}` : '';
-      title = [bodyLine, parsedLine, audioLine, subLine, statsLine].filter(Boolean).join('\n');
+      const infoLine = parsedNzb ? `🏷️ ${parsedNzb}` : '';
+      title = buildTitleWithInfo({ body: bodyLine, audio: audioLine, sub: subLine, stats: statsLine }, infoLine, user);
     } else {
       // === NZBGeek: basic layout (no file_list / langs available) ===
       const statsParts = [];
@@ -3014,8 +3037,8 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
       // NZBGeek has no parsed metadata at all — the name parser is the only
       // source of resolution/source/codec/group here, so it adds the most value.
       const parsedNzb = formatReleaseLine(parseRelease(t.name));
-      const parsedLine = parsedNzb ? `🏷️ ${parsedNzb}` : '';
-      title = [t.name, parsedLine, statsLine].filter(Boolean).join('\n');
+      const infoLine = parsedNzb ? `🏷️ ${parsedNzb}` : '';
+      title = buildTitleWithInfo({ body: t.name, audio: '', sub: '', stats: statsLine }, infoLine, user);
     }
 
     // Stream name (left column): "NimeToDexNZB\n[resolution] · [audio tag]"
