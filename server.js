@@ -18,6 +18,7 @@ const { validateApiKey: validateNekobtKey } = require('./lib/nekobt');
 const { searchByTVDB: nzbgeekSearch, searchByIMDb: nzbgeekMovieSearch, validateApiKey: validateNzbgeekKey } = require('./lib/nzbgeek');
 const nzbdav = require('./lib/nzbdav');
 const altmount = require('./lib/altmount');
+const { parseRelease, formatReleaseLine } = require('./lib/release-parser');
 // SeaDex / NekoBT direct search removed — all torrent results come from our own indexer now.
 // API endpoints and lib files are kept for backward compatibility / future re-enabling.
 
@@ -2161,10 +2162,16 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
       if (sourceLabel) statsParts.push(sourceLabel);
       const statsLine = statsParts.join(' · ');
 
+      // Parsed release-info line (under the name): everything we can pull from
+      // the raw torrent name — source/platform, codec, audio, layout, subs,
+      // flags, group. Cheap (~µs); the formatter skips fields it didn't find.
+      const parsedInfo = formatReleaseLine(parseRelease(t.name || name));
+      const parsedLine = parsedInfo ? `🏷️ ${parsedInfo}` : '';
+
       // Combine all lines, skipping empty ones
       // (line1 with resolution/encoding/audioTag intentionally NOT included —
       //  it's already shown in streamName on Stremio's left side, no need to duplicate)
-      title = [bodyLine, audioLine, subLine, statsLine]
+      title = [bodyLine, parsedLine, audioLine, subLine, statsLine]
         .filter(Boolean)
         .join('\n');
 
@@ -2994,7 +3001,9 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
       statsParts.push(t.sourceLabel);
       const statsLine = statsParts.join(' · ');
 
-      title = [bodyLine, audioLine, subLine, statsLine].filter(Boolean).join('\n');
+      const parsedNzb = formatReleaseLine(parseRelease(t.name));
+      const parsedLine = parsedNzb ? `🏷️ ${parsedNzb}` : '';
+      title = [bodyLine, parsedLine, audioLine, subLine, statsLine].filter(Boolean).join('\n');
     } else {
       // === NZBGeek: basic layout (no file_list / langs available) ===
       const statsParts = [];
@@ -3002,7 +3011,11 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
       statsParts.push(`💾 ${size}`);
       statsParts.push(t.sourceLabel);
       const statsLine = statsParts.join(' · ');
-      title = `${t.name}\n${statsLine}`;
+      // NZBGeek has no parsed metadata at all — the name parser is the only
+      // source of resolution/source/codec/group here, so it adds the most value.
+      const parsedNzb = formatReleaseLine(parseRelease(t.name));
+      const parsedLine = parsedNzb ? `🏷️ ${parsedNzb}` : '';
+      title = [t.name, parsedLine, statsLine].filter(Boolean).join('\n');
     }
 
     // Stream name (left column): "NimeToDexNZB\n[resolution] · [audio tag]"
