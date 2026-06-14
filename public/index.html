@@ -377,6 +377,25 @@
                 <button class="toggle off" id="sort-cached-toggle" onclick="toggleCachedFirst()"></button>
             </div>
 
+            <div class="row">
+                <div class="row-label"><span data-i18n="sort.infoLine">Řádek s údaji 🏷️</span> <small data-i18n="sort.infoLineHint">Zdroj · kodek · audio · grupa vyparsované z názvu</small></div>
+                <button class="toggle off" id="sort-infoline-toggle" onclick="toggleInfoLine()"></button>
+            </div>
+            <div class="row" id="infoline-pos-row">
+                <div class="row-label"><span data-i18n="sort.infoLinePos">Pozice řádku</span></div>
+                <select id="infoline-pos-select" onchange="changeInfoLinePos(this.value)">
+                    <option value="1" data-i18n="sort.infoPos1">1. řádek</option>
+                    <option value="2" data-i18n="sort.infoPos2">2. řádek</option>
+                    <option value="3" data-i18n="sort.infoPos3">3. řádek</option>
+                    <option value="4" data-i18n="sort.infoPos4">4. řádek</option>
+                    <option value="5" data-i18n="sort.infoPos5">5. řádek</option>
+                </select>
+            </div>
+            <div id="infoline-preview-wrap" style="margin-top:10px;">
+                <div style="font-size:11px;color:var(--hint);margin-bottom:6px;" data-i18n="sort.infoPreview">Náhled v Stremiu:</div>
+                <div id="infoline-preview" style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 12px;font-family:'JetBrains Mono',monospace;font-size:11px;line-height:1.7;color:#b0b0c8;white-space:pre;overflow-x:auto;"></div>
+            </div>
+
             <div class="divider"></div>
 
             <div class="row">
@@ -545,6 +564,15 @@ const I18N = {
         'sort.cachedFirstHint': 'TorBox cache on top (torrents only)',
         'sort.dubFirst': 'EN/Dub first',
         'sort.dubFirstHint': 'English audio on top',
+        'sort.infoLine': 'Info line 🏷️',
+        'sort.infoLineHint': 'Source · codec · audio · group parsed from the name',
+        'sort.infoLinePos': 'Line position',
+        'sort.infoPos1': '1st line',
+        'sort.infoPos2': '2nd line',
+        'sort.infoPos3': '3rd line',
+        'sort.infoPos4': '4th line',
+        'sort.infoPos5': '5th line',
+        'sort.infoPreview': 'Stremio preview:',
         'sort.useNzbDav': 'NzbDav instant stream',
         'sort.useNzbDavHint': 'Stream NZB via WebDAV without downloading',
         'nzbdav.title': '⛩️ NzbDav',
@@ -683,6 +711,15 @@ const I18N = {
         'sort.cachedFirstHint': 'TorBox cache nahoře (jen torrenty)',
         'sort.dubFirst': 'EN/Dub první',
         'sort.dubFirstHint': 'Anglické audio nahoře',
+        'sort.infoLine': 'Řádek s údaji 🏷️',
+        'sort.infoLineHint': 'Zdroj · kodek · audio · grupa vyparsované z názvu',
+        'sort.infoLinePos': 'Pozice řádku',
+        'sort.infoPos1': '1. řádek',
+        'sort.infoPos2': '2. řádek',
+        'sort.infoPos3': '3. řádek',
+        'sort.infoPos4': '4. řádek',
+        'sort.infoPos5': '5. řádek',
+        'sort.infoPreview': 'Náhled v Stremiu:',
         'sort.useNzbDav': 'NzbDav instant stream',
         'sort.useNzbDavHint': 'Streamuje NZB přes WebDAV, nestahuje',
         'nzbdav.title': '⛩️ NzbDav',
@@ -1148,6 +1185,7 @@ let sortPrefs = {
     dubFirst: false, cachedFirst: false, useNzbDav: false, nzbDavAvailable: false,
     altMountAvailable: false, mountBackend: 'nzbdav',
     langFilterEnabled: false, langFilterCodes: ['en', 'cs'],
+    infoLineEnabled: true, infoLinePosition: 2,
     defaultGroups: [], defaultResolutions: [], defaultLangs: []
 };
 
@@ -1167,6 +1205,14 @@ function renderSortPrefs() {
     // Top-level toggles
     document.getElementById('sort-cached-toggle').className = sortPrefs.cachedFirst ? 'toggle on' : 'toggle off';
     document.getElementById('sort-dub-toggle').className = sortPrefs.dubFirst ? 'toggle on' : 'toggle off';
+    // 🏷️ info line toggle + position
+    const infoOn = sortPrefs.infoLineEnabled !== false;
+    document.getElementById('sort-infoline-toggle').className = infoOn ? 'toggle on' : 'toggle off';
+    const infoPosSel = document.getElementById('infoline-pos-select');
+    if (infoPosSel) infoPosSel.value = String(sortPrefs.infoLinePosition || 2);
+    const infoPosRow = document.getElementById('infoline-pos-row');
+    if (infoPosRow) { infoPosRow.style.opacity = infoOn ? '1' : '0.4'; infoPosRow.style.pointerEvents = infoOn ? '' : 'none'; }
+    renderInfoPreview();
     // Mount section visibility + toggle state — shown when server has NzbDav OR AltMount configured.
     const nzbdavSection = document.getElementById('section-nzbdav');
     if (nzbdavSection) {
@@ -1268,6 +1314,36 @@ function renderSortList(containerId, items, type) {
 
 function toggleCachedFirst() { sortPrefs.cachedFirst = !sortPrefs.cachedFirst; saveSortPrefs(); renderSortPrefs(); }
 function toggleDubFirst() { sortPrefs.dubFirst = !sortPrefs.dubFirst; saveSortPrefs(); renderSortPrefs(); }
+function toggleInfoLine() { sortPrefs.infoLineEnabled = !(sortPrefs.infoLineEnabled !== false); saveSortPrefs(); renderSortPrefs(); }
+function changeInfoLinePos(v) { const n = parseInt(v, 10); sortPrefs.infoLinePosition = (n >= 1 && n <= 5) ? n : 2; saveSortPrefs(); renderSortPrefs(); }
+// Live preview of the stream title with the 🏷️ info line at the chosen position.
+// Mirrors server-side buildTitleWithInfo: splice info among the base lines, clamp.
+function renderInfoPreview() {
+    const el = document.getElementById('infoline-preview');
+    if (!el) return;
+    const base = [
+        '📂 Needy Girl Overdose - 02',
+        '🔊 🇯🇵',
+        '📝 🇬🇧',
+        '👥 42 · 💾 1.3 GB · ⛩️ Tosho'
+    ];
+    const info = '🏷️ 1080p · WEBRip CR · H.265 · AAC · Multi-Sub · [Erai-raws]';
+    const lines = base.slice();
+    let infoIdx = -1;
+    if (sortPrefs.infoLineEnabled !== false) {
+        let pos = parseInt(sortPrefs.infoLinePosition, 10);
+        if (!(pos >= 1 && pos <= 5)) pos = 2;
+        pos = Math.max(1, Math.min(pos, lines.length + 1));
+        infoIdx = pos - 1;
+        lines.splice(infoIdx, 0, info);
+    }
+    const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    el.innerHTML = lines.map((l, i) =>
+        i === infoIdx
+            ? `<div style="color:var(--accent);font-weight:600;">${esc(l)}</div>`
+            : `<div>${esc(l)}</div>`
+    ).join('');
+}
 function toggleUseNzbDav() { sortPrefs.useNzbDav = !sortPrefs.useNzbDav; saveSortPrefs(); renderSortPrefs(); }
 function setMountBackend(v) { sortPrefs.mountBackend = (v === 'altmount') ? 'altmount' : 'nzbdav'; saveSortPrefs(); renderSortPrefs(); }
 function toggleLangFilter() { sortPrefs.langFilterEnabled = !sortPrefs.langFilterEnabled; saveSortPrefs(); renderSortPrefs(); }
@@ -1309,6 +1385,8 @@ function resetSortPrefs() {
     sortPrefs.dubFirst = false;
     sortPrefs.cachedFirst = false;
     sortPrefs.useNzbDav = false;
+    sortPrefs.infoLineEnabled = true;
+    sortPrefs.infoLinePosition = 2;
     saveSortPrefs(); renderSortPrefs();
     toast(t('toast.sortReset'));
 }
@@ -1332,7 +1410,9 @@ async function saveSortPrefs() {
                 useNzbDav: sortPrefs.useNzbDav,
                 mountBackend: sortPrefs.mountBackend,
                 langFilterEnabled: sortPrefs.langFilterEnabled,
-                langFilterCodes: sortPrefs.langFilterCodes
+                langFilterCodes: sortPrefs.langFilterCodes,
+                infoLineEnabled: sortPrefs.infoLineEnabled,
+                infoLinePosition: sortPrefs.infoLinePosition
             })
         });
     } catch {}
