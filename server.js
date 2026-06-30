@@ -2401,7 +2401,7 @@ function buildTitleWithInfo(parts, infoLine, user) {
 function formatSourceLabel(indexerSource, seadexBest) {
   if (!indexerSource) return null;
   switch (indexerSource) {
-    case 'seadex':      return seadexBest ? '⭐ SeaDex' : null;
+    case 'seadex':      return seadexBest ? '⭐ SeaDex' : 'SeaDex';
     case 'nyaa':        return '🐱 Nyaa';
     case 'tokyotosho':  return '📺 Tokyotosho';
     case 'animetosho':  return '🐙 Anime Tosho';
