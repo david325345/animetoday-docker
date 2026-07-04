@@ -2406,6 +2406,8 @@ function formatSourceLabel(indexerSource, seadexBest) {
     case 'tokyotosho':  return '📺 Tokyotosho';
     case 'animetosho':  return '🐙 Anime Tosho';
     case 'nekobt':      return '🐾 nekoBT';
+    case 'pantsu':
+    case 'nyaa-pantsu': return '🩲 Pantsu';
     default:            return null;
   }
 }
