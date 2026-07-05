@@ -1653,6 +1653,8 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
     fullId.startsWith('tt') ? idParts.length >= 3 :
     fullId.startsWith('anilist:') ? idParts.length >= 4 :
     fullId.startsWith('mal:') ? idParts.length >= 4 :
+    fullId.startsWith('tmdb:') ? idParts.length >= 4 :
+    fullId.startsWith('anidb:') ? idParts.length >= 4 :
     fullId.startsWith('tvdb:') ? idParts.length >= 4 : idParts.length >= 3;
 
   // If no explicit episode, check todayAnimeCache for correct episode
@@ -1692,7 +1694,7 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
   }
 
   // ===== UNIFIED ID RESOLVE (before any search) =====
-  const resolved = { anidbId: null, anilistId: null, tvdbId: null, malId: null, kitsuId: null, names: [], title: null };
+  const resolved = { anidbId: null, anilistId: null, tvdbId: null, tmdbId: null, malId: null, kitsuId: null, names: [], title: null };
 
   if (fullId.startsWith('at:')) {
     const alId = parseInt(fullId.split(':')[1]);
@@ -1759,6 +1761,24 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
         resolved.title = rec.title || null;
         if (rec.title) resolved.names.push(rec.title);
       }
+    }
+  } else if (fullId.startsWith('tmdb:')) {
+    // TMDB id (Fusion/Stremio TMDB metadata, typically donghua). The offline DB
+    // (manami) has NO tmdb mapping, so we can't resolve names/AniDB locally —
+    // we just carry the id through; the indexer matches torrents.tmdb_id
+    // directly (tvdb/tmdb backfill 2026-07-05).
+    resolved.tmdbId = fullId.split(':')[1];
+  } else if (fullId.startsWith('anidb:')) {
+    const anidbNum = parseInt(fullId.split(':')[1]);
+    resolved.anidbId = anidbNum;
+    const rec = offlineDB.byAniDB.get(anidbNum);
+    if (rec) {
+      resolved.anilistId = rec.anilist || null;
+      resolved.tvdbId = rec.tvdb || null;
+      resolved.malId = rec.mal || null;
+      resolved.kitsuId = rec.kitsu || null;
+      resolved.title = rec.title || null;
+      if (rec.title) resolved.names.push(rec.title);
     }
   } else if (fullId.startsWith('tt')) {
     // IMDb — try offline-db scan + anime-lists
@@ -1844,6 +1864,8 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
     params.set('imdb', fullId.split(':')[0]);
   } else if (resolved.tvdbId) {
     params.set('tvdb', resolved.tvdbId);
+  } else if (resolved.tmdbId) {
+    params.set('tmdb', resolved.tmdbId);
   } else if (resolved.anidbId) {
     params.set('anidb', resolved.anidbId);
   } else if (resolved.malId) {
@@ -2628,6 +2650,7 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
   let anilistId = null;
   let anidbId = null;
   let tvdbId = null;
+  let tmdbId = null;
   let malId = null;
   let kitsuId = null;
 
@@ -2677,6 +2700,20 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
         if (rec.imdb) imdbId = rec.imdb;
       }
     }
+  } else if (fullId.startsWith('tmdb:')) {
+    // TMDB id — no local mapping (manami lacks tmdb); pass through to indexer,
+    // which matches torrents.tmdb_id directly.
+    tmdbId = idParts[1];
+  } else if (fullId.startsWith('anidb:')) {
+    anidbId = parseInt(idParts[1]);
+    const rec = offlineDB.byAniDB.get(anidbId);
+    if (rec) {
+      anilistId = rec.anilist;
+      tvdbId = rec.tvdb;
+      malId = rec.mal;
+      kitsuId = rec.kitsu;
+      if (rec.imdb) imdbId = rec.imdb;
+    }
   }
 
   // Build indexer search params — same single-ID priority as torrent search
@@ -2689,6 +2726,8 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
     params.set('imdb', imdbId);
   } else if (tvdbId) {
     params.set('tvdb', tvdbId);
+  } else if (tmdbId) {
+    params.set('tmdb', tmdbId);
   } else if (anidbId) {
     params.set('anidb', anidbId);
   } else if (malId) {
