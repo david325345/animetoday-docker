@@ -237,6 +237,15 @@
             </div>
             </div>
 
+            <div id="addon-subs-row">
+            <div class="addon-label" data-i18n="addons.subs">NimeToDex Subtitles — titulky</div>
+            <div class="manifest-url" id="url-subs" onclick="copy('url-subs')"></div>
+            <div class="install-btns">
+                <a class="btn btn-p" id="install-subs" data-i18n="addons.install" href="#">Nainstalovat</a>
+                <button class="btn btn-s" data-i18n="addons.copy" onclick="copy('url-subs')">Kopírovat</button>
+            </div>
+            </div>
+
             <div style="margin-top:14px; font-size:11px; color:var(--hint);"><span data-i18n="addons.token">Token:</span> <span class="token-display" id="show-token"></span></div>
         </div>
 
@@ -521,6 +530,7 @@ const I18N = {
         'addons.nyaa': 'NimeToDex — torrents',
         'addons.nzb': 'NimeToDex NZB — Usenet',
         'addons.today': 'Anime Today — daily catalog',
+        'addons.subs': 'NimeToDex Subtitles — subtitles',
         'addons.install': 'Install',
         'addons.copy': 'Copy',
         'addons.token': 'Token:',
@@ -673,6 +683,7 @@ const I18N = {
         'addons.nyaa': 'NimeToDex — torrenty',
         'addons.nzb': 'NimeToDex NZB — Usenet',
         'addons.today': 'Anime Today — dnešní katalog',
+        'addons.subs': 'NimeToDex Subtitles — titulky',
         'addons.install': 'Nainstalovat',
         'addons.copy': 'Kopírovat',
         'addons.token': 'Token:',
@@ -827,12 +838,15 @@ function showApp() {
     const todayUrl=`${BASE}/${TOKEN}/today/manifest.json`;
     const nyaaUrl=`${BASE}/${TOKEN}/nyaa/manifest.json`;
     const nzbUrl=`${BASE}/${TOKEN}/nzb/manifest.json`;
+    const subsUrl=`${BASE}/${TOKEN}/subs/manifest.json`;
     document.getElementById('url-today').textContent=todayUrl;
     document.getElementById('url-nyaa').textContent=nyaaUrl;
     document.getElementById('url-nzb').textContent=nzbUrl;
+    document.getElementById('url-subs').textContent=subsUrl;
     document.getElementById('install-today').href=`stremio://${todayUrl.replace(/^https?:\/\//,'')}`;
     document.getElementById('install-nyaa').href=`stremio://${nyaaUrl.replace(/^https?:\/\//,'')}`;
     document.getElementById('install-nzb').href=`stremio://${nzbUrl.replace(/^https?:\/\//,'')}`;
+    document.getElementById('install-subs').href=`stremio://${subsUrl.replace(/^https?:\/\//,'')}`;
     document.getElementById('show-token').textContent=TOKEN;
 
     // Fetch user info and apply permissions
@@ -849,6 +863,7 @@ function showApp() {
         // Permissions — admin sees everything
         document.getElementById('addon-nzb-row').style.display=(isAdmin||perms.nzb)?'block':'none';
         document.getElementById('addon-today-row').style.display=(isAdmin||perms.animetoday)?'block':'none';
+        document.getElementById('addon-subs-row').style.display=(isAdmin||perms.subtitles)?'block':'none';
         document.getElementById('section-nimetodex').style.display=(isAdmin||perms.subtitles||perms.catalog)?'block':'none';
         document.getElementById('section-torbox').style.display=(isAdmin||perms.torrents||perms.nzb)?'block':'none';
         document.getElementById('section-anime-today').style.display=(isAdmin||perms.animetoday)?'block':'none';
