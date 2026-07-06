@@ -1040,19 +1040,37 @@ async function loadRegKeysList() {
         const PERM_KEYS=['torrents','nzb','nzbdav','altmount','subtitles','catalog','ondemand','animetoday'];
         list.innerHTML=d.keys.map(k=>{
             const perms=k.permissions||{};
-            const permTags=PERM_KEYS.map(p=>`<span class="acc-perm ${perms[p]?'on':''}">${p}</span>`).join('');
+            const permTags=PERM_KEYS.map(p=>`<label class="acc-perm ${perms[p]?'on':''}" data-perm="${p}"><input type="checkbox" ${perms[p]?'checked':''} onchange="this.parentElement.classList.toggle('on',this.checked)">${p}</label>`).join('');
             const safeKey=k.key.replace(/"/g,'&quot;');
-            return `<div class="acc-row ${k.active!==false?'':'inactive'}">
+            return `<div class="acc-row ${k.active!==false?'':'inactive'}" data-regkey="${safeKey}">
                 <div class="acc-name">${(k.label||'').replace(/</g,'&lt;')}<small style="cursor:pointer;" onclick="navigator.clipboard.writeText('${safeKey}').then(()=>toast(t('toast.copied')))" title="${t('addons.copy')}">${k.key} 📋</small></div>
                 <span class="acc-role user">${k.usedCount||0}×</span>
                 <div class="acc-perms">${permTags}</div>
                 <div class="acc-actions">
+                    <button class="btn btn-p btn-sm" onclick="saveRegKeyPermissions('${safeKey}')">${t('admin.savePerms')}</button>
                     <button class="btn btn-s btn-sm" onclick="toggleRegKey('${safeKey}',${k.active===false})">${k.active!==false?t('admin.deactivate'):t('admin.activate')}</button>
                     <button class="btn btn-d btn-sm" onclick="deleteRegKey('${safeKey}')">${t('admin.delete')}</button>
                 </div>
             </div>`;
         }).join('');
     } catch(e) { toast('❌ '+e.message); }
+}
+
+async function saveRegKeyPermissions(key) {
+    const row=document.querySelector(`.acc-row[data-regkey="${key.replace(/"/g,'&quot;')}"]`);
+    if(!row) return;
+    const permissions={};
+    row.querySelectorAll("label.acc-perm").forEach(lbl=>{
+        const k=lbl.dataset.perm;
+        const cb=lbl.querySelector("input[type=checkbox]");
+        if(k && cb) permissions[k]=cb.checked;
+    });
+    try {
+        const r=await fetch("/api/admin/reg-keys/update-permissions",{method:"POST",headers:{"Content-Type":"application/json","x-admin-token":TOKEN},body:JSON.stringify({key,permissions})});
+        const d=await r.json().catch(()=>({}));
+        if(!r.ok){toast("❌ "+(d.error||t("toast.error")));return;}
+        toast(t("toast.permsSaved"));
+    } catch(e) { toast("❌ "+e.message); }
 }
 
 async function createRegKey() {
