@@ -255,6 +255,9 @@ app.get('/:token/nyaa/configure', (req, res) => {
 app.get('/:token/nzb/configure', (req, res) => {
   res.redirect(302, `/?token=${encodeURIComponent(req.params.token)}`);
 });
+app.get('/:token/subs/configure', (req, res) => {
+  res.redirect(302, `/?token=${encodeURIComponent(req.params.token)}`);
+});
 
 // ===== USER API =====
 // Auth: Login with username/password
@@ -1395,18 +1398,15 @@ app.get('/:token/today/meta/:type/:id.json', async (req, res) => {
 
 // ===== STREMIO: NYAA SEARCH ADDON =====
 app.get('/:token/nyaa/manifest.json', (req, res) => {
-  const user = config.getUser(req.params.token);
-  const resources = ['stream', 'meta'];
-  if (user?.subtitles_enabled) {
-    resources.push({ name: 'subtitles', types: ['series', 'movie'], idPrefixes: ['tt'] });
-  }
+  // Subtitles split into a standalone addon (/:token/subs/) 2026-07-05 —
+  // version bumped so Stremio refreshes the cached manifest without the resource.
   res.json({
     id: 'cz.nyaa.search.v7',
-    version: '7.5.0',
+    version: '7.6.0',
     name: 'NimeToDex',
     description: 'Anime torrent indexer + RealDebrid/TorBox. Funguje s Cinemeta/Kitsu/Anime Today.',
     logo: `${BASE_URL}/logo-nyaa.png`,
-    resources,
+    resources: ['stream', 'meta'],
     types: ['series', 'movie'],
     catalogs: [
       { type: 'series', id: 'nimetodex-today', name: 'NimeToDex — Added today', extra: [{ name: 'skip' }] },
@@ -1458,6 +1458,41 @@ app.get('/:token/nyaa/subtitles/:type/:id.json', async (req, res) => {
     res.json({ subtitles: subs });
   } catch (err) {
     console.log(`  💬 Subtitles error: ${err.message}`);
+    res.json({ subtitles: [] });
+  }
+});
+
+// ===== NimeToDex Subtitles: standalone addon (split from nyaa 2026-07-05) =====
+// Separate manifest so users install subtitles independently of the torrent addon.
+// The old /:token/nyaa/subtitles/... route above stays for users whose Stremio
+// still has the pre-7.6.0 nyaa manifest cached (subtitles resource included).
+app.get('/:token/subs/manifest.json', (req, res) => {
+  res.json({
+    id: 'cz.nimetodex.subtitles',
+    version: '1.0.0',
+    name: 'NimeToDex Subtitles',
+    description: 'Anime titulky z NimeToDex indexeru.',
+    logo: `${BASE_URL}/logo-nyaa.png`,
+    resources: [{ name: 'subtitles', types: ['series', 'movie'], idPrefixes: ['tt'] }],
+    types: ['series', 'movie'],
+    catalogs: [],
+    idPrefixes: ['tt'],
+    behaviorHints: { configurable: true, configurationRequired: false }
+  });
+});
+
+app.get('/:token/subs/subtitles/:type/:id.json', async (req, res) => {
+  const { token, type, id } = req.params;
+  const user = config.getUser(token);
+  if (!user?.subtitles_enabled) return res.json({ subtitles: [] });
+
+  try {
+    const resp = await axios.get(`${INDEXER_URL}/subtitles/${type}/${id}.json`, { timeout: 8000 });
+    const subs = resp.data?.subtitles || [];
+    if (subs.length) console.log(`  💬 Subtitles (subs addon): ${subs.length} for ${type}/${id}`);
+    res.json({ subtitles: subs });
+  } catch (err) {
+    console.log(`  💬 Subtitles error (subs addon): ${err.message}`);
     res.json({ subtitles: [] });
   }
 });
