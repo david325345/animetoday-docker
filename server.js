@@ -388,6 +388,17 @@ app.post('/api/admin/reg-keys/toggle', express.json(), (req, res) => {
   res.json({ success: true });
 });
 
+app.post('/api/admin/reg-keys/update-permissions', express.json(), (req, res) => {
+  const token = req.headers['x-admin-token'];
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+  const acc = config.getAccountByToken(token);
+  if (!acc || acc.role !== 'superadmin') return res.status(403).json({ error: 'Admin only' });
+
+  const { key, permissions } = req.body;
+  if (!config.updateRegKeyPermissions(key, permissions || {})) return res.status(404).json({ error: 'Key not found' });
+  res.json({ success: true });
+});
+
 app.post('/api/admin/reg-keys/delete', express.json(), (req, res) => {
   const token = req.headers['x-admin-token'];
   if (!token) return res.status(401).json({ error: 'Unauthorized' });
