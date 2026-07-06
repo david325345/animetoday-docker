@@ -206,6 +206,27 @@
 
             <!-- User list -->
             <div id="accounts-list"></div>
+
+            <!-- Registration keys for external apps -->
+            <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:14px;margin-top:18px;">
+                <div style="font-size:12px;color:var(--hint);font-weight:500;margin-bottom:8px;" data-i18n="admin.regKeys">🔑 Registrační klíče (externí aplikace)</div>
+                <div style="font-size:11px;color:var(--dim);margin-bottom:10px;" data-i18n="admin.regKeysHint">Externí aplikace registrují účty přes POST /api/register (hlavička x-reg-key). Účty dostanou přesně oprávnění klíče.</div>
+                <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                    <input type="text" id="new-regkey-label" class="input" placeholder="Popisek (např. Discord bot)" data-i18n-placeholder="admin.regKeyLabel" style="flex:1;min-width:140px;font-family:'Outfit',sans-serif;">
+                    <button class="btn btn-p btn-sm" onclick="createRegKey()" data-i18n="admin.regKeyCreate">Vygenerovat klíč</button>
+                </div>
+                <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;">
+                    <label style="font-size:11px;color:var(--dim);display:flex;align-items:center;gap:4px;"><input type="checkbox" id="regperm-torrents" checked> <span data-i18n="admin.permTorrents">Torrenty</span></label>
+                    <label style="font-size:11px;color:var(--dim);display:flex;align-items:center;gap:4px;"><input type="checkbox" id="regperm-nzb"> <span data-i18n="admin.permNzb">NZB</span></label>
+                    <label style="font-size:11px;color:var(--dim);display:flex;align-items:center;gap:4px;"><input type="checkbox" id="regperm-nzbdav"> <span data-i18n="admin.permNzbdav">NzbDav</span></label>
+                    <label style="font-size:11px;color:var(--dim);display:flex;align-items:center;gap:4px;"><input type="checkbox" id="regperm-altmount"> <span data-i18n="admin.permAltmount">AltMount</span></label>
+                    <label style="font-size:11px;color:var(--dim);display:flex;align-items:center;gap:4px;"><input type="checkbox" id="regperm-subtitles"> <span data-i18n="admin.permSubtitles">Titulky</span></label>
+                    <label style="font-size:11px;color:var(--dim);display:flex;align-items:center;gap:4px;"><input type="checkbox" id="regperm-catalog"> <span data-i18n="admin.permCatalog">Katalog</span></label>
+                    <label style="font-size:11px;color:var(--dim);display:flex;align-items:center;gap:4px;"><input type="checkbox" id="regperm-ondemand" checked> <span data-i18n="admin.permOndemand">On-demand</span></label>
+                    <label style="font-size:11px;color:var(--dim);display:flex;align-items:center;gap:4px;"><input type="checkbox" id="regperm-animetoday"> <span data-i18n="admin.permAnimetoday">Anime Today</span></label>
+                </div>
+                <div id="reg-keys-list" style="margin-top:12px;"></div>
+            </div>
         </div>
 
         <!-- Addons -->
@@ -519,6 +540,15 @@ const I18N = {
         'admin.permOndemand': 'On-demand',
         'admin.permAnimetoday': 'Anime Today',
         'admin.noAccounts': 'No accounts',
+        'admin.regKeys': '🔑 Registration keys (external apps)',
+        'admin.regKeysHint': 'External apps register accounts via POST /api/register (x-reg-key header). Accounts get exactly the key\'s permissions.',
+        'admin.regKeyLabel': 'Label (e.g. Discord bot)',
+        'admin.regKeyCreate': 'Generate key',
+        'admin.regKeyNone': 'No registration keys yet.',
+        'admin.regKeyCreated': '🔑 Key created',
+        'admin.regKeyDeleted': 'Key deleted',
+        'admin.regKeyDeleteConfirm': 'Delete this registration key? Existing accounts stay.',
+        'admin.regKeyLabelMissing': 'Fill in the label',
         'admin.roleAdmin': '👑 Admin',
         'admin.roleUser': 'User',
         'admin.deactivate': 'Deactivate',
@@ -673,6 +703,15 @@ const I18N = {
         'admin.permOndemand': 'On-demand',
         'admin.permAnimetoday': 'Anime Today',
         'admin.noAccounts': 'Žádné účty',
+        'admin.regKeys': '🔑 Registrační klíče (externí aplikace)',
+        'admin.regKeysHint': 'Externí aplikace registrují účty přes POST /api/register (hlavička x-reg-key). Účty dostanou přesně oprávnění klíče.',
+        'admin.regKeyLabel': 'Popisek (např. Discord bot)',
+        'admin.regKeyCreate': 'Vygenerovat klíč',
+        'admin.regKeyNone': 'Zatím žádné registrační klíče.',
+        'admin.regKeyCreated': '🔑 Klíč vytvořen',
+        'admin.regKeyDeleted': 'Klíč smazán',
+        'admin.regKeyDeleteConfirm': 'Smazat tento registrační klíč? Existující účty zůstanou.',
+        'admin.regKeyLabelMissing': 'Vyplň popisek',
         'admin.roleAdmin': '👑 Admin',
         'admin.roleUser': 'User',
         'admin.deactivate': 'Deaktivovat',
@@ -814,7 +853,7 @@ function applyLang() {
     // Re-render dynamic content if visible
     if (document.getElementById('app-section').style.display !== 'none') {
         if (typeof loadAnime === 'function') loadAnime();
-        if (typeof loadAccountsList === 'function' && document.getElementById('admin-panel').style.display !== 'none') loadAccountsList();
+        if (typeof loadAccountsList === 'function' && document.getElementById('admin-panel').style.display !== 'none') loadAccountsList(); loadRegKeysList();
         if (typeof checkRD === 'function') checkRD();
         if (typeof checkTB === 'function') checkTB();
         if (typeof checkP2P === 'function') checkP2P();
@@ -894,7 +933,7 @@ function toggleAdminPanel() {
     const panel=document.getElementById('admin-panel');
     if(panel.style.display==='none'){
         panel.style.display='block';
-        loadAccountsList();
+        loadAccountsList(); loadRegKeysList();
     } else {
         panel.style.display='none';
     }
@@ -918,7 +957,7 @@ async function loadAccountsList() {
                 return `<label class="acc-perm ${perms[p]?'on':''}" data-perm="${p}"><input type="checkbox" ${perms[p]?'checked':''} onchange="this.parentElement.classList.toggle('on',this.checked)">${p}</label>`;
             }).join('');
             return `<div class="acc-row ${isActive?'':'inactive'}" data-user="${safeUser}">
-                <div class="acc-name">${a.username}<small>${a.token}</small></div>
+                <div class="acc-name">${a.username}${a.registeredVia?` <span style="font-size:10px;color:var(--hint);background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:1px 7px;vertical-align:middle;">🔑 ${String(a.registeredVia).replace(/</g,'&lt;')}</span>`:''}<small>${a.token}</small></div>
                 <span class="acc-role ${a.role}">${a.role==='superadmin'?t('admin.roleAdmin'):t('admin.roleUser')}</span>
                 <div class="acc-perms">${permTags}</div>
                 <div class="acc-actions">
@@ -969,7 +1008,7 @@ async function createNewAccount() {
         toast(t('toast.accountCreated'));
         document.getElementById('new-acc-user').value='';
         document.getElementById('new-acc-pass').value='';
-        loadAccountsList();
+        loadAccountsList(); loadRegKeysList();
     } catch(e) { toast('❌ '+e.message); }
 }
 
@@ -979,7 +1018,7 @@ async function deleteAccount(username) {
         const r=await fetch('/api/admin/delete-account',{method:'POST',headers:{'Content-Type':'application/json','x-admin-token':TOKEN},body:JSON.stringify({username})});
         const d=await r.json();
         if(!r.ok){toast('❌ '+(d.error||t('toast.error')));return;}
-        toast(t('toast.accountDeleted')); loadAccountsList();
+        toast(t('toast.accountDeleted')); loadAccountsList(); loadRegKeysList();
     } catch(e) { toast('❌ '+e.message); }
 }
 
@@ -987,7 +1026,66 @@ async function toggleAccount(username, active) {
     try {
         const r=await fetch('/api/admin/toggle-account',{method:'POST',headers:{'Content-Type':'application/json','x-admin-token':TOKEN},body:JSON.stringify({username,active})});
         if(!r.ok){toast('❌ '+t('toast.error'));return;}
-        toast(active?t('toast.activated'):t('toast.deactivated')); loadAccountsList();
+        toast(active?t('toast.activated'):t('toast.deactivated')); loadAccountsList(); loadRegKeysList();
+    } catch(e) { toast('❌ '+e.message); }
+}
+
+// ===== Registration keys =====
+async function loadRegKeysList() {
+    try {
+        const r=await fetch('/api/admin/reg-keys',{headers:{'x-admin-token':TOKEN}});
+        const d=await r.json();
+        const list=document.getElementById('reg-keys-list');
+        if(!d.keys?.length){list.innerHTML=`<div style="color:var(--dim);font-size:12px;">${t('admin.regKeyNone')}</div>`;return;}
+        const PERM_KEYS=['torrents','nzb','nzbdav','altmount','subtitles','catalog','ondemand','animetoday'];
+        list.innerHTML=d.keys.map(k=>{
+            const perms=k.permissions||{};
+            const permTags=PERM_KEYS.map(p=>`<span class="acc-perm ${perms[p]?'on':''}">${p}</span>`).join('');
+            const safeKey=k.key.replace(/"/g,'&quot;');
+            return `<div class="acc-row ${k.active!==false?'':'inactive'}">
+                <div class="acc-name">${(k.label||'').replace(/</g,'&lt;')}<small style="cursor:pointer;" onclick="navigator.clipboard.writeText('${safeKey}').then(()=>toast(t('toast.copied')))" title="${t('addons.copy')}">${k.key} 📋</small></div>
+                <span class="acc-role user">${k.usedCount||0}×</span>
+                <div class="acc-perms">${permTags}</div>
+                <div class="acc-actions">
+                    <button class="btn btn-s btn-sm" onclick="toggleRegKey('${safeKey}',${k.active===false})">${k.active!==false?t('admin.deactivate'):t('admin.activate')}</button>
+                    <button class="btn btn-d btn-sm" onclick="deleteRegKey('${safeKey}')">${t('admin.delete')}</button>
+                </div>
+            </div>`;
+        }).join('');
+    } catch(e) { toast('❌ '+e.message); }
+}
+
+async function createRegKey() {
+    const label=document.getElementById('new-regkey-label').value.trim();
+    if(!label){toast(t('admin.regKeyLabelMissing'));return;}
+    const permissions={};
+    ['torrents','nzb','nzbdav','altmount','subtitles','catalog','ondemand','animetoday'].forEach(p=>{
+        permissions[p]=document.getElementById('regperm-'+p).checked;
+    });
+    try {
+        const r=await fetch('/api/admin/reg-keys/create',{method:'POST',headers:{'Content-Type':'application/json','x-admin-token':TOKEN},body:JSON.stringify({label,permissions})});
+        const d=await r.json();
+        if(!r.ok){toast('❌ '+(d.error||t('toast.error')));return;}
+        document.getElementById('new-regkey-label').value='';
+        toast(t('admin.regKeyCreated'));
+        loadRegKeysList();
+    } catch(e) { toast('❌ '+e.message); }
+}
+
+async function toggleRegKey(key, active) {
+    try {
+        const r=await fetch('/api/admin/reg-keys/toggle',{method:'POST',headers:{'Content-Type':'application/json','x-admin-token':TOKEN},body:JSON.stringify({key,active})});
+        if(!r.ok){toast('❌ '+t('toast.error'));return;}
+        toast(active?t('toast.activated'):t('toast.deactivated')); loadRegKeysList();
+    } catch(e) { toast('❌ '+e.message); }
+}
+
+async function deleteRegKey(key) {
+    if(!confirm(t('admin.regKeyDeleteConfirm')))return;
+    try {
+        const r=await fetch('/api/admin/reg-keys/delete',{method:'POST',headers:{'Content-Type':'application/json','x-admin-token':TOKEN},body:JSON.stringify({key})});
+        if(!r.ok){toast('❌ '+t('toast.error'));return;}
+        toast(t('admin.regKeyDeleted')); loadRegKeysList();
     } catch(e) { toast('❌ '+e.message); }
 }
 
