@@ -7,6 +7,20 @@ const axios = require('axios');
 const config = require('./lib/config');
 const { fetchAnimeSchedule, formatTimeCET: simklFormatTime, getDayLabel } = require('./lib/simkl');
 const { loadOfflineDB, loadAnimeLists, loadMappingCache, resolveToAniDB, resolveEpisode, resolveViaTVDB, parseEpisodeAndSeason, weeklyUpdate, offlineDB, getTVDBFromAniDB, getTVDBInfoFromAniDB } = require('./lib/idmap');
+
+// ===== Raw indexer id from Stremio stream id (2026-07-05) =====
+// The indexer /search resolves every id type itself (imdb|tvdb|tmdb|anidb|mal|kitsu|anilist),
+// so we send the id EXACTLY as Stremio sent it — no local conversion. Exactly ONE id:
+// the indexer misbehaves when given an id it doesn't know alongside valid ones
+// ("anilist-miss" zeroes tosho results).
+function rawIndexerId(fullId) {
+  const parts = fullId.split(':');
+  if (fullId.startsWith('tt')) return { key: 'imdb', value: parts[0] };
+  const prefixMap = { tvdb: 'tvdb', tmdb: 'tmdb', anidb: 'anidb', mal: 'mal', kitsu: 'kitsu', anilist: 'anilist', at: 'anilist' };
+  const key = prefixMap[parts[0]];
+  if (key && parts[1]) return { key, value: parts[1] };
+  return null;
+}
 const { detectQuality, sortByGroupPriority, canonicalResTier, DEFAULT_GROUPS, DEFAULT_RESOLUTIONS } = require('./lib/search');
 const { getRDStream, rdInProgress, getCacheKey, serveLoadingVideo, DOWNLOADING_VIDEO_URL, checkInstantAvailability } = require('./lib/realdebrid');
 const { generateAllPosters } = require('./lib/posters');
@@ -776,37 +790,11 @@ app.get('/:token/ondemand/:type/:id/video.mp4', async (req, res) => {
 
   // Parse IDs from fullId
   const params = {};
-  if (fullId.startsWith('tt')) params.imdb = fullId.split(':')[0];
 
-  // Try to resolve more IDs from offline-db
+  // RAW ID PASS-THROUGH (2026-07-05) — one raw id, indexer resolves siblings.
   const { season, episode } = parseEpisodeAndSeason(fullId);
-  if (fullId.startsWith('tt')) {
-    const imdbBase = fullId.split(':')[0];
-    for (const [, rec] of offlineDB.byAniList) {
-      if (rec.imdb === imdbBase) {
-        if (rec.anilist) params.anilist = rec.anilist;
-        if (rec.anidb) params.anidb = rec.anidb;
-        if (rec.tvdb) params.tvdb = rec.tvdb;
-        break;
-      }
-    }
-  } else if (fullId.startsWith('anilist:')) {
-    const alId = parseInt(fullId.split(':')[1]);
-    params.anilist = alId;
-    const rec = offlineDB.byAniList.get(alId);
-    if (rec) {
-      if (rec.anidb) params.anidb = rec.anidb;
-      if (rec.tvdb) params.tvdb = rec.tvdb;
-    }
-  } else if (fullId.startsWith('at:')) {
-    const alId = parseInt(fullId.split(':')[1]);
-    params.anilist = alId;
-    const rec = offlineDB.byAniList.get(alId);
-    if (rec) {
-      if (rec.anidb) params.anidb = rec.anidb;
-      if (rec.tvdb) params.tvdb = rec.tvdb;
-    }
-  }
+  const rawId = rawIndexerId(fullId);
+  if (rawId) params[rawId.key] = rawId.value;
 
   if (season != null && !isMovie) params.season = season;
   if (episode && !isMovie) params.episode = episode;
@@ -1844,37 +1832,14 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
     }] });
   }
 
-  // Build indexer query.
-  //
-  // We send ONLY ONE ID (in priority order: imdb > tvdb > anidb) instead of all
-  // known IDs. The indexer has its own offlineDB that resolves the other IDs
-  // internally — and crucially, when it receives an external ID it doesn't know
-  // (most often `anilist=...` for newer anime), its search returns
-  // `searchedBy: 'imdb (anilist-miss)'` and drops tosho results to 0, even when
-  // the other IDs would have worked alone. Sending only the most reliable ID
-  // (imdb is the strongest Stremio/Cinemeta key) avoids that "anilist-miss"
-  // cancellation and gives the indexer a clean signal to do its own mapping.
-  //
-  // Verified empirically against the live indexer (see SESSION_SUMMARY):
-  //   imdb=tt9054364                       -> 2 results + 49 tosho ✅
-  //   imdb + anilist=<unknown>             -> 2 + 0 ❌ (anilist-miss zeros tosho)
-  //   tvdb=352408                          -> 2 + 49 ✅
+  // RAW ID PASS-THROUGH (2026-07-05) — the indexer /search resolves every id
+  // type itself (imdb|tvdb|tmdb|anidb|mal|kitsu|anilist via its own Fribb chain),
+  // so we send the id EXACTLY as Stremio sent it, no local conversion. Exactly
+  // ONE id: an unknown id alongside valid ones triggers the "anilist-miss"
+  // failure mode (tosho results zeroed).
   const params = new URLSearchParams();
-  if (fullId.startsWith('tt')) {
-    params.set('imdb', fullId.split(':')[0]);
-  } else if (resolved.tvdbId) {
-    params.set('tvdb', resolved.tvdbId);
-  } else if (resolved.tmdbId) {
-    params.set('tmdb', resolved.tmdbId);
-  } else if (resolved.anidbId) {
-    params.set('anidb', resolved.anidbId);
-  } else if (resolved.malId) {
-    params.set('mal', resolved.malId);
-  } else if (resolved.kitsuId) {
-    params.set('kitsu', resolved.kitsuId);
-  } else if (resolved.anilistId) {
-    params.set('anilist', resolved.anilistId);
-  }
+  const rawId = rawIndexerId(fullId);
+  if (rawId) params.set(rawId.key, rawId.value);
   if (season != null && !isMovie) params.set('season', season);
   if (episode && !isMovie) params.set('episode', episode);
 
@@ -2721,22 +2686,12 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
   // there for why we send only one ID: the indexer's "anilist-miss" failure
   // mode zeros out tosho results when an unknown anilist is sent alongside
   // otherwise-valid IDs.
+  // RAW ID PASS-THROUGH (2026-07-05) — same as torrent search: one raw id,
+  // the indexer resolves siblings itself. The resolve block above stays only
+  // because imdbId feeds the /api/stream/imdb new endpoint below.
   const params = new URLSearchParams();
-  if (imdbId) {
-    params.set('imdb', imdbId);
-  } else if (tvdbId) {
-    params.set('tvdb', tvdbId);
-  } else if (tmdbId) {
-    params.set('tmdb', tmdbId);
-  } else if (anidbId) {
-    params.set('anidb', anidbId);
-  } else if (malId) {
-    params.set('mal', malId);
-  } else if (kitsuId) {
-    params.set('kitsu', kitsuId);
-  } else if (anilistId) {
-    params.set('anilist', anilistId);
-  }
+  const rawId = rawIndexerId(fullId);
+  if (rawId) params.set(rawId.key, rawId.value);
   if (season != null && !isMovie) params.set('season', season);
   if (episode && !isMovie) params.set('episode', episode);
 
