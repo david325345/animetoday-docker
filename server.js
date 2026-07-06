@@ -357,6 +357,97 @@ app.post('/api/admin/toggle-account', express.json(), (req, res) => {
   res.json({ success: true });
 });
 
+// ===== Registration keys (external app self-registration, 2026-07-05) =====
+app.get('/api/admin/reg-keys', (req, res) => {
+  const token = req.headers['x-admin-token'];
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+  const acc = config.getAccountByToken(token);
+  if (!acc || acc.role !== 'superadmin') return res.status(403).json({ error: 'Admin only' });
+  res.json({ keys: config.listRegKeys() });
+});
+
+app.post('/api/admin/reg-keys/create', express.json(), (req, res) => {
+  const token = req.headers['x-admin-token'];
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+  const acc = config.getAccountByToken(token);
+  if (!acc || acc.role !== 'superadmin') return res.status(403).json({ error: 'Admin only' });
+
+  const { label, permissions } = req.body;
+  const created = config.createRegKey(label, permissions || {});
+  res.json({ success: true, key: created.key });
+});
+
+app.post('/api/admin/reg-keys/toggle', express.json(), (req, res) => {
+  const token = req.headers['x-admin-token'];
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+  const acc = config.getAccountByToken(token);
+  if (!acc || acc.role !== 'superadmin') return res.status(403).json({ error: 'Admin only' });
+
+  const { key, active } = req.body;
+  if (!config.toggleRegKey(key, active)) return res.status(404).json({ error: 'Key not found' });
+  res.json({ success: true });
+});
+
+app.post('/api/admin/reg-keys/delete', express.json(), (req, res) => {
+  const token = req.headers['x-admin-token'];
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+  const acc = config.getAccountByToken(token);
+  if (!acc || acc.role !== 'superadmin') return res.status(403).json({ error: 'Admin only' });
+
+  const { key } = req.body;
+  if (!config.deleteRegKey(key)) return res.status(404).json({ error: 'Key not found' });
+  res.json({ success: true });
+});
+
+// Public registration for external apps. Auth: x-reg-key header (created in admin
+// panel). Permissions come EXCLUSIVELY from the key's preset — the caller cannot
+// pass them. Simple in-memory rate limit: 5 registrations / hour / IP.
+const regRateLimit = new Map(); // ip → [timestamps]
+app.post('/api/register', express.json(), (req, res) => {
+  const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress || 'unknown';
+  const now = Date.now();
+  const hits = (regRateLimit.get(ip) || []).filter(t => now - t < 3600_000);
+  if (hits.length >= 5) return res.status(429).json({ error: 'Rate limit exceeded, try later' });
+
+  const regKey = req.headers['x-reg-key'];
+  if (!regKey) return res.status(401).json({ error: 'Missing x-reg-key header' });
+  const keyRec = config.getRegKey(regKey);
+  if (!keyRec || keyRec.active === false) return res.status(401).json({ error: 'Invalid or disabled registration key' });
+
+  const { username, password } = req.body || {};
+  if (!username || !password) return res.status(400).json({ error: 'Missing username or password' });
+  if (String(username).length > 32 || String(password).length > 128) return res.status(400).json({ error: 'Username or password too long' });
+
+  const created = config.createAccount(String(username), String(password), keyRec.permissions, keyRec.label);
+  if (!created) return res.status(409).json({ error: 'Username already exists' });
+
+  hits.push(now);
+  regRateLimit.set(ip, hits);
+  config.incrementRegKeyUse(regKey);
+  console.log(`🔑 External registration: "${username}" via key "${keyRec.label}"`);
+
+  // Install URLs for the addons this account is actually permitted to use.
+  // stremioUrl opens the Stremio install dialog directly.
+  const p = keyRec.permissions || {};
+  const addonDefs = [
+    { perm: 'torrents',   id: 'torrents',   name: 'NimeToDex — torrenty',        path: 'nyaa' },
+    { perm: 'nzb',        id: 'nzb',        name: 'NimeToDex NZB — Usenet',      path: 'nzb' },
+    { perm: 'animetoday', id: 'animetoday', name: 'Anime Today — dnešní katalog', path: 'today' },
+    { perm: 'subtitles',  id: 'subtitles',  name: 'NimeToDex Subtitles — titulky', path: 'subs' }
+  ];
+  const addons = addonDefs.filter(a => p[a.perm]).map(a => {
+    const manifestUrl = `${BASE_URL}/${created.token}/${a.path}/manifest.json`;
+    return { id: a.id, name: a.name, manifestUrl, stremioUrl: 'stremio://' + manifestUrl.replace(/^https?:\/\//, '') };
+  });
+
+  res.json({
+    success: true,
+    token: created.token,
+    addons,
+    configureUrl: `${BASE_URL}/?token=${encodeURIComponent(created.token)}`
+  });
+});
+
 // ===== RD OAuth =====
 app.get('/api/rd/device-code', async (req, res) => {
   try {
@@ -3159,6 +3250,7 @@ app.listen(PORT, '0.0.0.0', async () => {
   config.loadServerConfig();
   await config.restoreFromR2();
   config.loadAccounts();
+  config.loadRegKeys();
 
   // Load ID mapping databases
   await loadOfflineDB();
