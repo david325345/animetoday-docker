@@ -1774,12 +1774,12 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
   // Detect if episode was explicitly provided in the ID
   const idParts = fullId.split(':');
   const hasExplicitEpisode = fullId.startsWith('at:') ? idParts.length >= 3 :
-    fullId.startsWith('kitsu:') ? idParts.length >= 4 :
+    fullId.startsWith('kitsu:') ? idParts.length >= 3 :
     fullId.startsWith('tt') ? idParts.length >= 3 :
-    fullId.startsWith('anilist:') ? idParts.length >= 4 :
-    fullId.startsWith('mal:') ? idParts.length >= 4 :
+    fullId.startsWith('anilist:') ? idParts.length >= 3 :
+    fullId.startsWith('mal:') ? idParts.length >= 3 :
+    fullId.startsWith('anidb:') ? idParts.length >= 3 :
     fullId.startsWith('tmdb:') ? idParts.length >= 4 :
-    fullId.startsWith('anidb:') ? idParts.length >= 4 :
     fullId.startsWith('tvdb:') ? idParts.length >= 4 : idParts.length >= 3;
 
   // If no explicit episode, check todayAnimeCache for correct episode
