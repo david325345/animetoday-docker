@@ -1604,8 +1604,9 @@ async function serveSubtitles(req, res, logTag) {
       const release = (s.release || '').replace(/[\[\]]/g, '').trim();
       if (release) parts.push(release);
       return {
-        id: `ntx-${s.sub_id}`,
-        lang: parts.join(' | '),
+        // id intentionally omitted — players key subtitles by url; with an id
+        // present the TV UI renders an ugly "(id)" suffix after the label.
+        lang: parts.join(' | ').toUpperCase(),
         url: `${BASE_URL}/${token}/subs/file/${Buffer.from(s.gz_url).toString('base64url')}.ass`
       };
     });
