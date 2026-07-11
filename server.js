@@ -3,6 +3,7 @@ const path = require('path');
 const cron = require('node-cron');
 const crypto = require('crypto');
 const axios = require('axios');
+const zlib = require('zlib');
 
 const config = require('./lib/config');
 const { fetchAnimeSchedule, formatTimeCET: simklFormatTime, getDayLabel } = require('./lib/simkl');
@@ -1547,33 +1548,76 @@ app.get('/:token/nyaa/catalog/:type/:id.json', async (req, res) => {
   }
 });
 
-// ===== NimeToDex: Subtitles proxy =====
-app.get('/:token/nyaa/subtitles/:type/:id.json', async (req, res) => {
+// ===== Subtitles: external subs service (replaces indexer subtitles, 2026-07-11) =====
+// Flow: Stremio (tt:S:E) → indexer /api/resolve-ids (imdb+S+E → per-entry AL/MAL
+// + episode with absolute-numbering conversion) → subs service /api/subs
+// (anilist/mal + entry-relative episode) → R2 .ass.gz → gunzip proxy below.
+const SUBS_API_URL = process.env.SUBS_API_URL || 'http://titulky:8080';
+const subsFileCache = new Map(); // gzUrl → { buf, ts }
+const SUBS_CACHE_TTL = 60 * 60 * 1000;
+const SUBS_CACHE_MAX = 100;
+
+const LANG_MAP = { CZ: 'cze', SK: 'slo', EN: 'eng', JP: 'jpn' };
+
+async function serveSubtitles(req, res, logTag) {
   const { token, type, id } = req.params;
   const user = config.getUser(token);
   if (!user?.subtitles_enabled) return res.json({ subtitles: [] });
 
   try {
-    const resp = await axios.get(`${INDEXER_URL}/subtitles/${type}/${id}.json`, { timeout: 8000 });
-    const subs = resp.data?.subtitles || [];
-    if (subs.length) console.log(`  💬 Subtitles: ${subs.length} for ${type}/${id}`);
-    res.json({ subtitles: subs });
+    // 1) Parse Stremio id — subs addon serves tt only (see manifest idPrefixes)
+    const parts = id.split(':');
+    const imdb = parts[0];
+    if (!imdb.startsWith('tt')) return res.json({ subtitles: [] });
+    const season = type === 'movie' ? null : (parseInt(parts[1]) || 1);
+    const episode = type === 'movie' ? null : (parseInt(parts[2]) || 1);
+
+    // 2) imdb+S+E → per-entry anilist/mal + entry-relative episode (indexer)
+    const rp = new URLSearchParams({ imdb });
+    if (season != null) rp.set('season', season);
+    if (episode != null) rp.set('episode', episode);
+    let ids;
+    try {
+      const r = await axios.get(`${INDEXER_URL}/api/resolve-ids?${rp.toString()}`, { timeout: 8000 });
+      ids = r.data;
+    } catch (e) {
+      if (e.response?.status !== 404) console.log(`  💬 ${logTag}: resolve-ids error ${e.message}`);
+      return res.json({ subtitles: [] });
+    }
+    if (!ids?.anilist_id && !ids?.mal_id) return res.json({ subtitles: [] });
+
+    // 3) Query subs service with resolved ids
+    const sp = new URLSearchParams();
+    if (ids.anilist_id) sp.set('anilist', ids.anilist_id);
+    if (ids.mal_id) sp.set('mal', ids.mal_id);
+    sp.set('episode', ids.episode != null ? ids.episode : (episode || 1));
+    const sr = await axios.get(`${SUBS_API_URL}/api/subs?${sp.toString()}`, { timeout: 8000 });
+    const items = sr.data?.subs || [];
+
+    // 4) Map to Stremio format — url points at our gunzip proxy below
+    const subtitles = items.filter(s => s.gz_url).map(s => ({
+      id: `ntx-${s.sub_id}`,
+      lang: LANG_MAP[(s.lang || '').toUpperCase()] || (s.lang || 'und').toLowerCase(),
+      url: `${BASE_URL}/${token}/subs/file/${Buffer.from(s.gz_url).toString('base64url')}.ass`
+    }));
+    if (subtitles.length) console.log(`  💬 ${logTag}: ${subtitles.length} subs for ${id} (AL${ids.anilist_id} ep${sp.get('episode')})`);
+    res.json({ subtitles });
   } catch (err) {
-    console.log(`  💬 Subtitles error: ${err.message}`);
+    console.log(`  💬 ${logTag} error: ${err.message}`);
     res.json({ subtitles: [] });
   }
-});
+}
+
+// Old route — users whose Stremio still has the pre-7.6.0 nyaa manifest cached
+app.get('/:token/nyaa/subtitles/:type/:id.json', (req, res) => serveSubtitles(req, res, 'Subtitles (nyaa)'));
 
 // ===== NimeToDex Subtitles: standalone addon (split from nyaa 2026-07-05) =====
-// Separate manifest so users install subtitles independently of the torrent addon.
-// The old /:token/nyaa/subtitles/... route above stays for users whose Stremio
-// still has the pre-7.6.0 nyaa manifest cached (subtitles resource included).
 app.get('/:token/subs/manifest.json', (req, res) => {
   res.json({
     id: 'cz.nimetodex.subtitles',
-    version: '1.0.0',
+    version: '1.1.0',
     name: 'NimeToDex Subtitles',
-    description: 'Anime titulky z NimeToDex indexeru.',
+    description: 'CZ/SK anime titulky.',
     logo: `${BASE_URL}/logo-nyaa.png`,
     resources: [{ name: 'subtitles', types: ['series', 'movie'], idPrefixes: ['tt'] }],
     types: ['series', 'movie'],
@@ -1583,19 +1627,38 @@ app.get('/:token/subs/manifest.json', (req, res) => {
   });
 });
 
-app.get('/:token/subs/subtitles/:type/:id.json', async (req, res) => {
-  const { token, type, id } = req.params;
+app.get('/:token/subs/subtitles/:type/:id.json', (req, res) => serveSubtitles(req, res, 'Subtitles'));
+
+// Gunzip proxy: R2 stores .ass.gz as RAW gzip bytes (content-type application/gzip,
+// no Content-Encoding), which Stremio players cannot read — so we decompress here
+// and serve the plain .ass. Small in-memory cache avoids re-fetching R2 on player
+// subtitle re-requests.
+app.get('/:token/subs/file/:b64.ass', async (req, res) => {
+  const { token, b64 } = req.params;
   const user = config.getUser(token);
-  if (!user?.subtitles_enabled) return res.json({ subtitles: [] });
+  if (!user?.subtitles_enabled) return res.status(403).send('Forbidden');
+
+  let gzUrl;
+  try { gzUrl = Buffer.from(b64, 'base64url').toString('utf8'); } catch { return res.status(400).send('Bad request'); }
+  if (!/^https:\/\//.test(gzUrl) || !gzUrl.endsWith('.gz')) return res.status(400).send('Bad request');
 
   try {
-    const resp = await axios.get(`${INDEXER_URL}/subtitles/${type}/${id}.json`, { timeout: 8000 });
-    const subs = resp.data?.subtitles || [];
-    if (subs.length) console.log(`  💬 Subtitles (subs addon): ${subs.length} for ${type}/${id}`);
-    res.json({ subtitles: subs });
+    const cached = subsFileCache.get(gzUrl);
+    let plain;
+    if (cached && Date.now() - cached.ts < SUBS_CACHE_TTL) {
+      plain = cached.buf;
+    } else {
+      const r = await axios.get(gzUrl, { responseType: 'arraybuffer', timeout: 15000 });
+      plain = zlib.gunzipSync(Buffer.from(r.data));
+      if (subsFileCache.size >= SUBS_CACHE_MAX) subsFileCache.delete(subsFileCache.keys().next().value);
+      subsFileCache.set(gzUrl, { buf: plain, ts: Date.now() });
+    }
+    res.set('Content-Type', 'text/plain; charset=utf-8');
+    res.set('Cache-Control', 'public, max-age=86400');
+    res.send(plain);
   } catch (err) {
-    console.log(`  💬 Subtitles error (subs addon): ${err.message}`);
-    res.json({ subtitles: [] });
+    console.log(`  💬 Subs file proxy error: ${err.message}`);
+    res.status(502).send('Upstream error');
   }
 });
 
