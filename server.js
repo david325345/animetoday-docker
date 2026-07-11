@@ -1610,6 +1610,7 @@ async function serveSubtitles(req, res, logTag) {
 
 // Old route — users whose Stremio still has the pre-7.6.0 nyaa manifest cached
 app.get('/:token/nyaa/subtitles/:type/:id.json', (req, res) => serveSubtitles(req, res, 'Subtitles (nyaa)'));
+app.get('/:token/nyaa/subtitles/:type/:id/:extra.json', (req, res) => serveSubtitles(req, res, 'Subtitles (nyaa)'));
 
 // ===== NimeToDex Subtitles: standalone addon (split from nyaa 2026-07-05) =====
 app.get('/:token/subs/manifest.json', (req, res) => {
@@ -1628,6 +1629,10 @@ app.get('/:token/subs/manifest.json', (req, res) => {
 });
 
 app.get('/:token/subs/subtitles/:type/:id.json', (req, res) => serveSubtitles(req, res, 'Subtitles'));
+// Desktop Stremio appends extra args (videoHash=...&videoSize=...) as an EXTRA
+// path segment on subtitles requests — without this route it was a 404 and the
+// player showed no subtitles even though the plain route worked.
+app.get('/:token/subs/subtitles/:type/:id/:extra.json', (req, res) => serveSubtitles(req, res, 'Subtitles'));
 
 // Gunzip proxy: R2 stores .ass.gz as RAW gzip bytes (content-type application/gzip,
 // no Content-Encoding), which Stremio players cannot read — so we decompress here
