@@ -1595,11 +1595,20 @@ async function serveSubtitles(req, res, logTag) {
     const items = sr.data?.subs || [];
 
     // 4) Map to Stremio format — url points at our gunzip proxy below
-    const subtitles = items.filter(s => s.gz_url).map(s => ({
-      id: `ntx-${s.sub_id}`,
-      lang: LANG_MAP[(s.lang || '').toUpperCase()] || (s.lang || 'und').toLowerCase(),
-      url: `${BASE_URL}/${token}/subs/file/${Buffer.from(s.gz_url).toString('base64url')}.ass`
-    }));
+    // Label shown in the player: "CZ | HannyaSubs | Subsplease/ASW".
+    // We put it in `lang` — non-ISO values are displayed verbatim. Release keeps
+    // its original form except stripped [] brackets ("[SubsPlease]" → "SubsPlease").
+    const subtitles = items.filter(s => s.gz_url).map(s => {
+      const parts = [(s.lang || '?').toUpperCase()];
+      if (s.group) parts.push(s.group);
+      const release = (s.release || '').replace(/[\[\]]/g, '').trim();
+      if (release) parts.push(release);
+      return {
+        id: `ntx-${s.sub_id}`,
+        lang: parts.join(' | '),
+        url: `${BASE_URL}/${token}/subs/file/${Buffer.from(s.gz_url).toString('base64url')}.ass`
+      };
+    });
     if (subtitles.length) console.log(`  💬 ${logTag}: ${subtitles.length} subs for ${id} (AL${ids.anilist_id} ep${sp.get('episode')})`);
     res.json({ subtitles });
   } catch (err) {
@@ -1635,9 +1644,9 @@ app.get('/:token/subs/subtitles/:type/:id.json', (req, res) => serveSubtitles(re
 app.get('/:token/subs/subtitles/:type/:id/:extra.json', (req, res) => serveSubtitles(req, res, 'Subtitles'));
 
 // Gunzip proxy: R2 stores .ass.gz as RAW gzip bytes (content-type application/gzip,
-// no Content-Encoding), which Stremio players cannot read — so we decompress here
-// and serve the plain .ass. Small in-memory cache avoids re-fetching R2 on player
-// subtitle re-requests.
+// no Content-Encoding) — we decompress here and serve the plain .ass (Fusion and
+// capable players render ASS incl. styles). Small in-memory cache avoids
+// re-fetching R2 on player subtitle re-requests.
 app.get('/:token/subs/file/:b64.ass', async (req, res) => {
   const { token, b64 } = req.params;
   const user = config.getUser(token);
