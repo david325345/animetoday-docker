@@ -26,6 +26,7 @@ const { detectQuality, sortByGroupPriority, canonicalResTier, DEFAULT_GROUPS, DE
 const { getRDStream, rdInProgress, getCacheKey, serveLoadingVideo, DOWNLOADING_VIDEO_URL, checkInstantAvailability } = require('./lib/realdebrid');
 const { generateAllPosters } = require('./lib/posters');
 const todayAdded = require('./lib/today-added');
+const subsAdded = require('./lib/subs-added');
 const { formatTimeCET } = require('./lib/simkl');
 const { startRssFetcher, clearRssIndex, searchRssIndex, getRssStats } = require('./lib/rss');
 const { getTBStatus, getTBStream, getTBNZBStream, checkTBCached, tbInProgress } = require('./lib/torbox');
@@ -99,6 +100,7 @@ cron.schedule('0 4 * * *', () => { clearRssIndex(); updateCache(); });
 // today-added: proactive hourly refresh so overlays stay warm without relying
 // on user traffic (matches the airing cache's background-only refresh model).
 cron.schedule('0 * * * *', () => { todayAdded.refreshTodayAdded(); });
+cron.schedule('5 * * * *', () => { subsAdded.refreshSubsAdded(); });
 
 // ===== Magnet store (for clean RD stream URLs) =====
 // Stores magnet URI + optional indexer hint (matchedFile name/size) under a hash
@@ -1246,20 +1248,34 @@ app.get('/:token/nzb-refresh/:imdb/:season/:episode/video.mp4', async (req, res)
 app.get('/:token/today/manifest.json', (req, res) => {
   res.json({
     id: 'cz.nyaa.anime.today.v9',
-    version: '9.1.0',
+    version: '9.2.0',
     name: 'Anime Today',
     description: 'Anime schedule from SIMKL — today + 2 days ahead with posters and ratings.',
     logo: `${BASE_URL}/logo.png`,
     resources: ['catalog'],
     types: ['series'],
-    catalogs: [{ type: 'series', id: 'anime-today', name: 'Anime Schedule', extra: [{ name: 'skip', isRequired: false }] }],
+    catalogs: [
+      { type: 'series', id: 'anime-today', name: 'Anime Schedule', extra: [{ name: 'skip', isRequired: false }] },
+      { type: 'series', id: 'subs-added', name: 'Nově otitulkované', extra: [{ name: 'skip', isRequired: false }] }
+    ],
     idPrefixes: ['tt'],
     behaviorHints: { configurable: true, configurationRequired: false }
   });
 });
 
-app.get('/:token/today/catalog/:type/:id.json', (req, res) => {
+app.get('/:token/today/catalog/:type/:id.json', async (req, res) => {
   console.log(`=== TODAY CATALOG === type=${req.params.type} id=${req.params.id}`);
+  if (req.params.id === 'subs-added') {
+    try {
+      const items = await subsAdded.getSubsAdded();
+      const metas = items.map(i => subsAdded.buildMeta(i, BASE_URL)).filter(Boolean);
+      console.log(`  📤 subs-added catalog: ${metas.length} metas`);
+      return res.json({ metas });
+    } catch (e) {
+      console.log(`  ❌ subs-added catalog: ${e.message}`);
+      return res.json({ metas: [] });
+    }
+  }
   if (req.params.id !== 'anime-today') return res.json({ metas: [] });
   const user = config.getUser(req.params.token);
   const hidden = user?.hidden_anime || [];
@@ -3441,6 +3457,7 @@ app.listen(PORT, '0.0.0.0', async () => {
   console.log(`  Users: ${users.length}`);
   updateCache().catch(err => console.error('❌ Initial cache:', err.message));
   todayAdded.refreshTodayAdded().catch(err => console.error('❌ today-added pre-warm:', err.message));
+  subsAdded.refreshSubsAdded().catch(err => console.error('❌ subs-added pre-warm:', err.message));
   // startRssFetcher(); // disabled — using indexer instead
 });
 
