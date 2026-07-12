@@ -1557,7 +1557,10 @@ app.get('/:token/nyaa/catalog/:type/:id.json', async (req, res) => {
       .filter(Boolean);
 
     console.log(`  📋 Today catalog (${type}): ${metas.length} items`);
-    res.json({ metas, cacheMaxAge: 3600 });
+    // Empty responses cache only briefly: during a deploy/cold-start window the
+    // client could cache an EMPTY catalog for a full hour and hide the board row
+    // until expiry (observed 2026-07-12).
+    res.json({ metas, cacheMaxAge: metas.length ? 3600 : 60 });
   } catch (err) {
     console.log(`  📋 Today catalog error: ${err.message}`);
     res.json({ metas: [] });
