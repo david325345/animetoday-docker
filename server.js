@@ -1604,9 +1604,12 @@ async function serveSubtitles(req, res, logTag) {
       const release = (s.release || '').replace(/[\[\]]/g, '').trim();
       if (release) parts.push(release);
       return {
-        // id intentionally omitted — players key subtitles by url; with an id
-        // present the TV UI renders an ugly "(id)" suffix after the label.
-        lang: parts.join(' | ').toUpperCase(),
+        // Spec-compliant shape (works in both Stremio and Fusion):
+        // - lang = ISO 639-2 code → Stremio groups/labels by language properly
+        // - id   = descriptive label + sub_id (uniqueness + support lookups);
+        //          Fusion's TV UI renders the id verbatim next to the language
+        id: `${parts.join(' | ').toUpperCase()} · ${s.sub_id}`,
+        lang: LANG_MAP[(s.lang || '').toUpperCase()] || (s.lang || 'und').toLowerCase(),
         url: `${BASE_URL}/${token}/subs/file/${Buffer.from(s.gz_url).toString('base64url')}.ass`
       };
     });
