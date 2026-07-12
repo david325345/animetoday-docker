@@ -1632,8 +1632,12 @@ async function serveSubtitles(req, res, logTag) {
 }
 
 // Old route — users whose Stremio still has the pre-7.6.0 nyaa manifest cached
-app.get('/:token/nyaa/subtitles/:type/:id.json', (req, res) => serveSubtitles(req, res, 'Subtitles (nyaa)'));
-app.get('/:token/nyaa/subtitles/:type/:id/:extra.json', (req, res) => serveSubtitles(req, res, 'Subtitles (nyaa)'));
+// Old nyaa subtitles routes (pre-7.6.0 manifests): return EMPTY on purpose —
+// serving them caused duplicate entries in Stremio (old nyaa + new subs addon).
+// 200 + [] keeps clients with a cached old manifest error-free; subtitles come
+// exclusively from the standalone subs addon now.
+app.get('/:token/nyaa/subtitles/:type/:id.json', (req, res) => res.json({ subtitles: [] }));
+app.get('/:token/nyaa/subtitles/:type/:id/:extra.json', (req, res) => res.json({ subtitles: [] }));
 
 // ===== NimeToDex Subtitles: standalone addon (split from nyaa 2026-07-05) =====
 app.get('/:token/subs/manifest.json', (req, res) => {
