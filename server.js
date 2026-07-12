@@ -1613,13 +1613,16 @@ async function serveSubtitles(req, res, logTag) {
       if (s.group) parts.push(s.group);
       const release = (s.release || '').replace(/[\[\]]/g, '').trim();
       if (release) parts.push(release);
+      const label = parts.join(' | ').toUpperCase();
       return {
-        // Spec-compliant shape (works in both Stremio and Fusion):
-        // - lang = ISO 639-2 code → Stremio groups/labels by language properly
-        // - id   = descriptive label + sub_id (uniqueness + support lookups);
-        //          Fusion's TV UI renders the id verbatim next to the language
-        id: `${parts.join(' | ').toUpperCase()} · ${s.sub_id}`,
-        lang: LANG_MAP[(s.lang || '').toUpperCase()] || (s.lang || 'und').toLowerCase(),
+        // id = label + sub_id (required, unique, support lookups); Fusion's TV UI
+        // renders it verbatim next to the language name.
+        // lang: Stremio clients (wantsVtt) get the FULL LABEL — per SDK docs a
+        // non-ISO lang value is displayed verbatim, which is the only way to show
+        // group/release in Stremio's subtitle menu (no name/title field exists).
+        // Other clients (Fusion/Nuvio) keep the ISO code for proper grouping.
+        id: `${label} · ${s.sub_id}`,
+        lang: wantsVtt ? label : (LANG_MAP[(s.lang || '').toUpperCase()] || (s.lang || 'und').toLowerCase()),
         url: `${BASE_URL}/${token}/subs/file/${Buffer.from(s.gz_url).toString('base64url')}.${ext}`
       };
     });
