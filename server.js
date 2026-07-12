@@ -1594,7 +1594,17 @@ async function serveSubtitles(req, res, logTag) {
     const sr = await axios.get(`${SUBS_API_URL}/api/subs?${sp.toString()}`, { timeout: 8000 });
     const items = sr.data?.subs || [];
 
-    // 4) Map to Stremio format — url points at our gunzip proxy below
+    // 4) Choose subtitle format per client:
+    //    Stremio players require VTT for external subtitles; Fusion/Nuvio render
+    //    .ass incl. styles. Detected via User-Agent / Origin ("stremio" substring).
+    //    UA is logged so the heuristic can be tuned against real clients.
+    const ua = req.headers['user-agent'] || '';
+    const origin = (req.headers['origin'] || '') + ' ' + (req.headers['referer'] || '');
+    const wantsVtt = /stremio/i.test(ua) || /stremio/i.test(origin);
+    const ext = wantsVtt ? 'vtt' : 'ass';
+    console.log(`  💬 ${logTag}: client UA="${ua.slice(0, 60)}" → ${ext}`);
+
+    // Map to Stremio format — url points at our gunzip proxy below
     // Label shown in the player: "CZ | HannyaSubs | Subsplease/ASW".
     // We put it in `lang` — non-ISO values are displayed verbatim. Release keeps
     // its original form except stripped [] brackets ("[SubsPlease]" → "SubsPlease").
@@ -1610,7 +1620,7 @@ async function serveSubtitles(req, res, logTag) {
         //          Fusion's TV UI renders the id verbatim next to the language
         id: `${parts.join(' | ').toUpperCase()} · ${s.sub_id}`,
         lang: LANG_MAP[(s.lang || '').toUpperCase()] || (s.lang || 'und').toLowerCase(),
-        url: `${BASE_URL}/${token}/subs/file/${Buffer.from(s.gz_url).toString('base64url')}.ass`
+        url: `${BASE_URL}/${token}/subs/file/${Buffer.from(s.gz_url).toString('base64url')}.${ext}`
       };
     });
     if (subtitles.length) console.log(`  💬 ${logTag}: ${subtitles.length} subs for ${id} (AL${ids.anilist_id} ep${sp.get('episode')})`);
@@ -1676,6 +1686,76 @@ app.get('/:token/subs/file/:b64.ass', async (req, res) => {
     res.send(plain);
   } catch (err) {
     console.log(`  💬 Subs file proxy error: ${err.message}`);
+    res.status(502).send('Upstream error');
+  }
+});
+
+// ===== ASS → WEBVTT conversion (Stremio external subtitles require VTT) =====
+function assTimeMs(t) {
+  const m = (t || '').trim().match(/^(\d+):(\d{2}):(\d{2})[.:](\d{2})$/);
+  if (!m) return null;
+  return ((+m[1]) * 3600 + (+m[2]) * 60 + (+m[3])) * 1000 + (+m[4]) * 10;
+}
+function vttTime(ms) {
+  const p = (n, l = 2) => String(n).padStart(l, '0');
+  return `${p(Math.floor(ms / 3600000))}:${p(Math.floor(ms % 3600000 / 60000))}:${p(Math.floor(ms % 60000 / 1000))}.${p(ms % 1000, 3)}`;
+}
+function assToVtt(assText) {
+  const lines = assText.split(/\r?\n/);
+  let inEvents = false, fmt = null;
+  const cues = [];
+  for (const raw of lines) {
+    const l = raw.trim();
+    if (/^\[Events\]/i.test(l)) { inEvents = true; fmt = null; continue; }
+    if (/^\[/.test(l)) { inEvents = false; continue; }
+    if (!inEvents) continue;
+    if (/^Format\s*:/i.test(l)) { fmt = l.slice(l.indexOf(':') + 1).split(',').map(s => s.trim().toLowerCase()); continue; }
+    const m = l.match(/^Dialogue\s*:\s*(.*)$/i);
+    if (!m || !fmt) continue;
+    const parts = m[1].split(',');
+    if (parts.length < fmt.length) continue;
+    const rec = {};
+    fmt.forEach((name, i) => { rec[name] = i === fmt.length - 1 ? parts.slice(fmt.length - 1).join(',') : parts[i]; });
+    let text = rec['text'] || '';
+    if (/\\p[1-9]/.test(text)) continue; // vector drawing lines (signs/logos)
+    text = text.replace(/\{[^}]*\}/g, '').replace(/\\N|\\n/g, '\n').replace(/\\h/g, ' ')
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').trim();
+    if (!text) continue;
+    const start = assTimeMs(rec['start']), end = assTimeMs(rec['end']);
+    if (start == null || end == null || end <= start) continue;
+    cues.push({ start, end, text });
+  }
+  cues.sort((a, b) => a.start - b.start);
+  return 'WEBVTT\n\n' + cues.map(c => `${vttTime(c.start)} --> ${vttTime(c.end)}\n${c.text}\n`).join('\n');
+}
+
+app.get('/:token/subs/file/:b64.vtt', async (req, res) => {
+  const { token, b64 } = req.params;
+  const user = config.getUser(token);
+  if (!user?.subtitles_enabled) return res.status(403).send('Forbidden');
+
+  let gzUrl;
+  try { gzUrl = Buffer.from(b64, 'base64url').toString('utf8'); } catch { return res.status(400).send('Bad request'); }
+  if (!/^https:\/\//.test(gzUrl) || !gzUrl.endsWith('.gz')) return res.status(400).send('Bad request');
+
+  const cacheKey = gzUrl + '#vtt';
+  try {
+    const cached = subsFileCache.get(cacheKey);
+    let out;
+    if (cached && Date.now() - cached.ts < SUBS_CACHE_TTL) {
+      out = cached.buf;
+    } else {
+      const r = await axios.get(gzUrl, { responseType: 'arraybuffer', timeout: 15000 });
+      const plain = zlib.gunzipSync(Buffer.from(r.data)).toString('utf8');
+      out = Buffer.from(/\[Events\]/i.test(plain) ? assToVtt(plain) : plain, 'utf8');
+      if (subsFileCache.size >= SUBS_CACHE_MAX) subsFileCache.delete(subsFileCache.keys().next().value);
+      subsFileCache.set(cacheKey, { buf: out, ts: Date.now() });
+    }
+    res.set('Content-Type', 'text/vtt; charset=utf-8');
+    res.set('Cache-Control', 'public, max-age=86400');
+    res.send(out);
+  } catch (err) {
+    console.log(`  💬 Subs file proxy error (vtt): ${err.message}`);
     res.status(502).send('Upstream error');
   }
 });
