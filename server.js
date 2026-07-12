@@ -1248,14 +1248,18 @@ app.get('/:token/nzb-refresh/:imdb/:season/:episode/video.mp4', async (req, res)
 app.get('/:token/today/manifest.json', (req, res) => {
   res.json({
     id: 'cz.nyaa.anime.today.v9',
-    version: '9.2.0',
+    version: '9.3.0',
     name: 'Anime Today',
     description: 'Anime schedule from SIMKL — today + 2 days ahead with posters and ratings.',
     logo: `${BASE_URL}/logo.png`,
     resources: ['catalog'],
-    types: ['series'],
+    types: ['series', 'movie'],
     catalogs: [
       { type: 'series', id: 'anime-today', name: 'Anime Schedule', extra: [{ name: 'skip', isRequired: false }] },
+      // Torrents catalog moved here from the nyaa addon (9.3.0, 2026-07-12) so all
+      // three catalog rows live under Anime Today; nyaa keeps streams/meta only.
+      { type: 'series', id: 'nimetodex-today', name: 'NimeToDex — Added today', extra: [{ name: 'skip', isRequired: false }] },
+      { type: 'movie', id: 'nimetodex-today', name: 'NimeToDex — Added today', extra: [{ name: 'skip', isRequired: false }] },
       { type: 'series', id: 'subs-added', name: 'Nově otitulkované', extra: [{ name: 'skip', isRequired: false }] }
     ],
     idPrefixes: ['tt'],
@@ -1265,6 +1269,23 @@ app.get('/:token/today/manifest.json', (req, res) => {
 
 app.get('/:token/today/catalog/:type/:id.json', async (req, res) => {
   console.log(`=== TODAY CATALOG === type=${req.params.type} id=${req.params.id}`);
+  if (req.params.id === 'nimetodex-today') {
+    const user = config.getUser(req.params.token);
+    if (!user?.indexer_catalog) return res.json({ metas: [] });
+    try {
+      const items = await todayAdded.getTodayAdded();
+      const typeMap = { TV: 'series', OVA: 'series', SPECIAL: 'series', ONA: 'series', MUSIC: 'series', MOVIE: 'movie' };
+      const metas = items
+        .filter(item => (typeMap[item.type] || 'series') === req.params.type && item.imdb_id)
+        .map(item => todayAdded.buildMeta(item, BASE_URL))
+        .filter(Boolean);
+      console.log(`  📋 Today catalog via today addon (${req.params.type}): ${metas.length} items`);
+      return res.json({ metas, cacheMaxAge: metas.length ? 3600 : 60 });
+    } catch (e) {
+      console.log(`  ❌ nimetodex-today catalog: ${e.message}`);
+      return res.json({ metas: [] });
+    }
+  }
   if (req.params.id === 'subs-added') {
     try {
       const items = await subsAdded.getSubsAdded();
@@ -1521,16 +1542,16 @@ app.get('/:token/nyaa/manifest.json', (req, res) => {
   // version bumped so Stremio refreshes the cached manifest without the resource.
   res.json({
     id: 'cz.nyaa.search.v7',
-    version: '7.6.0',
+    version: '7.7.0',
     name: 'NimeToDex',
     description: 'Anime torrent indexer + RealDebrid/TorBox. Funguje s Cinemeta/Kitsu/Anime Today.',
     logo: `${BASE_URL}/logo-nyaa.png`,
     resources: ['stream', 'meta'],
     types: ['series', 'movie'],
-    catalogs: [
-      { type: 'series', id: 'nimetodex-today', name: 'NimeToDex — Added today', extra: [{ name: 'skip' }] },
-      { type: 'movie', id: 'nimetodex-today', name: 'NimeToDex — Added today', extra: [{ name: 'skip' }] }
-    ],
+    // Catalogs moved to the Anime Today addon (7.7.0, 2026-07-12) — nyaa is
+    // streams/meta only now. The /nyaa/catalog handler below stays alive for
+    // clients with a cached pre-7.7.0 manifest.
+    catalogs: [],
     idPrefixes: ['at:', 'kitsu:', 'tt', 'tvdb:', 'anilist:', 'mal:'],
     behaviorHints: { configurable: true, configurationRequired: false }
   });
