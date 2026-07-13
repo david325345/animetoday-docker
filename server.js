@@ -1280,7 +1280,13 @@ app.get('/:token/today/catalog/:type/:id.json', async (req, res) => {
         .map(item => todayAdded.buildMeta(item, BASE_URL))
         .filter(Boolean);
       console.log(`  📋 Today catalog via today addon (${req.params.type}): ${metas.length} items`);
-      return res.json({ metas, cacheMaxAge: metas.length ? 3600 : 60 });
+      if (!metas.length) {
+        const ph = req.params.type === 'movie'
+          ? { id: 'ntx-ph-movie', type: 'movie', name: 'No movie yet today', poster: `${BASE_URL}/posters/ph_movie.png`, description: 'New movies will show up here as they are added today.' }
+          : { id: 'ntx-ph-series', type: 'series', name: 'Nothing added yet today', poster: `${BASE_URL}/posters/ph_series.png`, description: 'New torrents will show up here as they are added today.' };
+        return res.json({ metas: [ph], cacheMaxAge: 300 });
+      }
+      return res.json({ metas, cacheMaxAge: 3600 });
     } catch (e) {
       console.log(`  ❌ nimetodex-today catalog: ${e.message}`);
       return res.json({ metas: [] });
@@ -1291,7 +1297,8 @@ app.get('/:token/today/catalog/:type/:id.json', async (req, res) => {
       const items = await subsAdded.getSubsAdded();
       const metas = items.map(i => subsAdded.buildMeta(i, BASE_URL)).filter(Boolean);
       console.log(`  📤 subs-added catalog: ${metas.length} metas`);
-      return res.json({ metas });
+      if (!metas.length) return res.json({ metas: [subsAdded.buildPlaceholderMeta(BASE_URL)], cacheMaxAge: 300 });
+      return res.json({ metas, cacheMaxAge: 3600 });
     } catch (e) {
       console.log(`  ❌ subs-added catalog: ${e.message}`);
       return res.json({ metas: [] });
@@ -3482,6 +3489,13 @@ app.listen(PORT, '0.0.0.0', async () => {
   updateCache().catch(err => console.error('❌ Initial cache:', err.message));
   todayAdded.refreshTodayAdded().catch(err => console.error('❌ today-added pre-warm:', err.message));
   subsAdded.refreshSubsAdded().catch(err => console.error('❌ subs-added pre-warm:', err.message));
+  (async () => {
+    const posters = require('./lib/posters');
+    await posters.generateEmptyCard('subs', 'Today', ['Nothing subbed', 'yet']);
+    await posters.generateEmptyCard('movie', 'Today', ['No movie', 'yet']);
+    await posters.generateEmptyCard('series', 'Today', ['Nothing added', 'yet']);
+    console.log('🖼️ Empty-state cards ready');
+  })().catch(err => console.error('❌ empty cards:', err.message));
   // startRssFetcher(); // disabled — using indexer instead
 });
 
