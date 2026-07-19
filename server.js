@@ -1648,8 +1648,7 @@ async function serveSubtitles(req, res, logTag) {
     const ua = req.headers['user-agent'] || '';
     const origin = (req.headers['origin'] || '') + ' ' + (req.headers['referer'] || '');
     const wantsVtt = /stremio/i.test(ua) || /stremio/i.test(origin);
-    const ext = wantsVtt ? 'vtt' : 'ass';
-    console.log(`  💬 ${logTag}: client UA="${ua.slice(0, 60)}" → ${ext}`);
+    console.log(`  💬 ${logTag}: client UA="${ua.slice(0, 60)}" → ${wantsVtt ? 'vtt' : 'ass'} (for ass sources)`);
 
     // Map to Stremio format — url points at our gunzip proxy below
     // Label shown in the player: "CZ | HannyaSubs | Subsplease/ASW".
@@ -1661,6 +1660,11 @@ async function serveSubtitles(req, res, logTag) {
       const release = (s.release || '').replace(/[\[\]]/g, '').trim();
       if (release) parts.push(release);
       const label = parts.join(' | ').toUpperCase();
+      // URL extension follows the SOURCE file format: srt/vtt sources are served
+      // BYTE-EXACT (never converted, never relabeled); only ASS/SSA gets the
+      // per-client split (Fusion .ass with styles, Stremio .vtt via conversion).
+      const srcExt = ((s.gz_url.match(/\.(srt|vtt|ass|ssa)\.gz$/i) || [])[1] || 'ass').toLowerCase();
+      const fileExt = (srcExt === 'srt' || srcExt === 'vtt') ? srcExt : (wantsVtt ? 'vtt' : 'ass');
       return {
         // id = label + sub_id (required, unique, support lookups); Fusion's TV UI
         // renders it verbatim next to the language name.
@@ -1670,7 +1674,7 @@ async function serveSubtitles(req, res, logTag) {
         // Other clients (Fusion/Nuvio) keep the ISO code for proper grouping.
         id: `${label} · ${s.sub_id}`,
         lang: wantsVtt ? label : (LANG_MAP[(s.lang || '').toUpperCase()] || (s.lang || 'und').toLowerCase()),
-        url: `${BASE_URL}/${token}/subs/file/${Buffer.from(s.gz_url).toString('base64url')}.${ext}`
+        url: `${BASE_URL}/${token}/subs/file/${Buffer.from(s.gz_url).toString('base64url')}.${fileExt}`
       };
     });
     if (subtitles.length) console.log(`  💬 ${logTag}: ${subtitles.length} subs for ${id} (AL${ids.anilist_id} ep${sp.get('episode')})`);
@@ -1744,6 +1748,37 @@ app.get('/:token/subs/file/:b64.ass', async (req, res) => {
   }
 });
 
+
+// SRT pass-through: gunzip only, content served byte-exact (source .srt.gz files
+// are NEVER converted or modified — same for .vtt sources via the .vtt route).
+app.get('/:token/subs/file/:b64.srt', async (req, res) => {
+  const { token, b64 } = req.params;
+  const user = config.getUser(token);
+  if (!user?.subtitles_enabled) return res.status(403).send('Forbidden');
+
+  let gzUrl;
+  try { gzUrl = Buffer.from(b64, 'base64url').toString('utf8'); } catch { return res.status(400).send('Bad request'); }
+  if (!/^https:\/\//.test(gzUrl) || !gzUrl.endsWith('.gz')) return res.status(400).send('Bad request');
+
+  try {
+    const cached = subsFileCache.get(gzUrl);
+    let plain;
+    if (cached && Date.now() - cached.ts < SUBS_CACHE_TTL) {
+      plain = cached.buf;
+    } else {
+      const r = await axios.get(gzUrl, { responseType: 'arraybuffer', timeout: 15000 });
+      plain = zlib.gunzipSync(Buffer.from(r.data));
+      if (subsFileCache.size >= SUBS_CACHE_MAX) subsFileCache.delete(subsFileCache.keys().next().value);
+      subsFileCache.set(gzUrl, { buf: plain, ts: Date.now() });
+    }
+    res.set('Content-Type', 'text/plain; charset=utf-8');
+    res.set('Cache-Control', 'public, max-age=86400');
+    res.send(plain);
+  } catch (err) {
+    console.log(`  💬 Subs file proxy error (srt): ${err.message}`);
+    res.status(502).send('Upstream error');
+  }
+});
 // ===== ASS → WEBVTT conversion (Stremio external subtitles require VTT) =====
 function assTimeMs(t) {
   const m = (t || '').trim().match(/^(\d+):(\d{2}):(\d{2})[.:](\d{2})$/);
@@ -1801,7 +1836,10 @@ app.get('/:token/subs/file/:b64.vtt', async (req, res) => {
     } else {
       const r = await axios.get(gzUrl, { responseType: 'arraybuffer', timeout: 15000 });
       const plain = zlib.gunzipSync(Buffer.from(r.data)).toString('utf8');
-      out = Buffer.from(/\[Events\]/i.test(plain) ? assToVtt(plain) : plain, 'utf8');
+      // Convert ONLY when the source is ASS/SSA; native .vtt (or anything else)
+      // passes through byte-exact — srt/vtt sources must never be modified.
+      const isAssSource = /\.(ass|ssa)\.gz$/i.test(gzUrl);
+      out = Buffer.from(isAssSource ? assToVtt(plain) : plain, 'utf8');
       if (subsFileCache.size >= SUBS_CACHE_MAX) subsFileCache.delete(subsFileCache.keys().next().value);
       subsFileCache.set(cacheKey, { buf: out, ts: Date.now() });
     }
