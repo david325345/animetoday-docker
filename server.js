@@ -1659,6 +1659,10 @@ async function serveSubtitles(req, res, logTag) {
       if (s.group) parts.push(s.group);
       const release = (s.release || '').replace(/[\[\]]/g, '').trim();
       if (release) parts.push(release);
+      // Akihabara archive source marker (variant A) — appended as the last
+      // segment. Note: hiyori subs may carry source=<extern_domain> (hns.sk,
+      // hannya-…); only the akihabara archive gets the marker.
+      if ((s.source || '').toLowerCase() === 'akihabara') parts.push('AKIHABARA');
       const label = parts.join(' | ').toUpperCase();
       // URL extension follows the SOURCE file format: srt/vtt sources are served
       // BYTE-EXACT (never converted, never relabeled); only ASS/SSA gets the
@@ -1715,6 +1719,14 @@ app.get('/:token/subs/subtitles/:type/:id.json', (req, res) => serveSubtitles(re
 // player showed no subtitles even though the plain route worked.
 app.get('/:token/subs/subtitles/:type/:id/:extra.json', (req, res) => serveSubtitles(req, res, 'Subtitles'));
 
+// Tolerant gunzip: R2 objects are normally raw gzip, but if a file arrives
+// uncompressed (observed with some akihabara archive objects — "incorrect
+// header check"), serve it as-is instead of erroring.
+function gunzipSmart(buf) {
+  if (buf.length >= 2 && buf[0] === 0x1f && buf[1] === 0x8b) return zlib.gunzipSync(buf);
+  return buf;
+}
+
 // Gunzip proxy: R2 stores .ass.gz as RAW gzip bytes (content-type application/gzip,
 // no Content-Encoding) — we decompress here and serve the plain .ass (Fusion and
 // capable players render ASS incl. styles). Small in-memory cache avoids
@@ -1735,7 +1747,7 @@ app.get('/:token/subs/file/:b64.ass', async (req, res) => {
       plain = cached.buf;
     } else {
       const r = await axios.get(gzUrl, { responseType: 'arraybuffer', timeout: 15000 });
-      plain = zlib.gunzipSync(Buffer.from(r.data));
+      plain = gunzipSmart(Buffer.from(r.data));
       if (subsFileCache.size >= SUBS_CACHE_MAX) subsFileCache.delete(subsFileCache.keys().next().value);
       subsFileCache.set(gzUrl, { buf: plain, ts: Date.now() });
     }
@@ -1743,7 +1755,7 @@ app.get('/:token/subs/file/:b64.ass', async (req, res) => {
     res.set('Cache-Control', 'public, max-age=86400');
     res.send(plain);
   } catch (err) {
-    console.log(`  💬 Subs file proxy error: ${err.message}`);
+    console.log(`  💬 Subs file proxy error: ${err.message} [${gzUrl.slice(0, 100)}]`);
     res.status(502).send('Upstream error');
   }
 });
@@ -1767,7 +1779,7 @@ app.get('/:token/subs/file/:b64.srt', async (req, res) => {
       plain = cached.buf;
     } else {
       const r = await axios.get(gzUrl, { responseType: 'arraybuffer', timeout: 15000 });
-      plain = zlib.gunzipSync(Buffer.from(r.data));
+      plain = gunzipSmart(Buffer.from(r.data));
       if (subsFileCache.size >= SUBS_CACHE_MAX) subsFileCache.delete(subsFileCache.keys().next().value);
       subsFileCache.set(gzUrl, { buf: plain, ts: Date.now() });
     }
@@ -1775,7 +1787,7 @@ app.get('/:token/subs/file/:b64.srt', async (req, res) => {
     res.set('Cache-Control', 'public, max-age=86400');
     res.send(plain);
   } catch (err) {
-    console.log(`  💬 Subs file proxy error (srt): ${err.message}`);
+    console.log(`  💬 Subs file proxy error (srt): ${err.message} [${gzUrl.slice(0, 100)}]`);
     res.status(502).send('Upstream error');
   }
 });
@@ -1835,7 +1847,7 @@ app.get('/:token/subs/file/:b64.vtt', async (req, res) => {
       out = cached.buf;
     } else {
       const r = await axios.get(gzUrl, { responseType: 'arraybuffer', timeout: 15000 });
-      const plain = zlib.gunzipSync(Buffer.from(r.data)).toString('utf8');
+      const plain = gunzipSmart(Buffer.from(r.data)).toString('utf8');
       // Convert ONLY when the source is ASS/SSA; native .vtt (or anything else)
       // passes through byte-exact — srt/vtt sources must never be modified.
       const isAssSource = /\.(ass|ssa)\.gz$/i.test(gzUrl);
@@ -1847,7 +1859,7 @@ app.get('/:token/subs/file/:b64.vtt', async (req, res) => {
     res.set('Cache-Control', 'public, max-age=86400');
     res.send(out);
   } catch (err) {
-    console.log(`  💬 Subs file proxy error (vtt): ${err.message}`);
+    console.log(`  💬 Subs file proxy error (vtt): ${err.message} [${gzUrl.slice(0, 100)}]`);
     res.status(502).send('Upstream error');
   }
 });
