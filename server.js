@@ -879,13 +879,15 @@ app.get('/api/indexer/status/:token', (req, res) => {
 });
 
 app.post('/api/indexer/toggle', express.json(), (req, res) => {
-  const { token, enabled, indexer_only, indexer_catalog, subtitles_enabled } = req.body;
+  const { token, enabled, indexer_only, indexer_catalog, subtitles_enabled, ondemand_enabled, subs_info_enabled } = req.body;
   const user = config.getUser(token);
   if (!user) return res.status(404).json({ error: 'User not found' });
   if (enabled !== undefined) user.indexer_enabled = !!enabled;
   if (indexer_only !== undefined) user.indexer_only = !!indexer_only;
   if (indexer_catalog !== undefined) user.indexer_catalog = !!indexer_catalog;
   if (subtitles_enabled !== undefined) user.subtitles_enabled = !!subtitles_enabled;
+  if (ondemand_enabled !== undefined) user.ondemand_enabled = !!ondemand_enabled;
+  if (subs_info_enabled !== undefined) user.subs_info_enabled = !!subs_info_enabled;
   config.saveUser(token, user);
   res.json({ success: true });
 });
@@ -1600,6 +1602,65 @@ app.get('/:token/nyaa/catalog/:type/:id.json', async (req, res) => {
 // + episode with absolute-numbering conversion) → subs service /api/subs
 // (anilist/mal + entry-relative episode) → R2 .ass.gz → gunzip proxy below.
 const SUBS_API_URL = process.env.SUBS_API_URL || 'http://titulky:8080';
+
+// ===== Subtitle-info dummy stream item (opt-in, per user) =====
+// When CZ/SK subs exist for this episode, we prepend one informational stream:
+// name "📝 CZ/SK titulky", description one line per language ("CZ · release1,
+// release2"), url = the same GitHub placeholder video as ondemand. It does NOT
+// deliver subtitles (the subs addon does that) — it is a visible "this episode
+// has CZ/SK subs" signal that plays the placeholder clip on click.
+async function buildSubsInfoStream(fullId, type, token) {
+  try {
+    const parts = fullId.split(':');
+    const imdb = parts[0];
+    if (!imdb.startsWith('tt')) return null;
+    const season = type === 'movie' ? null : (parseInt(parts[1]) || 1);
+    const episode = type === 'movie' ? null : (parseInt(parts[2]) || 1);
+
+    // imdb+S+E → anilist/mal + entry-relative episode
+    const rp = new URLSearchParams({ imdb });
+    if (season != null) rp.set('season', season);
+    if (episode != null) rp.set('episode', episode);
+    let ids;
+    try {
+      ids = (await axios.get(`${INDEXER_URL}/api/resolve-ids?${rp.toString()}`, { timeout: 6000 })).data;
+    } catch { return null; } // 404 / error → no subs info
+    if (!ids?.anilist_id && !ids?.mal_id) return null;
+
+    // availability with per-episode variant breakdown
+    const sp = new URLSearchParams();
+    if (ids.anilist_id) sp.set('anilist', ids.anilist_id);
+    if (ids.mal_id) sp.set('mal', ids.mal_id);
+    const ep = ids.episode != null ? ids.episode : (episode || 1);
+    sp.set('episode', ep);
+    const av = (await axios.get(`${SUBS_API_URL}/api/subs?${sp.toString()}`, { timeout: 6000 })).data;
+    const subs = av?.subs || [];
+    if (!subs.length) return null;
+
+    // group by language → unique releases (fallback to group when release empty)
+    const byLang = new Map();
+    for (const s of subs) {
+      const lang = (s.lang || '?').toUpperCase();
+      const rel = (s.release || '').replace(/[\[\]]/g, '').trim() || (s.group || '').trim();
+      if (!byLang.has(lang)) byLang.set(lang, new Set());
+      if (rel) byLang.get(lang).add(rel);
+    }
+    const order = { CZ: 0, SK: 1 };
+    const langLines = [...byLang.entries()]
+      .sort((a, b) => (order[a[0]] ?? 9) - (order[b[0]] ?? 9))
+      .map(([lang, rels]) => rels.size ? `${lang} · ${[...rels].join(', ')}` : lang);
+
+    return {
+      name: '📝 CZ/SK titulky',
+      description: langLines.join('\n'),
+      url: ONDEMAND_VIDEO_URL,
+      behaviorHints: { notWebReady: true }
+    };
+  } catch (e) {
+    console.log(`  📝 subs-info error: ${e.message}`);
+    return null;
+  }
+}
 const subsFileCache = new Map(); // gzUrl → { buf, ts }
 const SUBS_CACHE_TTL = 60 * 60 * 1000;
 const SUBS_CACHE_MAX = 100;
@@ -2693,14 +2754,20 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
     }
   }
 
-  // Add "Search on demand" as last stream (only if permitted)
-  if (hasIndexer && userPerms.ondemand !== false) {
+  // Add "Search on demand" as last stream (permission AND user web toggle)
+  if (hasIndexer && userPerms.ondemand !== false && user?.ondemand_enabled !== false) {
     streams.push({
       name: '🔍 Search',
       title: 'Search on demand\nSearches Nyaa + trackers for new results.\nClose video and reopen episode after ~30s.',
       url: `${BASE_URL}/${token}/ondemand/${type}/${fullId}/video.mp4`,
       behaviorHints: { bingeGroup: 'ondemand', notWebReady: true }
     });
+  }
+
+  // Subtitle-info dummy item — FIRST in the list, opt-in per user
+  if (user?.subs_info_enabled) {
+    const subsItem = await buildSubsInfoStream(fullId, type, token);
+    if (subsItem) { streams.unshift(subsItem); console.log(`  📝 subs-info: prepended (${subsItem.description.replace(/\n/g, ' | ')})`); }
   }
 
   console.log(`  📤 Streams: ${streams.length} (Indexer)`);
