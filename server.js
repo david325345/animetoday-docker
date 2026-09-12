@@ -1614,8 +1614,13 @@ async function buildSubsInfoStream(fullId, type, token) {
     const parts = fullId.split(':');
     const imdb = parts[0];
     if (!imdb.startsWith('tt')) return null;
-    const season = type === 'movie' ? null : (parseInt(parts[1]) || 1);
-    const episode = type === 'movie' ? null : (parseInt(parts[2]) || 1);
+    // POZOR: parseInt("0") === 0 je falsy — "|| 1" by ze sezóny 0 (speciály)
+    // udělalo sezónu 1, takže Stremio dostalo u S00 titulky k S01 (Kokoro
+    // Connect). Nulu je nutné odlišit od chybějící hodnoty přes Number.isFinite.
+    const sNum = parseInt(parts[1]);
+    const eNum = parseInt(parts[2]);
+    const season = type === 'movie' ? null : (Number.isFinite(sNum) ? sNum : 1);
+    const episode = type === 'movie' ? null : (Number.isFinite(eNum) ? eNum : 1);
 
     // imdb+S+E → anilist/mal + entry-relative episode
     const rp = new URLSearchParams({ imdb });
@@ -1677,8 +1682,13 @@ async function serveSubtitles(req, res, logTag) {
     const parts = id.split(':');
     const imdb = parts[0];
     if (!imdb.startsWith('tt')) return res.json({ subtitles: [] });
-    const season = type === 'movie' ? null : (parseInt(parts[1]) || 1);
-    const episode = type === 'movie' ? null : (parseInt(parts[2]) || 1);
+    // POZOR: parseInt("0") === 0 je falsy — "|| 1" by ze sezóny 0 (speciály)
+    // udělalo sezónu 1, takže Stremio dostalo u S00 titulky k S01 (Kokoro
+    // Connect). Nulu je nutné odlišit od chybějící hodnoty přes Number.isFinite.
+    const sNum = parseInt(parts[1]);
+    const eNum = parseInt(parts[2]);
+    const season = type === 'movie' ? null : (Number.isFinite(sNum) ? sNum : 1);
+    const episode = type === 'movie' ? null : (Number.isFinite(eNum) ? eNum : 1);
 
     // 2) imdb+S+E → per-entry anilist/mal + entry-relative episode (indexer)
     const rp = new URLSearchParams({ imdb });
