@@ -391,6 +391,43 @@
             </div>
         </div>
 
+        <!-- Vlastní usenet (NNTP) — nativní streamování ve Stremiu -->
+        <div class="section" id="section-nntp">
+            <div class="section-title"><span data-i18n="nntp.title">📡 Vlastní usenet (NNTP)</span></div>
+            <div class="row">
+                <div class="row-label">
+                    <span data-i18n="nntp.source">Zdroj NZB streamů</span>
+                    <small data-i18n="nntp.sourceHint">AltMount = přes náš server. Vlastní usenet = přímo z tvého providera (jen Stremio desktop).</small>
+                </div>
+                <select id="nzb-source-select" onchange="setNzbSource(this.value)" style="background:var(--card);color:var(--fg);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:13px;">
+                    <option value="altmount" data-i18n="nntp.srcAltmount">AltMount (proxy)</option>
+                    <option value="nntp" data-i18n="nntp.srcNntp">Vlastní usenet</option>
+                </select>
+            </div>
+            <div id="nntp-form" style="padding:8px 0 0 0;">
+                <div style="display:grid;grid-template-columns:1fr 90px;gap:8px;margin-bottom:8px;">
+                    <input class="input" id="nntp-host" placeholder="news.newshosting.com" autocomplete="off">
+                    <input class="input" id="nntp-port" placeholder="563" inputmode="numeric" autocomplete="off">
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
+                    <input class="input" id="nntp-user" placeholder="uživatel" autocomplete="off">
+                    <input class="input" id="nntp-pass" type="password" placeholder="heslo" autocomplete="new-password">
+                </div>
+                <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
+                    <label style="font-size:12px;color:var(--dim);display:flex;align-items:center;gap:6px;">
+                        <input type="checkbox" id="nntp-ssl" checked> <span data-i18n="nntp.ssl">SSL</span>
+                    </label>
+                    <label style="font-size:12px;color:var(--dim);display:flex;align-items:center;gap:6px;">
+                        <span data-i18n="nntp.conn">Spojení</span>
+                        <input class="input" id="nntp-conn" value="5" style="width:60px;padding:4px 8px;" inputmode="numeric">
+                    </label>
+                    <button class="btn" onclick="saveNntp()" data-i18n="nntp.save">Uložit</button>
+                    <button class="btn" onclick="deleteNntp()" data-i18n="nntp.delete">Smazat</button>
+                    <span id="nntp-status" style="font-size:12px;color:var(--dim);"></span>
+                </div>
+            </div>
+        </div>
+
         <!-- Řazení -->
         <div class="section">
             <div class="section-title" data-i18n="sort.title">⚙️ Řazení výsledků</div>
@@ -581,6 +618,15 @@ const I18N = {
         // P2P section
         'p2p.title': '📺 Direct P2P playback',
         'p2p.row': 'Play torrents directly in Stremio',
+        'nntp.title': '📡 Own usenet (NNTP)',
+        'nntp.source': 'NZB stream source',
+        'nntp.sourceHint': 'AltMount = via our server. Own usenet = straight from your provider (Stremio desktop only).',
+        'nntp.srcAltmount': 'AltMount (proxy)',
+        'nntp.srcNntp': 'Own usenet',
+        'nntp.ssl': 'SSL',
+        'nntp.conn': 'Connections',
+        'nntp.save': 'Save',
+        'nntp.delete': 'Delete',
         'ondemand.row': 'On-demand search',
         'ondemand.rowHint': '"🔍 Search" item at the end of the list',
         'subsinfo.row': 'Subtitle info in streams',
@@ -745,6 +791,15 @@ const I18N = {
         'nimetodex.subsHint': 'Vyžaduje reinstalaci addonu',
         'p2p.title': '📺 Přímé přehrávání P2P',
         'p2p.row': 'Přehrávat torrenty přímo ve Stremio',
+        'nntp.title': '📡 Vlastní usenet (NNTP)',
+        'nntp.source': 'Zdroj NZB streamů',
+        'nntp.sourceHint': 'AltMount = přes náš server. Vlastní usenet = přímo z tvého providera (jen Stremio desktop).',
+        'nntp.srcAltmount': 'AltMount (proxy)',
+        'nntp.srcNntp': 'Vlastní usenet',
+        'nntp.ssl': 'SSL',
+        'nntp.conn': 'Spojení',
+        'nntp.save': 'Uložit',
+        'nntp.delete': 'Smazat',
         'ondemand.row': 'On-demand vyhledávání',
         'ondemand.rowHint': 'Položka „🔍 Search" na konci seznamu',
         'subsinfo.row': 'Info o titulcích ve streamech',
@@ -1265,6 +1320,7 @@ async function checkIndexer() {
         document.getElementById('indexer-subs-toggle').className = d.subtitles_enabled ? 'toggle on' : 'toggle off';
         document.getElementById('ondemand-toggle').className = d.ondemand_enabled === false ? 'toggle off' : 'toggle on';
         document.getElementById('subsinfo-toggle').className = d.subs_info_enabled ? 'toggle on' : 'toggle off';
+        loadNntp();
     } catch {}
 }
 
@@ -1280,6 +1336,60 @@ async function toggleSubtitles() {
     const newVal = el.className.includes('off');
     el.className = newVal ? 'toggle on' : 'toggle off';
     await fetch('/api/indexer/toggle', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({token:TOKEN, subtitles_enabled:newVal}) });
+}
+
+async function loadNntp() {
+    try {
+        const r = await fetch('/api/nntp/status/' + TOKEN);
+        const d = await r.json();
+        document.getElementById('nzb-source-select').value = d.source || 'altmount';
+        const st = document.getElementById('nntp-status');
+        if (d.configured) {
+            document.getElementById('nntp-host').value = d.host || '';
+            document.getElementById('nntp-port').value = d.port || 563;
+            document.getElementById('nntp-user').value = d.username || '';
+            document.getElementById('nntp-ssl').checked = d.ssl !== false;
+            document.getElementById('nntp-conn').value = d.connections || 5;
+            document.getElementById('nntp-pass').placeholder = '•••••••• (uloženo)';
+            st.textContent = '✅ ' + d.host;
+        } else {
+            st.textContent = '';
+        }
+    } catch {}
+}
+
+async function saveNntp() {
+    const body = {
+        token: TOKEN,
+        host: document.getElementById('nntp-host').value.trim(),
+        port: document.getElementById('nntp-port').value.trim() || 563,
+        username: document.getElementById('nntp-user').value.trim(),
+        password: document.getElementById('nntp-pass').value,
+        ssl: document.getElementById('nntp-ssl').checked,
+        connections: document.getElementById('nntp-conn').value.trim() || 5,
+    };
+    const st = document.getElementById('nntp-status');
+    st.textContent = '…';
+    const r = await fetch('/api/nntp/save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const d = await r.json();
+    if (d.success) {
+        document.getElementById('nntp-pass').value = '';
+        st.textContent = '✅ uloženo';
+        loadNntp();
+    } else {
+        st.textContent = '❌ ' + (d.error || 'chyba');
+    }
+}
+
+async function deleteNntp() {
+    await fetch('/api/nntp/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: TOKEN }) });
+    for (const id of ['nntp-host', 'nntp-port', 'nntp-user', 'nntp-pass']) document.getElementById(id).value = '';
+    document.getElementById('nntp-status').textContent = '';
+    document.getElementById('nzb-source-select').value = 'altmount';
+}
+
+async function setNzbSource(source) {
+    await fetch('/api/nntp/source', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: TOKEN, source }) });
 }
 
 async function toggleStreamSetting(key, elId) {
