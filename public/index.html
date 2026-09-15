@@ -426,6 +426,34 @@
                     <span id="nntp-status" style="font-size:12px;color:var(--dim);"></span>
                 </div>
             </div>
+
+            <!-- Newznab API pro externí aplikace (AIOStreams) -->
+            <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border);">
+                <div class="row">
+                    <div class="row-label">
+                        <span data-i18n="nzbapi.row">Newznab API</span>
+                        <small data-i18n="nzbapi.rowHint">Zpřístupní naše NZB externím aplikacím (AIOStreams) jako usenet indexer.</small>
+                    </div>
+                    <button class="toggle off" id="nzbapi-toggle" onclick="toggleNewznab()"></button>
+                </div>
+                <div id="nzbapi-detail" style="display:none;padding-top:8px;">
+                    <div style="margin-bottom:8px;">
+                        <div style="font-size:11px;color:var(--dim);margin-bottom:4px;" data-i18n="nzbapi.url">API URL</div>
+                        <div style="display:flex;gap:8px;">
+                            <input class="input" id="nzbapi-url" readonly style="flex:1;font-size:12px;">
+                            <button class="btn" onclick="copyField('nzbapi-url')" data-i18n="nzbapi.copy">Kopírovat</button>
+                        </div>
+                    </div>
+                    <div>
+                        <div style="font-size:11px;color:var(--dim);margin-bottom:4px;" data-i18n="nzbapi.key">API klíč</div>
+                        <div style="display:flex;gap:8px;">
+                            <input class="input" id="nzbapi-key" readonly style="flex:1;font-size:12px;font-family:monospace;">
+                            <button class="btn" onclick="copyField('nzbapi-key')" data-i18n="nzbapi.copy">Kopírovat</button>
+                            <button class="btn" onclick="regenNewznab()" data-i18n="nzbapi.regen">Nový klíč</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
 
         <!-- Řazení -->
@@ -627,6 +655,12 @@ const I18N = {
         'nntp.conn': 'Connections',
         'nntp.save': 'Save',
         'nntp.delete': 'Delete',
+        'nzbapi.row': 'Newznab API',
+        'nzbapi.rowHint': 'Exposes our NZBs to external apps (AIOStreams) as a usenet indexer.',
+        'nzbapi.url': 'API URL',
+        'nzbapi.key': 'API key',
+        'nzbapi.copy': 'Copy',
+        'nzbapi.regen': 'New key',
         'ondemand.row': 'On-demand search',
         'ondemand.rowHint': '"🔍 Search" item at the end of the list',
         'subsinfo.row': 'Subtitle info in streams',
@@ -800,6 +834,12 @@ const I18N = {
         'nntp.conn': 'Spojení',
         'nntp.save': 'Uložit',
         'nntp.delete': 'Smazat',
+        'nzbapi.row': 'Newznab API',
+        'nzbapi.rowHint': 'Zpřístupní naše NZB externím aplikacím (AIOStreams) jako usenet indexer.',
+        'nzbapi.url': 'API URL',
+        'nzbapi.key': 'API klíč',
+        'nzbapi.copy': 'Kopírovat',
+        'nzbapi.regen': 'Nový klíč',
         'ondemand.row': 'On-demand vyhledávání',
         'ondemand.rowHint': 'Položka „🔍 Search" na konci seznamu',
         'subsinfo.row': 'Info o titulcích ve streamech',
@@ -1321,6 +1361,7 @@ async function checkIndexer() {
         document.getElementById('ondemand-toggle').className = d.ondemand_enabled === false ? 'toggle off' : 'toggle on';
         document.getElementById('subsinfo-toggle').className = d.subs_info_enabled ? 'toggle on' : 'toggle off';
         loadNntp();
+        loadNewznab();
     } catch {}
 }
 
@@ -1336,6 +1377,41 @@ async function toggleSubtitles() {
     const newVal = el.className.includes('off');
     el.className = newVal ? 'toggle on' : 'toggle off';
     await fetch('/api/indexer/toggle', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({token:TOKEN, subtitles_enabled:newVal}) });
+}
+
+function copyField(id) {
+    const el = document.getElementById(id);
+    el.select();
+    navigator.clipboard?.writeText(el.value);
+}
+
+async function loadNewznab() {
+    try {
+        const r = await fetch('/api/newznab/status/' + TOKEN);
+        const d = await r.json();
+        document.getElementById('nzbapi-toggle').className = d.enabled ? 'toggle on' : 'toggle off';
+        document.getElementById('nzbapi-detail').style.display = d.enabled ? 'block' : 'none';
+        document.getElementById('nzbapi-url').value = d.url || '';
+        document.getElementById('nzbapi-key').value = d.key || '';
+    } catch {}
+}
+
+async function toggleNewznab() {
+    const el = document.getElementById('nzbapi-toggle');
+    const enabled = !el.className.includes('on');
+    el.className = enabled ? 'toggle on' : 'toggle off';
+    const r = await fetch('/api/newznab/toggle', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: TOKEN, enabled }) });
+    const d = await r.json();
+    document.getElementById('nzbapi-detail').style.display = d.enabled ? 'block' : 'none';
+    if (d.key) document.getElementById('nzbapi-key').value = d.key;
+    loadNewznab();
+}
+
+async function regenNewznab() {
+    if (!confirm('Vygenerovat nový klíč? Starý přestane platit a musíš ho přepsat v AIOStreams.')) return;
+    const r = await fetch('/api/newznab/regenerate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: TOKEN }) });
+    const d = await r.json();
+    if (d.key) document.getElementById('nzbapi-key').value = d.key;
 }
 
 async function loadNntp() {
