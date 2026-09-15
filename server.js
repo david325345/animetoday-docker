@@ -919,6 +919,227 @@ app.post('/api/nntp/delete', express.json(), (req, res) => {
   res.json({ success: true });
 });
 
+// ===== Newznab feed (/api) — read-only NZB indexer for AIOStreams =====
+// Deliberately NOT wired into the Stremio stream pipeline: this queries the
+// indexer directly and emits RSS, so a change here can never break playback.
+// ID-only search (t=tvsearch / t=movie). Fulltext is advertised as unavailable
+// in t=caps because our fuzzy title match is unreliable ("Another" → Mushoku).
+const NZBAPI_LIMIT_HOUR = parseInt(process.env.NEWZNAB_LIMIT_HOUR) || 200;
+const NZBAPI_LIMIT_DAY = parseInt(process.env.NEWZNAB_LIMIT_DAY) || 2000;
+const nzbApiHits = new Map(); // key -> { hour: [ts], day: [ts] }
+
+function nzbApiRateOk(key) {
+  const now = Date.now();
+  const rec = nzbApiHits.get(key) || { hits: [] };
+  rec.hits = rec.hits.filter(t => now - t < 86400000);
+  const lastHour = rec.hits.filter(t => now - t < 3600000).length;
+  if (lastHour >= NZBAPI_LIMIT_HOUR || rec.hits.length >= NZBAPI_LIMIT_DAY) {
+    nzbApiHits.set(key, rec);
+    return false;
+  }
+  rec.hits.push(now);
+  nzbApiHits.set(key, rec);
+  return true;
+}
+
+function xmlEsc(v) {
+  return String(v == null ? '' : v)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+}
+
+function nzbApiError(res, code, description) {
+  res.set('Content-Type', 'application/xml; charset=utf-8');
+  // Newznab reports errors in the BODY with HTTP 200 — clients parse the XML,
+  // an HTTP error code would just look like the indexer being down.
+  res.send(`<?xml version="1.0" encoding="UTF-8"?>\n<error code="${code}" description="${xmlEsc(description)}"/>`);
+}
+
+// key → user lookup. listUsers() only returns tokens, so resolving a key means
+// reading every user file; cached for 60s because AIOStreams hits this per
+// episode open. Cache is invalidated implicitly by the TTL, which is short
+// enough that toggling the API off takes effect almost immediately.
+let nzbApiKeyCache = { at: 0, map: new Map() };
+function nzbApiUserByKey(key) {
+  if (!key) return null;
+  if (Date.now() - nzbApiKeyCache.at > 60000) {
+    const map = new Map();
+    for (const token of config.listUsers()) {
+      const user = config.getUser(token);
+      if (user?.newznab_key && user.newznab_enabled) map.set(user.newznab_key, { token, user });
+    }
+    nzbApiKeyCache = { at: Date.now(), map };
+  }
+  return nzbApiKeyCache.map.get(key) || null;
+}
+
+app.get('/api', async (req, res) => {
+  const t = String(req.query.t || '').toLowerCase();
+
+  // caps is the handshake — answer it without a key so the user can verify the
+  // URL before pasting credentials.
+  if (t === 'caps') {
+    res.set('Content-Type', 'application/xml; charset=utf-8');
+    return res.send(`<?xml version="1.0" encoding="UTF-8"?>
+<caps>
+  <server version="1.0" title="NimeToDex" strapline="Anime NZB indexer"/>
+  <limits max="100" default="50"/>
+  <registration available="no" open="no"/>
+  <searching>
+    <search available="no" supportedParams="q"/>
+    <tv-search available="yes" supportedParams="tvdbid,imdbid,season,ep"/>
+    <movie-search available="yes" supportedParams="imdbid"/>
+    <audio-search available="no"/>
+    <book-search available="no"/>
+  </searching>
+  <categories>
+    <category id="5000" name="TV">
+      <subcat id="5070" name="Anime"/>
+    </category>
+    <category id="2000" name="Movies">
+      <subcat id="2020" name="Movies/Anime"/>
+    </category>
+  </categories>
+</caps>`);
+  }
+
+  const apikey = req.query.apikey || req.query.apiKey;
+  if (!apikey) return nzbApiError(res, 101, 'Missing API key');
+  const auth = nzbApiUserByKey(String(apikey));
+  if (!auth) return nzbApiError(res, 100, 'Incorrect user credentials');
+  if (!nzbApiRateOk(String(apikey))) return nzbApiError(res, 500, 'Request limit reached');
+
+  if (t !== 'tvsearch' && t !== 'movie' && t !== 'search') {
+    return nzbApiError(res, 202, 'No such function');
+  }
+  if (t === 'search') return nzbApiError(res, 201, 'Incorrect parameter: text search is not supported, use tvsearch/movie with IDs');
+
+  // --- build indexer query from newznab params ---
+  const params = new URLSearchParams();
+  const tvdbid = req.query.tvdbid;
+  let imdbid = req.query.imdbid;
+  if (imdbid && !String(imdbid).startsWith('tt')) imdbid = 'tt' + imdbid; // newznab sends it bare
+  if (imdbid) params.set('imdb', imdbid);
+  else if (tvdbid) params.set('tvdb', tvdbid);
+  else return nzbApiError(res, 200, 'Missing parameter: imdbid or tvdbid required');
+
+  const season = req.query.season;
+  const ep = req.query.ep || req.query.episode;
+  if (t === 'tvsearch') {
+    if (season != null && season !== '') params.set('season', season);
+    if (ep != null && ep !== '') params.set('episode', ep);
+  }
+
+  const limit = Math.min(parseInt(req.query.limit) || 50, 100);
+  const offset = parseInt(req.query.offset) || 0;
+
+  try {
+    const resp = await axios.get(`${INDEXER_URL}/search?${params.toString()}`, { timeout: 8000 });
+    // Everything with an NZB on R2 — both the nzb_results rows and tosho dump
+    // entries that carry an r2_key.
+    const rows = [
+      ...(resp.data?.nzb_results || []).map(n => ({
+        title: n.name || n.title || 'Unknown',
+        size: parseInt(n.size || n.filesize) || 0,
+        url: n.r2_url || (n.r2_key ? `${R2_NZB_BASE}/${n.r2_key}` : null),
+        id: n.id || n.guid || null,
+        pubDate: n.pubDate || n.date_posted || null,
+      })),
+      ...(resp.data?.tosho_results || []).filter(x => x.r2_key).map(x => ({
+        title: x.name || 'Unknown',
+        size: parseInt(x.filesize) || 0,
+        url: x.r2_url || `${R2_NZB_BASE}/${x.r2_key}`,
+        id: x.id != null ? 'tosho-' + x.id : null,
+        pubDate: x.date_posted || null,
+      })),
+    ].filter(r => r.url);
+
+    // Stable de-dup by NZB url (the same release can arrive from both lists)
+    const seen = new Set();
+    const uniq = rows.filter(r => (seen.has(r.url) ? false : (seen.add(r.url), true)));
+    const page = uniq.slice(offset, offset + limit);
+
+    const cat = t === 'movie' ? '2020' : '5070';
+    const items = page.map((r, i) => {
+      const guid = r.id ? `ntx-${r.id}` : `ntx-${Buffer.from(r.url).toString('base64url').slice(-24)}`;
+      const pub = r.pubDate ? new Date(r.pubDate) : new Date();
+      const attrs = [
+        `<newznab:attr name="category" value="${cat}"/>`,
+        `<newznab:attr name="size" value="${r.size}"/>`,
+      ];
+      if (tvdbid) attrs.push(`<newznab:attr name="tvdbid" value="${xmlEsc(tvdbid)}"/>`);
+      if (imdbid) attrs.push(`<newznab:attr name="imdbid" value="${xmlEsc(String(imdbid).replace(/^tt/, ''))}"/>`);
+      if (t === 'tvsearch' && season) attrs.push(`<newznab:attr name="season" value="${xmlEsc(season)}"/>`);
+      if (t === 'tvsearch' && ep) attrs.push(`<newznab:attr name="episode" value="${xmlEsc(ep)}"/>`);
+      return `    <item>
+      <title>${xmlEsc(r.title)}</title>
+      <guid isPermaLink="false">${xmlEsc(guid)}</guid>
+      <link>${xmlEsc(r.url)}</link>
+      <pubDate>${pub.toUTCString()}</pubDate>
+      <category>${cat}</category>
+      <enclosure url="${xmlEsc(r.url)}" length="${r.size}" type="application/x-nzb"/>
+${attrs.map(a => '      ' + a).join('\n')}
+    </item>`;
+    }).join('\n');
+
+    console.log(`  📡 Newznab: ${params.toString()} → ${page.length}/${uniq.length} items (${auth.token.slice(0, 6)}…)`);
+    res.set('Content-Type', 'application/rss+xml; charset=utf-8');
+    res.send(`<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:newznab="http://www.newznab.com/DTD/2010/feeds/attributes/">
+  <channel>
+    <title>NimeToDex</title>
+    <description>Anime NZB indexer</description>
+    <newznab:response offset="${offset}" total="${uniq.length}"/>
+${items}
+  </channel>
+</rss>`);
+  } catch (err) {
+    console.log(`  📡 Newznab error: ${err.message}`);
+    return nzbApiError(res, 900, 'Indexer unavailable');
+  }
+});
+
+// ===== Newznab API (pro AIOStreams) =====
+// Separate key on purpose — NOT the addon token: the user pastes this into a
+// third-party app (AIOStreams), and a leak must not expose their addon account.
+// Regenerating invalidates the old key immediately.
+function newznabKeyFor(user) {
+  return user?.newznab_key || null;
+}
+
+app.get('/api/newznab/status/:token', (req, res) => {
+  const user = config.getUser(req.params.token);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  res.json({
+    enabled: !!user.newznab_enabled,
+    key: newznabKeyFor(user),
+    url: `${BASE_URL}/api`,
+  });
+});
+
+app.post('/api/newznab/toggle', express.json(), (req, res) => {
+  const { token, enabled } = req.body;
+  const user = config.getUser(token);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  user.newznab_enabled = !!enabled;
+  // First activation mints a key so the user has something to paste right away.
+  if (user.newznab_enabled && !user.newznab_key) {
+    user.newznab_key = require('crypto').randomBytes(16).toString('hex');
+  }
+  config.saveUser(token, user);
+  console.log(`${user.newznab_enabled ? '✅' : '⛔'} Newznab API ${user.newznab_enabled ? 'enabled' : 'disabled'} for ${token}`);
+  res.json({ success: true, enabled: user.newznab_enabled, key: user.newznab_key || null });
+});
+
+app.post('/api/newznab/regenerate', express.json(), (req, res) => {
+  const { token } = req.body;
+  const user = config.getUser(token);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  user.newznab_key = require('crypto').randomBytes(16).toString('hex');
+  config.saveUser(token, user);
+  res.json({ success: true, key: user.newznab_key });
+});
+
 // ===== SeaDex API =====
 app.get('/api/seadex/status/:token', (req, res) => {
   const user = config.getUser(req.params.token);
