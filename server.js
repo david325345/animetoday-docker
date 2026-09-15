@@ -1037,6 +1037,10 @@ app.get('/api', async (req, res) => {
     const resp = await axios.get(`${INDEXER_URL}/search?${params.toString()}`, { timeout: 8000 });
     // Everything with an NZB on R2 — both the nzb_results rows and tosho dump
     // entries that carry an r2_key.
+    // season/episode are taken PER ROW, not from the request: a season-wide or
+    // id-only query returns many episodes, and without per-item numbers the
+    // client cannot tell E01 from E13. Request values are only a fallback.
+    const num = v => (v == null || v === '' ? null : (Number.isFinite(parseInt(v)) ? parseInt(v) : null));
     const rows = [
       ...(resp.data?.nzb_results || []).map(n => ({
         title: n.name || n.title || 'Unknown',
@@ -1044,6 +1048,9 @@ app.get('/api', async (req, res) => {
         url: n.r2_url || (n.r2_key ? `${R2_NZB_BASE}/${n.r2_key}` : null),
         id: n.id || n.guid || null,
         pubDate: n.pubDate || n.date_posted || null,
+        season: num(n.season),
+        episode: num(n.episode),
+        batch: !!n.batch,
       })),
       ...(resp.data?.tosho_results || []).filter(x => x.r2_key).map(x => ({
         title: x.name || 'Unknown',
@@ -1051,6 +1058,9 @@ app.get('/api', async (req, res) => {
         url: x.r2_url || `${R2_NZB_BASE}/${x.r2_key}`,
         id: x.id != null ? 'tosho-' + x.id : null,
         pubDate: x.date_posted || null,
+        season: num(x.season),
+        episode: num(x.episode),
+        batch: !!x.batch,
       })),
     ].filter(r => r.url);
 
@@ -1069,8 +1079,13 @@ app.get('/api', async (req, res) => {
       ];
       if (tvdbid) attrs.push(`<newznab:attr name="tvdbid" value="${xmlEsc(tvdbid)}"/>`);
       if (imdbid) attrs.push(`<newznab:attr name="imdbid" value="${xmlEsc(String(imdbid).replace(/^tt/, ''))}"/>`);
-      if (t === 'tvsearch' && season) attrs.push(`<newznab:attr name="season" value="${xmlEsc(season)}"/>`);
-      if (t === 'tvsearch' && ep) attrs.push(`<newznab:attr name="episode" value="${xmlEsc(ep)}"/>`);
+      if (t === 'tvsearch') {
+        // Row value first, requested value as fallback (batches carry no episode).
+        const sVal = r.season != null ? r.season : (season || null);
+        const eVal = r.episode != null ? r.episode : (r.batch ? null : (ep || null));
+        if (sVal != null) attrs.push(`<newznab:attr name="season" value="${xmlEsc(sVal)}"/>`);
+        if (eVal != null) attrs.push(`<newznab:attr name="episode" value="${xmlEsc(eVal)}"/>`);
+      }
       return `    <item>
       <title>${xmlEsc(r.title)}</title>
       <guid isPermaLink="false">${xmlEsc(guid)}</guid>
