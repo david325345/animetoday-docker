@@ -855,6 +855,19 @@ app.post('/api/nzbgeek/toggle', express.json(), (req, res) => {
   res.json({ success: true });
 });
 
+// Both the NNTP profile and the Newznab key belong to the NZB addon, so they
+// follow its permission. UI hiding alone is not enough — these endpoints are
+// reachable directly with a token, so gate them server-side too.
+function hasNzbPermission(token) {
+  // Mirrors the UI check exactly: (isAdmin || perms.nzb), where admin means
+  // role === superadmin (see /api/user). No account = no permissions = denied,
+  // same as nzbDavAllowedForToken.
+  const account = config.getAccountByToken(token);
+  if (!account) return false;
+  if (account.role === 'superadmin') return true;
+  return !!account.permissions?.nzb;
+}
+
 // ===== Usenet NNTP (native Stremio streaming) =====
 // Per-user NNTP credentials. When enabled, NZB streams are handed to the client
 // as nzbUrl + servers (Stremio v5 desktop streams them straight from the user's
@@ -865,6 +878,7 @@ app.post('/api/nntp/save', express.json(), (req, res) => {
   const { token, host, port, username, password, ssl, connections } = req.body;
   const user = config.getUser(token);
   if (!user) return res.status(404).json({ error: 'User not found' });
+  if (!hasNzbPermission(token)) return res.status(403).json({ error: 'No NZB permission' });
   if (!host || !username || !password) return res.json({ success: false, error: 'Vyplň host, uživatele a heslo' });
 
   const portNum = parseInt(port);
@@ -884,6 +898,7 @@ app.post('/api/nntp/save', express.json(), (req, res) => {
 });
 
 app.get('/api/nntp/status/:token', (req, res) => {
+  if (!hasNzbPermission(req.params.token)) return res.status(403).json({ error: 'No NZB permission' });
   const user = config.getUser(req.params.token);
   const n = user?.nntp;
   if (!n?.host) return res.json({ configured: false, source: user?.nzb_source || 'altmount' });
@@ -903,6 +918,7 @@ app.post('/api/nntp/source', express.json(), (req, res) => {
   const { token, source } = req.body;
   const user = config.getUser(token);
   if (!user) return res.status(404).json({ error: 'User not found' });
+  if (!hasNzbPermission(token)) return res.status(403).json({ error: 'No NZB permission' });
   user.nzb_source = source === 'nntp' ? 'nntp' : 'altmount';
   config.saveUser(token, user);
   res.json({ success: true, source: user.nzb_source });
@@ -966,7 +982,8 @@ function nzbApiUserByKey(key) {
     const map = new Map();
     for (const token of config.listUsers()) {
       const user = config.getUser(token);
-      if (user?.newznab_key && user.newznab_enabled) map.set(user.newznab_key, { token, user });
+      // A key of a user who lost the NZB permission stops working immediately.
+      if (user?.newznab_key && user.newznab_enabled && hasNzbPermission(token)) map.set(user.newznab_key, { token, user });
     }
     nzbApiKeyCache = { at: Date.now(), map };
   }
@@ -1156,6 +1173,7 @@ function newznabKeyFor(user) {
 app.get('/api/newznab/status/:token', (req, res) => {
   const user = config.getUser(req.params.token);
   if (!user) return res.status(404).json({ error: 'User not found' });
+  if (!hasNzbPermission(req.params.token)) return res.status(403).json({ error: 'No NZB permission' });
   res.json({
     enabled: !!user.newznab_enabled,
     key: newznabKeyFor(user),
@@ -1167,6 +1185,7 @@ app.post('/api/newznab/toggle', express.json(), (req, res) => {
   const { token, enabled } = req.body;
   const user = config.getUser(token);
   if (!user) return res.status(404).json({ error: 'User not found' });
+  if (!hasNzbPermission(token)) return res.status(403).json({ error: 'No NZB permission' });
   user.newznab_enabled = !!enabled;
   // First activation mints a key so the user has something to paste right away.
   if (user.newznab_enabled && !user.newznab_key) {
@@ -1181,6 +1200,7 @@ app.post('/api/newznab/regenerate', express.json(), (req, res) => {
   const { token } = req.body;
   const user = config.getUser(token);
   if (!user) return res.status(404).json({ error: 'User not found' });
+  if (!hasNzbPermission(token)) return res.status(403).json({ error: 'No NZB permission' });
   user.newznab_key = require('crypto').randomBytes(16).toString('hex');
   config.saveUser(token, user);
   res.json({ success: true, key: user.newznab_key });
