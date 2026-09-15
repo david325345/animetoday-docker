@@ -2587,7 +2587,7 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
         name: '🔍 Search',
         title: 'Search on demand\nSearches Nyaa + trackers for new results.\nClose video and reopen episode after ~30s.',
         url: `${BASE_URL}/${token}/ondemand/${type}/${fullId}/video.mp4`,
-        behaviorHints: { bingeGroup: 'ondemand', notWebReady: true }
+        behaviorHints: { notWebReady: true }
       });
     }
     return res.json({ streams: noResultStreams });
@@ -2834,7 +2834,7 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
       name: '🔍 Search',
       title: 'Search on demand\nSearches Nyaa + trackers for new results.\nClose video and reopen episode after ~30s.',
       url: `${BASE_URL}/${token}/ondemand/${type}/${fullId}/video.mp4`,
-      behaviorHints: { bingeGroup: 'ondemand', notWebReady: true }
+      behaviorHints: { notWebReady: true }
     });
   }
 
@@ -3694,7 +3694,7 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
       name: '🔍 NZB',
       title: 'Refresh NZB\nSearches NZBGeek for new NZB files.\nClose video and reopen episode after ~30s.',
       url: `${BASE_URL}/${token}/nzb-refresh/${imdbId}/${season || 0}/${episode || 0}/video.mp4`,
-      behaviorHints: { bingeGroup: 'nzb-refresh', notWebReady: true }
+      behaviorHints: { notWebReady: true }
     });
   }
 
