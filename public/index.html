@@ -1019,6 +1019,9 @@ function showApp() {
         document.getElementById('section-anime-today').style.display=(isAdmin||perms.animetoday)?'block':'none';
         // P2P section requires torrents permission
         document.getElementById('section-p2p').style.display=(isAdmin||perms.torrents)?'block':'none';
+        // Own usenet + Newznab API both only make sense with the NZB addon
+        const nntpSec=document.getElementById('section-nntp');
+        if(nntpSec) nntpSec.style.display=(isAdmin||perms.nzb)?'block':'none';
 
         // Subtitle toggle visibility
         const subsRow=document.getElementById('indexer-subs-toggle')?.closest('.row');
