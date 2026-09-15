@@ -855,6 +855,70 @@ app.post('/api/nzbgeek/toggle', express.json(), (req, res) => {
   res.json({ success: true });
 });
 
+// ===== Usenet NNTP (native Stremio streaming) =====
+// Per-user NNTP credentials. When enabled, NZB streams are handed to the client
+// as nzbUrl + servers (Stremio v5 desktop streams them straight from the user's
+// own provider) instead of being proxied through AltMount/NzbDav/TorBox.
+// NOTE: credentials travel inside the stream response by design — that is how
+// the Stremio spec transports them — so these must always be the USER'S OWN.
+app.post('/api/nntp/save', express.json(), (req, res) => {
+  const { token, host, port, username, password, ssl, connections } = req.body;
+  const user = config.getUser(token);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  if (!host || !username || !password) return res.json({ success: false, error: 'Vyplň host, uživatele a heslo' });
+
+  const portNum = parseInt(port);
+  const connNum = parseInt(connections);
+  user.nntp = {
+    host: String(host).trim().replace(/^\w+:\/\//, ''),   // strip protocol if pasted
+    port: Number.isFinite(portNum) ? portNum : 563,
+    username: String(username).trim(),
+    password: String(password),
+    ssl: ssl !== false,
+    connections: Number.isFinite(connNum) && connNum > 0 ? Math.min(connNum, 30) : 5,
+  };
+  if (user.nzb_source === undefined) user.nzb_source = 'nntp'; // first save → switch over
+  config.saveUser(token, user);
+  console.log(`✅ NNTP saved for ${token} (${user.nntp.host}:${user.nntp.port}, ${user.nntp.connections} conn)`);
+  res.json({ success: true });
+});
+
+app.get('/api/nntp/status/:token', (req, res) => {
+  const user = config.getUser(req.params.token);
+  const n = user?.nntp;
+  if (!n?.host) return res.json({ configured: false, source: user?.nzb_source || 'altmount' });
+  res.json({
+    configured: true,
+    source: user.nzb_source || 'altmount',
+    host: n.host,
+    port: n.port,
+    username: n.username,
+    ssl: n.ssl !== false,
+    connections: n.connections || 5,
+    // password intentionally not returned
+  });
+});
+
+app.post('/api/nntp/source', express.json(), (req, res) => {
+  const { token, source } = req.body;
+  const user = config.getUser(token);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  user.nzb_source = source === 'nntp' ? 'nntp' : 'altmount';
+  config.saveUser(token, user);
+  res.json({ success: true, source: user.nzb_source });
+});
+
+app.post('/api/nntp/delete', express.json(), (req, res) => {
+  const { token } = req.body;
+  const user = config.getUser(token);
+  if (user) {
+    delete user.nntp;
+    user.nzb_source = 'altmount';
+    config.saveUser(token, user);
+  }
+  res.json({ success: true });
+});
+
 // ===== SeaDex API =====
 app.get('/api/seadex/status/:token', (req, res) => {
   const user = config.getUser(req.params.token);
@@ -2784,6 +2848,19 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
   res.json({ streams });
 });
 
+// Build the Stremio `servers` array from a user's stored NNTP profile.
+// Format per spec: nntp(s)://{user}:{pass}@{host}:{port}/{connections}
+// Returns null when the user has no profile or has AltMount selected.
+function buildNntpServers(user) {
+  if (!user || user.nzb_source !== 'nntp') return null;
+  const n = user.nntp;
+  if (!n?.host || !n?.username || !n?.password) return null;
+  const scheme = n.ssl !== false ? 'nntps' : 'nntp';
+  const enc = v => encodeURIComponent(String(v));
+  const conn = n.connections || 5;
+  return [`${scheme}://${enc(n.username)}:${enc(n.password)}@${n.host}:${n.port || 563}/${conn}`];
+}
+
 // ===== STREMIO: NIMETODEX NZB ADDON =====
 app.get('/:token/nzb/manifest.json', (req, res) => {
   res.json({
@@ -3466,6 +3543,9 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
   // in WebDAV, so a batch without matchedFile.name can't be reliably resolved.
   const mountSel = getMountBackend(token, user);
   const nzbDavActive = !!mountSel.client;
+  // Native NNTP takes over the whole NZB list when the user switched to it.
+  const nntpServers = buildNntpServers(user);
+  if (nntpServers) console.log(`  📡 NZB source: native NNTP (${user.nntp.host}, ${user.nntp.connections || 5} conn)`);
 
   for (const t of topNzb) {
     if (nzbDavActive && t.batch && !t.matchedFile?.name) {
@@ -3568,6 +3648,32 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
     // Hint propagation for TorBox NZB path: pass matchedFile to storeNZB so
     // batch episodes don't collide on the same hash (same NZB URL).
     const nzbHint = t.matchedFile ? { name: t.matchedFile.name, size: t.matchedFile.size } : null;
+
+    // === Native NNTP: hand the NZB straight to the client ===
+    // User picked "vlastní usenet" → no proxy at all: the client fetches the NZB
+    // from R2 and streams it from their own provider. Only Stremio v5 desktop
+    // understands nzbUrl/servers; other clients silently ignore/fail, which is
+    // why this is an explicit per-user switch rather than auto-detection.
+    if (nntpServers) {
+      const nStream = {
+        name: streamName.replace('NimeToDexNZB', 'NimeToDexNZB [NNTP]'),
+        title,
+        nzbUrl,
+        servers: nntpServers,
+        behaviorHints: { bingeGroup: 'nzb-nntp', notWebReady: true }
+      };
+      // Batch: point the client at the right file inside the NZB. fileMustInclude
+      // is supported for nzb (unlike torrents) — regex-escape the filename.
+      if (t.batch && t.matchedFile?.name) {
+        const esc = String(t.matchedFile.name).replace(/[.*+?^${}()|[\]\\\/]/g, '\\$&');
+        nStream.fileMustInclude = `/${esc}$/i`;
+      } else if (t.matchedFile?.idx != null) {
+        nStream.fileIdx = t.matchedFile.idx;
+      }
+      streams.push(nStream);
+      continue;
+    }
+
     const baseUrl = `${BASE_URL}/${token}/${proxyPath}/${storeNZB(nzbUrl, t.name, nzbHint)}/${epNum}`;
     const stream = {
       name: streamName,
