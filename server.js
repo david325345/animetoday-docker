@@ -1041,27 +1041,36 @@ app.get('/api', async (req, res) => {
     // id-only query returns many episodes, and without per-item numbers the
     // client cannot tell E01 from E13. Request values are only a fallback.
     const num = v => (v == null || v === '' ? null : (Number.isFinite(parseInt(v)) ? parseInt(v) : null));
+    // One shape for both sources — the indexer names a few fields differently
+    // between nzb_results and tosho_results, so normalise here rather than in
+    // the XML builder.
+    const mapRow = (x, idPrefix) => ({
+      title: x.name || x.title || 'Unknown',
+      size: parseInt(x.size || x.filesize) || 0,
+      url: x.r2_url || (x.r2_key ? `${R2_NZB_BASE}/${x.r2_key}` : null),
+      id: x.id != null ? `${idPrefix}${x.id}` : (x.guid || null),
+      pubDate: x.pubDate || x.date_posted || null,
+      season: num(x.season),
+      episode: num(x.episode),
+      batch: !!x.batch,
+      // extra metadata (all optional — emitted only when present)
+      resolution: x.resolution || null,
+      codec: x.codec || null,
+      audioCodec: x.audio_codec || null,
+      audioLangs: x.audio_langs || null,
+      subtitleLangs: x.subtitle_langs || null,
+      group: x.group_name || x.releaseGroup || null,
+      dualAudio: !!x.dual_audio,
+      bitDepth: x.bit_depth || null,
+      videoSource: x.video_source || null,
+      files: num(x.files) || null,
+      anilistId: num(x.anilist_id),
+      tvdbIdRow: num(x.tvdb_id),
+      imdbIdRow: x.imdb_id || null,
+    });
     const rows = [
-      ...(resp.data?.nzb_results || []).map(n => ({
-        title: n.name || n.title || 'Unknown',
-        size: parseInt(n.size || n.filesize) || 0,
-        url: n.r2_url || (n.r2_key ? `${R2_NZB_BASE}/${n.r2_key}` : null),
-        id: n.id || n.guid || null,
-        pubDate: n.pubDate || n.date_posted || null,
-        season: num(n.season),
-        episode: num(n.episode),
-        batch: !!n.batch,
-      })),
-      ...(resp.data?.tosho_results || []).filter(x => x.r2_key).map(x => ({
-        title: x.name || 'Unknown',
-        size: parseInt(x.filesize) || 0,
-        url: x.r2_url || `${R2_NZB_BASE}/${x.r2_key}`,
-        id: x.id != null ? 'tosho-' + x.id : null,
-        pubDate: x.date_posted || null,
-        season: num(x.season),
-        episode: num(x.episode),
-        batch: !!x.batch,
-      })),
+      ...(resp.data?.nzb_results || []).map(n => mapRow(n, '')),
+      ...(resp.data?.tosho_results || []).filter(x => x.r2_key).map(x => mapRow(x, 'tosho-')),
     ].filter(r => r.url);
 
     // Stable de-dup by NZB url (the same release can arrive from both lists)
@@ -1077,15 +1086,37 @@ app.get('/api', async (req, res) => {
         `<newznab:attr name="category" value="${cat}"/>`,
         `<newznab:attr name="size" value="${r.size}"/>`,
       ];
-      if (tvdbid) attrs.push(`<newznab:attr name="tvdbid" value="${xmlEsc(tvdbid)}"/>`);
-      if (imdbid) attrs.push(`<newznab:attr name="imdbid" value="${xmlEsc(String(imdbid).replace(/^tt/, ''))}"/>`);
-      if (t === 'tvsearch') {
-        // Row value first, requested value as fallback (batches carry no episode).
-        const sVal = r.season != null ? r.season : (season || null);
-        const eVal = r.episode != null ? r.episode : (r.batch ? null : (ep || null));
-        if (sVal != null) attrs.push(`<newznab:attr name="season" value="${xmlEsc(sVal)}"/>`);
-        if (eVal != null) attrs.push(`<newznab:attr name="episode" value="${xmlEsc(eVal)}"/>`);
-      }
+      // IDs — prefer the row's own value, fall back to what was requested.
+      const tvdbVal = r.tvdbIdRow != null ? r.tvdbIdRow : (tvdbid || null);
+      const imdbVal = r.imdbIdRow || imdbid || null;
+      if (tvdbVal != null) attrs.push(`<newznab:attr name="tvdbid" value="${xmlEsc(tvdbVal)}"/>`);
+      if (imdbVal) attrs.push(`<newznab:attr name="imdbid" value="${xmlEsc(String(imdbVal).replace(/^tt/, ''))}"/>`);
+      // Release metadata. Newznab has no anime-specific fields, so these use the
+      // conventional names (language/subs/video/audio/resolution/group) that
+      // Prowlarr, NZBHydra2 and Sonarr understand; unknown attrs are ignored by
+      // clients, so sending them is free.
+      const langList = v => String(v).split(',').map(x => x.trim()).filter(Boolean).join(', ');
+      if (r.audioLangs) attrs.push(`<newznab:attr name="language" value="${xmlEsc(langList(r.audioLangs))}"/>`);
+      if (r.subtitleLangs) attrs.push(`<newznab:attr name="subs" value="${xmlEsc(langList(r.subtitleLangs))}"/>`);
+      if (r.resolution) attrs.push(`<newznab:attr name="resolution" value="${xmlEsc(r.resolution)}"/>`);
+      if (r.codec) attrs.push(`<newznab:attr name="video" value="${xmlEsc(r.codec)}"/>`);
+      if (r.audioCodec) attrs.push(`<newznab:attr name="audio" value="${xmlEsc(r.audioCodec)}"/>`);
+      if (r.group) attrs.push(`<newznab:attr name="group" value="${xmlEsc(r.group)}"/>`);
+      if (r.videoSource) attrs.push(`<newznab:attr name="source" value="${xmlEsc(r.videoSource)}"/>`);
+      if (r.bitDepth) attrs.push(`<newznab:attr name="bitdepth" value="${xmlEsc(r.bitDepth)}"/>`);
+      if (r.dualAudio) attrs.push(`<newznab:attr name="dualaudio" value="1"/>`);
+      if (r.batch) attrs.push(`<newznab:attr name="batch" value="1"/>`);
+      if (r.files != null) attrs.push(`<newznab:attr name="files" value="${r.files}"/>`);
+      if (r.anilistId != null) attrs.push(`<newznab:attr name="anilistid" value="${r.anilistId}"/>`);
+      if (r.pubDate) attrs.push(`<newznab:attr name="usenetdate" value="${new Date(r.pubDate).toUTCString()}"/>`);
+      attrs.push(`<newznab:attr name="grabs" value="0"/>`);
+      // Season/episode describe the ITEM, so emit them whenever the row has them —
+      // also for t=movie, where a series id legitimately returns episodes. The
+      // requested values are only a fallback, and only for tvsearch.
+      const sVal = r.season != null ? r.season : (t === 'tvsearch' ? (season || null) : null);
+      const eVal = r.episode != null ? r.episode : (t === 'tvsearch' && !r.batch ? (ep || null) : null);
+      if (sVal != null) attrs.push(`<newznab:attr name="season" value="${xmlEsc(sVal)}"/>`);
+      if (eVal != null) attrs.push(`<newznab:attr name="episode" value="${xmlEsc(eVal)}"/>`);
       return `    <item>
       <title>${xmlEsc(r.title)}</title>
       <guid isPermaLink="false">${xmlEsc(guid)}</guid>
