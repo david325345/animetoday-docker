@@ -2008,6 +2008,11 @@ async function buildSubsInfoStream(fullId, type, token) {
 
     return {
       name: '📝 CZ/SK titulky',
+      // Send BOTH: the spec deprecates title in favour of description, but older
+      // clients (Nuvio tvOS, Fusion) read title only and silently DROP an item
+      // without it — that is why this item was invisible in Nuvio while the
+      // otherwise identical ondemand item (which has title) showed up.
+      title: langLines.join('\n'),
       description: langLines.join('\n'),
       url: ONDEMAND_VIDEO_URL,
       behaviorHints: { notWebReady: true }
