@@ -1960,7 +1960,13 @@ const SUBS_API_URL = process.env.SUBS_API_URL || 'http://titulky:8080';
 // release2"), url = the same GitHub placeholder video as ondemand. It does NOT
 // deliver subtitles (the subs addon does that) — it is a visible "this episode
 // has CZ/SK subs" signal that plays the placeholder clip on click.
-async function buildSubsInfoStream(fullId, type, token) {
+// Nuvio tvOS sends "Mozilla/5.0 (AppleTV; tvOS 18.0) AppleWebKit/605.1.15"
+// when it asks for streams (StreamsRepository.swift).
+function isAppleTvClient(ua) {
+  return /appletv|tvos/i.test(String(ua || ''));
+}
+
+async function buildSubsInfoStream(fullId, type, token, ua = '') {
   try {
     const parts = fullId.split(':');
     const imdb = parts[0];
@@ -2010,11 +2016,29 @@ async function buildSubsInfoStream(fullId, type, token) {
       name: '📝 CZ/SK titulky',
       // description only, deliberately: Stremio prefers title when both are set
       // and renders it on a single line, which swallowed the per-language
-      // breakdown. Adding title did not help Nuvio anyway — it drops this item
-      // in SmartPlaybackSelector.playableStreams (requires res >= 720).
+      // breakdown.
       description: langLines.join('\n'),
       url: ONDEMAND_VIDEO_URL,
-      behaviorHints: { notWebReady: true }
+      // Nuvio tvOS drops every stream whose resolution it cannot read
+      // (SmartPlaybackSelector.playableStreams requires res >= 720; it only
+      // skips the filter when the whole list would be empty, which is why this
+      // item showed up only when nothing else was found). Nuvio scans
+      // name + description + behaviorHints.filename — and filename is never
+      // displayed, so putting the resolution there satisfies the filter without
+      // printing a fake "2160p" anywhere a user can see. Sent to Apple TV only:
+      // every other client gets exactly what it got before.
+      // Apple TV only. Nuvio sorts by resolution → release quality → size, and
+      // reads all three from fields that are never rendered (filename for the
+      // first two, videoSize for the third), so this puts the item at the very
+      // top of its list without printing a fake "2160p Remux 1 TB" anywhere a
+      // user can see. Every other client gets the plain behaviorHints below.
+      behaviorHints: isAppleTvClient(ua)
+        ? {
+            notWebReady: true,
+            filename: 'CZ-SK-titulky.2160p.BluRay.REMUX.mkv',
+            videoSize: 1099511627776   // 1 TiB — beats every real release on tier 3
+          }
+        : { notWebReady: true }
     };
   } catch (e) {
     console.log(`  📝 subs-info error: ${e.message}`);
@@ -3131,8 +3155,12 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
 
   // Subtitle-info dummy item — FIRST in the list, opt-in per user
   if (user?.subs_info_enabled) {
-    const subsItem = await buildSubsInfoStream(fullId, type, token);
-    if (subsItem) { streams.unshift(subsItem); console.log(`  📝 subs-info: prepended (${subsItem.description.replace(/\n/g, ' | ')})`); }
+    const subsUa = req.headers['user-agent'] || '';
+    const subsItem = await buildSubsInfoStream(fullId, type, token, subsUa);
+    if (subsItem) {
+      streams.unshift(subsItem);
+      console.log(`  📝 subs-info: prepended${isAppleTvClient(subsUa) ? ' [appletv: +filename]' : ''} (${subsItem.description.replace(/\n/g, ' | ')})`);
+    }
   }
 
   console.log(`  📤 Streams: ${streams.length} (Indexer)`);
