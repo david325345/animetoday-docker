@@ -1966,7 +1966,84 @@ function isAppleTvClient(ua) {
   return /appletv|tvos/i.test(String(ua || ''));
 }
 
-async function buildSubsInfoStream(fullId, type, token, ua = '') {
+// Fetch the CZ/SK subtitles for this episode ONCE per stream request. Both the
+// 📝 dummy item and the per-stream flags are built from the same response, so
+// enabling the flags costs zero extra requests.
+async function fetchSubsForEpisode(fullId, type) {
+  try {
+    const parts = fullId.split(':');
+    const imdb = parts[0];
+    if (!imdb.startsWith('tt')) return [];
+    const sNum = parseInt(parts[1]);
+    const eNum = parseInt(parts[2]);
+    const season = type === 'movie' ? null : (Number.isFinite(sNum) ? sNum : 1);
+    const episode = type === 'movie' ? null : (Number.isFinite(eNum) ? eNum : 1);
+
+    const rp = new URLSearchParams({ imdb });
+    if (season != null) rp.set('season', season);
+    if (episode != null) rp.set('episode', episode);
+    let ids;
+    try {
+      ids = (await axios.get(`${INDEXER_URL}/api/resolve-ids?${rp.toString()}`, { timeout: 6000 })).data;
+    } catch { return []; }
+    if (!ids?.anilist_id && !ids?.mal_id) return [];
+
+    const sp = new URLSearchParams();
+    if (ids.anilist_id) sp.set('anilist', ids.anilist_id);
+    if (ids.mal_id) sp.set('mal', ids.mal_id);
+    const ep = ids.episode != null ? ids.episode : (episode || 1);
+    sp.set('episode', ep);
+    const av = (await axios.get(`${SUBS_API_URL}/api/subs?${sp.toString()}`, { timeout: 6000 })).data;
+    return av?.subs || [];
+  } catch (e) {
+    console.log(`  📝 subs fetch error: ${e.message}`);
+    return [];
+  }
+}
+
+// Per-stream subtitle flag. Two levels, evaluated per language:
+//   - release_groups contains the stream's group  → subtitles were timed against
+//     exactly this rip (crown)
+//   - quality matches the stream's video_source   → same source type, very likely
+//     in sync, but not guaranteed (flag only)
+// Unknown on either side (quality null / video_source empty) yields nothing —
+// a false "it fits" is worse than no information.
+const SUBS_QUALITY_MATCH = {
+  'WEB-DL': ['WEB-DL', 'WEBRIP', 'WEB'],
+  BD: ['BD'],
+  DVD: ['DVD'],
+};
+const SUBS_FLAG = { CZ: '🇨🇿', SK: '🇸🇰' };
+
+function subsFlagForStream(stream, subs) {
+  if (!subs?.length) return '';
+  const norm = v => String(v || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const streamGroup = norm(stream.releaseGroup);
+  const streamSrc = String(stream.videoSource || '').toUpperCase();
+
+  const langs = [];      // languages that fit at all, in CZ→SK order
+  let anyCrown = false;  // at least one exact release-group match
+  for (const lang of ['CZ', 'SK']) {
+    const forLang = subs.filter(x => String(x.lang || '').toUpperCase() === lang);
+    if (!forLang.length) continue;
+
+    const crown = streamGroup && forLang.some(x =>
+      (x.release_groups || []).some(g => norm(g) === streamGroup));
+    const qualityFit = !crown && streamSrc && forLang.some(x => {
+      const q = String(x.quality || '').toUpperCase();
+      return q && (SUBS_QUALITY_MATCH[q] || []).includes(streamSrc);
+    });
+    if (crown || qualityFit) {
+      langs.push(SUBS_FLAG[lang]);
+      if (crown) anyCrown = true;
+    }
+  }
+  if (!langs.length) return '';
+  // One crown for the whole tag, not per language: "👑 🇨🇿🇸🇰"
+  return `${anyCrown ? '👑 ' : ''}${langs.join('')}`;
+}
+
+async function buildSubsInfoStream(fullId, type, token, ua = '', preloadedSubs = null) {
   try {
     const parts = fullId.split(':');
     const imdb = parts[0];
@@ -1979,24 +2056,9 @@ async function buildSubsInfoStream(fullId, type, token, ua = '') {
     const season = type === 'movie' ? null : (Number.isFinite(sNum) ? sNum : 1);
     const episode = type === 'movie' ? null : (Number.isFinite(eNum) ? eNum : 1);
 
-    // imdb+S+E → anilist/mal + entry-relative episode
-    const rp = new URLSearchParams({ imdb });
-    if (season != null) rp.set('season', season);
-    if (episode != null) rp.set('episode', episode);
-    let ids;
-    try {
-      ids = (await axios.get(`${INDEXER_URL}/api/resolve-ids?${rp.toString()}`, { timeout: 6000 })).data;
-    } catch { return null; } // 404 / error → no subs info
-    if (!ids?.anilist_id && !ids?.mal_id) return null;
-
-    // availability with per-episode variant breakdown
-    const sp = new URLSearchParams();
-    if (ids.anilist_id) sp.set('anilist', ids.anilist_id);
-    if (ids.mal_id) sp.set('mal', ids.mal_id);
-    const ep = ids.episode != null ? ids.episode : (episode || 1);
-    sp.set('episode', ep);
-    const av = (await axios.get(`${SUBS_API_URL}/api/subs?${sp.toString()}`, { timeout: 6000 })).data;
-    const subs = av?.subs || [];
+    // Subtitles are fetched once per request by the handler and passed in; the
+    // fallback keeps this function usable on its own.
+    const subs = preloadedSubs || await fetchSubsForEpisode(fullId, type);
     if (!subs.length) return null;
 
     // group by language → unique releases (fallback to group when release empty)
@@ -2964,6 +3026,12 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
     console.log(`  🎯 priority sort: cached+EN=${buckets[3].length} | cached=${buckets[2].length} | EN=${buckets[1].length} | rest=${buckets[0].length}`);
   }
 
+  // One subtitle fetch per request, shared by the 📝 dummy item and the
+  // per-stream CZ/SK flags below. Gated by the same user toggle, so users who
+  // do not want subtitle info pay no latency at all.
+  const episodeSubs = user?.subs_info_enabled ? await fetchSubsForEpisode(fullId, type) : [];
+  if (episodeSubs.length) console.log(`  📝 subs: ${episodeSubs.length} for flagging`);
+
   const streams = [];
   for (const t of allResults) {
     const name = t.name || '';
@@ -3043,6 +3111,9 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
       const audioWithMarker = showCheck ? `${audioTag} ✅` : audioTag;
       const audioPart = audioTag ? ` · ${audioWithMarker}` : '';
       streamName = `NimeToDex ${sourceIcon}${qualityPart}${audioPart}`.trim();
+      // CZ/SK flag at the very end of the name (👑 = timed against this exact rip)
+      const subsFlag = subsFlagForStream(t, episodeSubs);
+      if (subsFlag) streamName += ` · ${subsFlag}`;
     } else {
       // === Non-indexer result: legacy fallback (currently unused, indexer is sole source) ===
       const tags = [];
@@ -3055,6 +3126,8 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
       const audioWithMarker = audioTagFb === 'Dub' || audioTagFb === 'Dual' ? `${audioTagFb} ✅` : audioTagFb;
       const audioPart = audioTagFb ? ` · ${audioWithMarker}` : '';
       streamName = `NimeToDex ${quality || ''}${audioPart}`.trim();
+      const subsFlagFb = subsFlagForStream(t, episodeSubs);
+      if (subsFlagFb) streamName += ` · ${subsFlagFb}`;
     }
 
     // Check TB cache status for this torrent
@@ -3156,7 +3229,7 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
   // Subtitle-info dummy item — FIRST in the list, opt-in per user
   if (user?.subs_info_enabled) {
     const subsUa = req.headers['user-agent'] || '';
-    const subsItem = await buildSubsInfoStream(fullId, type, token, subsUa);
+    const subsItem = await buildSubsInfoStream(fullId, type, token, subsUa, episodeSubs);
     if (subsItem) {
       streams.unshift(subsItem);
       console.log(`  📝 subs-info: prepended${isAppleTvClient(subsUa) ? ' [appletv: +filename]' : ''} (${subsItem.description.replace(/\n/g, ' | ')})`);
