@@ -2021,39 +2021,43 @@ function subsFlagForStream(stream, subs) {
   const streamGroup = norm(stream.releaseGroup);
   const streamSrc = String(stream.videoSource || '').toUpperCase();
 
-  // Does this subtitle's quality fit the stream's source type?
-  //   null quality  → unknown, treated as "might fit" (109 legacy rows have it)
-  //   stream source unknown → nothing fits, we refuse to guess
+  // Does the subtitle's quality exactly match the stream's source type?
   const qualityFits = (sub) => {
     const q = String(sub.quality || '').toUpperCase();
-    if (!q) return true;                 // unknown on the subtitle side
-    if (!streamSrc) return false;        // unknown on the stream side
+    if (!q || !streamSrc) return false;
     return (SUBS_QUALITY_MATCH[q] || []).includes(streamSrc);
   };
 
-  const langs = [];      // languages that fit at all, in CZ→SK order
-  let anyCrown = false;  // at least one subtitle matching BOTH group and quality
+  // Three levels per language, strongest wins. NOTHING is discarded: if any
+  // subtitle of that language exists, the flag shows — a differing or unknown
+  // quality only downgrades it to "❓" (WEB-DL subs very often do fit a BD rip,
+  // so claiming they don't would be worse than admitting we cannot tell).
+  //   crown  = same release group AND matching (or unknown) quality
+  //   plain  = quality matches the stream's source type
+  //   "❓"   = subtitles exist, fit unknown (no quality, different quality, or
+  //            the stream itself has no video_source)
+  const certain = [];    // flags without ❓
+  const uncertain = [];  // flags with ❓
+  let anyCrown = false;
   for (const lang of ['CZ', 'SK']) {
     const forLang = subs.filter(x => String(x.lang || '').toUpperCase() === lang);
     if (!forLang.length) continue;
 
-    // The crown requires group AND quality: SallySubs subtitles timed against
-    // their WEB release must not be crowned on a SallySubs BLURAY rip — same
-    // group, different timing. Quality null still earns it (group is the
-    // strongest signal we have and we know nothing about the source).
     const crown = !!streamGroup && forLang.some(x =>
-      (x.release_groups || []).some(g => norm(g) === streamGroup) && qualityFits(x));
-    // Flag: any subtitle of this language whose quality fits the stream. A
-    // subtitle that fails the quality test counts for nothing here either.
-    const fits = !crown && forLang.some(x => String(x.quality || '') && qualityFits(x));
-    if (crown || fits) {
-      langs.push(SUBS_FLAG[lang]);
-      if (crown) anyCrown = true;
-    }
+      (x.release_groups || []).some(g => norm(g) === streamGroup) &&
+      (qualityFits(x) || !String(x.quality || '')));
+    if (crown) { certain.push(SUBS_FLAG[lang]); anyCrown = true; continue; }
+
+    if (forLang.some(qualityFits)) certain.push(SUBS_FLAG[lang]);
+    else uncertain.push(SUBS_FLAG[lang]);
   }
-  if (!langs.length) return '';
-  // One crown for the whole tag, not per language: "👑 🇨🇿🇸🇰"
-  return `${anyCrown ? '👑 ' : ''}${langs.join('')}`;
+
+  if (!certain.length && !uncertain.length) return '';
+  // One crown for the whole tag: "👑 🇨🇿🇸🇰", mixed levels: "🇨🇿 🇸🇰❓"
+  const parts = [];
+  if (certain.length) parts.push(`${anyCrown ? '👑 ' : ''}${certain.join('')}`);
+  if (uncertain.length) parts.push(`${uncertain.join('')}❓`);
+  return parts.join(' ');
 }
 
 async function buildSubsInfoStream(fullId, type, token, ua = '', preloadedSubs = null) {
