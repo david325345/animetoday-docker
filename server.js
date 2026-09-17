@@ -2021,19 +2021,32 @@ function subsFlagForStream(stream, subs) {
   const streamGroup = norm(stream.releaseGroup);
   const streamSrc = String(stream.videoSource || '').toUpperCase();
 
+  // Does this subtitle's quality fit the stream's source type?
+  //   null quality  → unknown, treated as "might fit" (109 legacy rows have it)
+  //   stream source unknown → nothing fits, we refuse to guess
+  const qualityFits = (sub) => {
+    const q = String(sub.quality || '').toUpperCase();
+    if (!q) return true;                 // unknown on the subtitle side
+    if (!streamSrc) return false;        // unknown on the stream side
+    return (SUBS_QUALITY_MATCH[q] || []).includes(streamSrc);
+  };
+
   const langs = [];      // languages that fit at all, in CZ→SK order
-  let anyCrown = false;  // at least one exact release-group match
+  let anyCrown = false;  // at least one subtitle matching BOTH group and quality
   for (const lang of ['CZ', 'SK']) {
     const forLang = subs.filter(x => String(x.lang || '').toUpperCase() === lang);
     if (!forLang.length) continue;
 
-    const crown = streamGroup && forLang.some(x =>
-      (x.release_groups || []).some(g => norm(g) === streamGroup));
-    const qualityFit = !crown && streamSrc && forLang.some(x => {
-      const q = String(x.quality || '').toUpperCase();
-      return q && (SUBS_QUALITY_MATCH[q] || []).includes(streamSrc);
-    });
-    if (crown || qualityFit) {
+    // The crown requires group AND quality: SallySubs subtitles timed against
+    // their WEB release must not be crowned on a SallySubs BLURAY rip — same
+    // group, different timing. Quality null still earns it (group is the
+    // strongest signal we have and we know nothing about the source).
+    const crown = !!streamGroup && forLang.some(x =>
+      (x.release_groups || []).some(g => norm(g) === streamGroup) && qualityFits(x));
+    // Flag: any subtitle of this language whose quality fits the stream. A
+    // subtitle that fails the quality test counts for nothing here either.
+    const fits = !crown && forLang.some(x => String(x.quality || '') && qualityFits(x));
+    if (crown || fits) {
       langs.push(SUBS_FLAG[lang]);
       if (crown) anyCrown = true;
     }
