@@ -2042,9 +2042,8 @@ function subsFlagForStream(stream, subs) {
   //   plain  = quality matches the stream's source type
   //   "❓"   = subtitles exist, fit unknown (no quality, different quality, or
   //            the stream itself has no video_source)
-  const certain = [];    // flags without ❓
+  const certain = [];    // flags without ❓ (crown appended per language)
   const uncertain = [];  // flags with ❓
-  let anyCrown = false;
   for (const lang of ['CZ', 'SK']) {
     const forLang = subs.filter(x => String(x.lang || '').toUpperCase() === lang);
     if (!forLang.length) continue;
@@ -2052,7 +2051,10 @@ function subsFlagForStream(stream, subs) {
     const crown = !!streamGroup && forLang.some(x =>
       (x.release_groups || []).some(g => norm(g) === streamGroup) &&
       (qualityFits(x) || !String(x.quality || '')));
-    if (crown) { certain.push(SUBS_FLAG[lang]); anyCrown = true; continue; }
+    // Crown sits right after its own flag (🇨🇿👑), so with two languages it is
+    // clear which one it belongs to — a single leading crown would look like it
+    // covered both.
+    if (crown) { certain.push(SUBS_FLAG[lang] + '👑'); continue; }
 
     if (forLang.some(qualityFits)) certain.push(SUBS_FLAG[lang]);
     else uncertain.push(SUBS_FLAG[lang]);
@@ -2063,7 +2065,7 @@ function subsFlagForStream(stream, subs) {
   // Flags separated by "|" so they do not blur into one strip; "·" is already
   // the name's section separator, another one would be invisible here.
   const parts = [];
-  if (certain.length) parts.push(`${anyCrown ? '👑 ' : ''}${certain.join('|')}`);
+  if (certain.length) parts.push(certain.join('|'));
   if (uncertain.length) parts.push(`${uncertain.join('|')}❓`);
   return parts.join('|');
 }
