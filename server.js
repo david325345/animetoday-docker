@@ -2008,24 +2008,30 @@ async function fetchSubsForEpisode(fullId, type) {
 //     in sync, but not guaranteed (flag only)
 // Unknown on either side (quality null / video_source empty) yields nothing —
 // a false "it fits" is worse than no information.
-const SUBS_QUALITY_MATCH = {
-  'WEB-DL': ['WEB-DL', 'WEBRIP', 'WEB'],
-  BD: ['BD'],
-  DVD: ['DVD'],
-};
+// Classify a source string into a family instead of comparing exact values:
+// the indexer writes BD, BDRip, BluRay, BD Remux … and a REMUX is a Blu-ray
+// without re-encoding, so its timing is identical to any other BD release.
+// Substring matching also survives spelling variants we have not seen yet.
+function subsSourceFamily(v) {
+  const t = String(v || '').toLowerCase().replace(/[^a-z]/g, '');
+  if (!t) return null;
+  if (t.includes('dvd')) return 'DVD';
+  if (t.includes('web')) return 'WEB';          // WEB, WEB-DL, WEBRip
+  if (t.includes('bd') || t.includes('blu') || t.includes('remux')) return 'BD';
+  return null;                                   // unknown wording → treat as unknown
+}
 const SUBS_FLAG = { CZ: '🇨🇿', SK: '🇸🇰' };
 
 function subsFlagForStream(stream, subs) {
   if (!subs?.length) return '';
   const norm = v => String(v || '').toLowerCase().replace(/[^a-z0-9]/g, '');
   const streamGroup = norm(stream.releaseGroup);
-  const streamSrc = String(stream.videoSource || '').toUpperCase();
 
-  // Does the subtitle's quality exactly match the stream's source type?
+  // Same source family = same timing (BD ⊇ BDRip/BluRay/Remux, WEB ⊇ WEB-DL/WEBRip)
+  const streamFamily = subsSourceFamily(stream.videoSource);
   const qualityFits = (sub) => {
-    const q = String(sub.quality || '').toUpperCase();
-    if (!q || !streamSrc) return false;
-    return (SUBS_QUALITY_MATCH[q] || []).includes(streamSrc);
+    const f = subsSourceFamily(sub.quality);
+    return !!f && !!streamFamily && f === streamFamily;
   };
 
   // Three levels per language, strongest wins. NOTHING is discarded: if any
@@ -2054,10 +2060,12 @@ function subsFlagForStream(stream, subs) {
 
   if (!certain.length && !uncertain.length) return '';
   // One crown for the whole tag: "👑 🇨🇿🇸🇰", mixed levels: "🇨🇿 🇸🇰❓"
+  // Flags separated by "|" so they do not blur into one strip; "·" is already
+  // the name's section separator, another one would be invisible here.
   const parts = [];
-  if (certain.length) parts.push(`${anyCrown ? '👑 ' : ''}${certain.join('')}`);
-  if (uncertain.length) parts.push(`${uncertain.join('')}❓`);
-  return parts.join(' ');
+  if (certain.length) parts.push(`${anyCrown ? '👑 ' : ''}${certain.join('|')}`);
+  if (uncertain.length) parts.push(`${uncertain.join('|')}❓`);
+  return parts.join('|');
 }
 
 async function buildSubsInfoStream(fullId, type, token, ua = '', preloadedSubs = null) {
