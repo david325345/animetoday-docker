@@ -1659,8 +1659,13 @@ app.get('/:token/today/manifest.json', (req, res) => {
       { type: 'movie', id: 'nimetodex-today', name: 'NimeToDex — Added today', extra: [{ name: 'skip', isRequired: false }] },
       { type: 'series', id: 'subs-added', name: 'Nově otitulkované', extra: [{ name: 'skip', isRequired: false }] },
       // Search-only (isRequired: true) → no row in Discover, appears only in results
+      // Search catalogues are declared per type, so movies need their own entry —
+      // a series-only catalogue would silently drop every film in the index.
       ...(manifestUser?.subs_search_enabled
-        ? [{ type: 'series', id: 'subs-search', name: 'CZ/SK titulky', extra: [{ name: 'search', isRequired: true }] }]
+        ? [
+            { type: 'series', id: 'subs-search', name: 'CZ/SK titulky', extra: [{ name: 'search', isRequired: true }] },
+            { type: 'movie', id: 'subs-search', name: 'CZ/SK titulky', extra: [{ name: 'search', isRequired: true }] }
+          ]
         : [])
     ],
     idPrefixes: ['tt'],
@@ -1679,8 +1684,9 @@ async function todayCatalogHandler(req, res) {
     const raw = req.query.search || (req.params.extra || '').match(/search=([^&]*)/)?.[1] || '';
     let query = '';
     try { query = decodeURIComponent(raw); } catch { query = raw; }
-    const hits = subsIndex.search(query);
-    console.log(`  🔎 subs-search "${query}" → ${hits.length} hits`);
+    const wantType = req.params.type === 'movie' ? 'movie' : 'series';
+    const hits = subsIndex.search(query).filter(e => (e.type || 'series') === wantType);
+    console.log(`  🔎 subs-search "${query}" (${wantType}) → ${hits.length} hits`);
     return res.json({ metas: hits.map(e => subsIndex.buildMeta(e, BASE_URL)), cacheMaxAge: 300 });
   }
   if (req.params.id === 'nimetodex-today') {
