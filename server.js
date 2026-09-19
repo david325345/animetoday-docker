@@ -1652,11 +1652,17 @@ app.get('/:token/today/manifest.json', (req, res) => {
   });
 });
 
-app.get('/:token/today/catalog/:type/:id.json', async (req, res) => {
+// Stremio sends search as an EXTRA PATH SEGMENT
+// (/catalog/series/subs-search/search=frieren.json), not as a query parameter,
+// so the handler is registered under both shapes — without the second route
+// every search request 404s.
+async function todayCatalogHandler(req, res) {
   console.log(`=== TODAY CATALOG === type=${req.params.type} id=${req.params.id}`);
   if (req.params.id === 'subs-search') {
-    const q = req.query.search || (req.params.extra || '').match(/search=([^&]+)/)?.[1];
-    const query = q ? decodeURIComponent(q) : '';
+    // "search=frieren" arrives either as a query param or inside the extra segment
+    const raw = req.query.search || (req.params.extra || '').match(/search=([^&]*)/)?.[1] || '';
+    let query = '';
+    try { query = decodeURIComponent(raw); } catch { query = raw; }
     const hits = subsIndex.search(query);
     console.log(`  🔎 subs-search "${query}" → ${hits.length} hits`);
     return res.json({ metas: hits.map(e => subsIndex.buildMeta(e, BASE_URL)), cacheMaxAge: 300 });
@@ -1750,7 +1756,10 @@ app.get('/:token/today/catalog/:type/:id.json', async (req, res) => {
 
   res.json({ metas });
   console.log(`  📅 Anime Today catalog (${req.params.type}): ${metas.length} items returned`);
-});
+}
+
+app.get('/:token/today/catalog/:type/:id.json', todayCatalogHandler);
+app.get('/:token/today/catalog/:type/:id/:extra.json', todayCatalogHandler);
 
 // ===== STREMIO: ANIME TODAY META ENDPOINT =====
 const cinemetaCache = new Map();
