@@ -289,6 +289,10 @@
                 <div class="row-label"><span data-i18n="subsflags.row">Vlaječky u streamů</span> <small data-i18n="subsflags.rowHint">🇨🇿💿⭐ u streamů, ke kterým máme titulky</small></div>
                 <button class="toggle off" id="subsflags-toggle" onclick="toggleStreamSetting('subs_flags_enabled', 'subsflags-toggle')"></button>
             </div>
+            <div class="row">
+                <div class="row-label"><span data-i18n="subssearch.row">Hledání podle titulků</span> <small data-i18n="subssearch.rowHint">Vlastní sekce ve vyhledávání — anime, ke kterým máme CZ/SK</small></div>
+                <button class="toggle off" id="subssearch-toggle" onclick="toggleStreamSetting('subs_search_enabled', 'subssearch-toggle')"></button>
+            </div>
         </div>
 
         <!-- P2P (Direct Stremio playback) -->
@@ -671,6 +675,8 @@ const I18N = {
         'subsinfo.rowHint': 'First item "📝 CZ/SK subtitles" when available',
         'subsflags.row': 'Subtitle flags on streams',
         'subsflags.rowHint': '🇨🇿💿⭐ next to streams we have subtitles for',
+        'subssearch.row': 'Search by subtitles',
+        'subssearch.rowHint': 'Own section in search — anime we have CZ/SK for',
         'p2p.rowHint': 'Disables RealDebrid, TorBox and NZB',
         'p2p.help': 'When enabled, torrents are played peer-to-peer directly via Stremio (no debrid services). NZB and debrid streams will be hidden.',
         'p2p.warn': '⚠️ <strong>Requires Stremio streaming server:</strong> works on Stremio Desktop and Android. P2P does not work on iOS / Apple TV / Stremio Lite (Stremio limitation). In a web browser, Stremio Service must be running.',
@@ -852,6 +858,8 @@ const I18N = {
         'subsinfo.rowHint': 'První položka „📝 CZ/SK titulky" když jsou k dispozici',
         'subsflags.row': 'Vlaječky u streamů',
         'subsflags.rowHint': '🇨🇿💿⭐ u streamů, ke kterým máme titulky',
+        'subssearch.row': 'Hledání podle titulků',
+        'subssearch.rowHint': 'Vlastní sekce ve vyhledávání — anime, ke kterým máme CZ/SK',
         'p2p.rowHint': 'Vypne RealDebrid, TorBox a NZB',
         'p2p.help': 'Když je zapnuto, torrenty se přehrávají přímo přes Stremio peer-to-peer (bez debrid služeb). NZB a debrid streamy budou skryty.',
         'p2p.warn': '⚠️ <strong>Vyžaduje Stremio streaming server:</strong> funguje na Stremio Desktop a Android. Na iOS / Apple TV / Stremio Lite P2P nefunguje (limitace Stremia). Ve webovém prohlížeči je nutný spuštěný Stremio Service.',
@@ -1372,6 +1380,7 @@ async function checkIndexer() {
         document.getElementById('ondemand-toggle').className = d.ondemand_enabled === false ? 'toggle off' : 'toggle on';
         document.getElementById('subsinfo-toggle').className = d.subs_info_enabled ? 'toggle on' : 'toggle off';
         document.getElementById('subsflags-toggle').className = d.subs_flags_enabled ? 'toggle on' : 'toggle off';
+        document.getElementById('subssearch-toggle').className = d.subs_search_enabled ? 'toggle on' : 'toggle off';
         loadNntp();
         loadNewznab();
     } catch {}
