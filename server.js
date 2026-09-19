@@ -1225,8 +1225,19 @@ app.post('/api/seadex/toggle', express.json(), (req, res) => {
 // ===== My Indexer API =====
 app.get('/api/indexer/status/:token', (req, res) => {
   const user = config.getUser(req.params.token);
-  if (!user) return res.json({ enabled: false, indexer_only: false, indexer_catalog: false, subtitles_enabled: false });
-  res.json({ enabled: user.indexer_enabled || false, indexer_only: user.indexer_only || false, indexer_catalog: user.indexer_catalog || false, subtitles_enabled: user.subtitles_enabled || false });
+  // Every key the settings page reads must be here — a missing one arrives as
+  // undefined, so its toggle always renders OFF while the stored value stays on
+  // (that is how subs_info could keep running with the switch showing "off").
+  if (!user) return res.json({ enabled: false, indexer_only: false, indexer_catalog: false, subtitles_enabled: false, ondemand_enabled: true, subs_info_enabled: false, subs_flags_enabled: false });
+  res.json({
+    enabled: user.indexer_enabled || false,
+    indexer_only: user.indexer_only || false,
+    indexer_catalog: user.indexer_catalog || false,
+    subtitles_enabled: user.subtitles_enabled || false,
+    ondemand_enabled: user.ondemand_enabled !== false,   // default ON
+    subs_info_enabled: !!user.subs_info_enabled,
+    subs_flags_enabled: !!user.subs_flags_enabled
+  });
 });
 
 app.post('/api/indexer/toggle', express.json(), (req, res) => {
