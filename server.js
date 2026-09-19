@@ -1230,7 +1230,7 @@ app.get('/api/indexer/status/:token', (req, res) => {
 });
 
 app.post('/api/indexer/toggle', express.json(), (req, res) => {
-  const { token, enabled, indexer_only, indexer_catalog, subtitles_enabled, ondemand_enabled, subs_info_enabled } = req.body;
+  const { token, enabled, indexer_only, indexer_catalog, subtitles_enabled, ondemand_enabled, subs_info_enabled, subs_flags_enabled } = req.body;
   const user = config.getUser(token);
   if (!user) return res.status(404).json({ error: 'User not found' });
   if (enabled !== undefined) user.indexer_enabled = !!enabled;
@@ -1239,6 +1239,7 @@ app.post('/api/indexer/toggle', express.json(), (req, res) => {
   if (subtitles_enabled !== undefined) user.subtitles_enabled = !!subtitles_enabled;
   if (ondemand_enabled !== undefined) user.ondemand_enabled = !!ondemand_enabled;
   if (subs_info_enabled !== undefined) user.subs_info_enabled = !!subs_info_enabled;
+  if (subs_flags_enabled !== undefined) user.subs_flags_enabled = !!subs_flags_enabled;
   config.saveUser(token, user);
   res.json({ success: true });
 });
@@ -3059,7 +3060,10 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
   // One subtitle fetch per request, shared by the 📝 dummy item and the
   // per-stream CZ/SK flags below. Gated by the same user toggle, so users who
   // do not want subtitle info pay no latency at all.
-  const episodeSubs = user?.subs_info_enabled ? await fetchSubsForEpisode(fullId, type) : [];
+  // One fetch serves both features; skip it entirely when neither is on.
+  const wantsSubsInfo = !!user?.subs_info_enabled;
+  const wantsSubsFlags = !!user?.subs_flags_enabled;
+  const episodeSubs = (wantsSubsInfo || wantsSubsFlags) ? await fetchSubsForEpisode(fullId, type) : [];
   if (episodeSubs.length) console.log(`  📝 subs: ${episodeSubs.length} for flagging`);
 
   const streams = [];
@@ -3142,7 +3146,7 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
       const audioPart = audioTag ? ` · ${audioWithMarker}` : '';
       streamName = `NimeToDex ${sourceIcon}${qualityPart}${audioPart}`.trim();
       // CZ/SK flag at the very end of the name (👑 = timed against this exact rip)
-      const subsFlag = subsFlagForStream(t, episodeSubs);
+      const subsFlag = wantsSubsFlags ? subsFlagForStream(t, episodeSubs) : '';
       if (subsFlag) streamName += ` · ${subsFlag}`;
     } else {
       // === Non-indexer result: legacy fallback (currently unused, indexer is sole source) ===
@@ -3156,7 +3160,7 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
       const audioWithMarker = audioTagFb === 'Dub' || audioTagFb === 'Dual' ? `${audioTagFb} ✅` : audioTagFb;
       const audioPart = audioTagFb ? ` · ${audioWithMarker}` : '';
       streamName = `NimeToDex ${quality || ''}${audioPart}`.trim();
-      const subsFlagFb = subsFlagForStream(t, episodeSubs);
+      const subsFlagFb = wantsSubsFlags ? subsFlagForStream(t, episodeSubs) : '';
       if (subsFlagFb) streamName += ` · ${subsFlagFb}`;
     }
 
