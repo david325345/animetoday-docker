@@ -2051,13 +2051,16 @@ function subsFlagForStream(stream, subs) {
     const crown = !!streamGroup && forLang.some(x =>
       (x.release_groups || []).some(g => norm(g) === streamGroup) &&
       (qualityFits(x) || !String(x.quality || '')));
-    // Crown sits right after its own flag (🇨🇿👑), so with two languages it is
-    // clear which one it belongs to — a single leading crown would look like it
-    // covered both.
-    if (crown) { certain.push(SUBS_FLAG[lang] + '👑'); continue; }
+    const fits = forLang.some(qualityFits);
+    if (!crown && !fits) { uncertain.push(SUBS_FLAG[lang]); continue; }
 
-    if (forLang.some(qualityFits)) certain.push(SUBS_FLAG[lang]);
-    else uncertain.push(SUBS_FLAG[lang]);
+    // 💿 only on a BD stream, and only when a real BD-sourced subtitle backs the
+    // flag — so at a glance you can tell a Blu-ray set from a web one.
+    // ⭐ sits last and belongs to its own flag (🇨🇿💿⭐); with two languages a
+    // single leading star would look like it covered both.
+    const isBD = streamFamily === 'BD' &&
+      forLang.some(x => subsSourceFamily(x.quality) === 'BD');
+    certain.push(SUBS_FLAG[lang] + (isBD ? '💿' : '') + (crown ? '⭐' : ''));
   }
 
   if (!certain.length && !uncertain.length) return '';
