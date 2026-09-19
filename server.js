@@ -27,6 +27,7 @@ const { getRDStream, rdInProgress, getCacheKey, serveLoadingVideo, DOWNLOADING_V
 const { generateAllPosters } = require('./lib/posters');
 const todayAdded = require('./lib/today-added');
 const subsAdded = require('./lib/subs-added');
+const subsIndex = require('./lib/subs-index');
 const { formatTimeCET } = require('./lib/simkl');
 const { startRssFetcher, clearRssIndex, searchRssIndex, getRssStats } = require('./lib/rss');
 const { getTBStatus, getTBStream, getTBNZBStream, checkTBCached, tbInProgress } = require('./lib/torbox');
@@ -302,6 +303,18 @@ function requireAdmin(req, res, next) {
   if (!acc || acc.role !== 'superadmin') return res.status(403).json({ error: 'Admin only' });
   next();
 }
+
+// ===== Subtitle search index (manual build on purpose — no cron yet) =====
+app.post('/api/subs-index/build', express.json(), requireAdmin, async (req, res) => {
+  const limit = parseInt(req.body?.limit) || 0;
+  const rebuild = !!req.body?.rebuild;
+  console.log(`📚 subs-index: build requested (limit=${limit || 'all'}, rebuild=${rebuild})`);
+  // Long job: answer immediately and let it run, the status endpoint reports progress.
+  subsIndex.buildIndex({ limit, rebuild }).catch(e => console.log('📚 build:', e.message));
+  res.json({ started: true, limit: limit || 'all' });
+});
+
+app.get('/api/subs-index/status', (req, res) => res.json(subsIndex.status()));
 
 app.get('/api/admin/accounts', (req, res) => {
   const token = req.headers['x-admin-token'];
@@ -1236,12 +1249,13 @@ app.get('/api/indexer/status/:token', (req, res) => {
     subtitles_enabled: user.subtitles_enabled || false,
     ondemand_enabled: user.ondemand_enabled !== false,   // default ON
     subs_info_enabled: !!user.subs_info_enabled,
-    subs_flags_enabled: !!user.subs_flags_enabled
+    subs_flags_enabled: !!user.subs_flags_enabled,
+    subs_search_enabled: !!user.subs_search_enabled
   });
 });
 
 app.post('/api/indexer/toggle', express.json(), (req, res) => {
-  const { token, enabled, indexer_only, indexer_catalog, subtitles_enabled, ondemand_enabled, subs_info_enabled, subs_flags_enabled } = req.body;
+  const { token, enabled, indexer_only, indexer_catalog, subtitles_enabled, ondemand_enabled, subs_info_enabled, subs_flags_enabled, subs_search_enabled } = req.body;
   const user = config.getUser(token);
   if (!user) return res.status(404).json({ error: 'User not found' });
   if (enabled !== undefined) user.indexer_enabled = !!enabled;
@@ -1251,6 +1265,7 @@ app.post('/api/indexer/toggle', express.json(), (req, res) => {
   if (ondemand_enabled !== undefined) user.ondemand_enabled = !!ondemand_enabled;
   if (subs_info_enabled !== undefined) user.subs_info_enabled = !!subs_info_enabled;
   if (subs_flags_enabled !== undefined) user.subs_flags_enabled = !!subs_flags_enabled;
+  if (subs_search_enabled !== undefined) user.subs_search_enabled = !!subs_search_enabled;
   config.saveUser(token, user);
   res.json({ success: true });
 });
@@ -1611,6 +1626,7 @@ app.get('/:token/nzb-refresh/:imdb/:season/:episode/video.mp4', async (req, res)
 
 // ===== STREMIO: ANIME TODAY ADDON =====
 app.get('/:token/today/manifest.json', (req, res) => {
+  const manifestUser = config.getUser(req.params.token);
   res.json({
     id: 'cz.nyaa.anime.today.v9',
     version: '9.3.0',
@@ -1625,7 +1641,11 @@ app.get('/:token/today/manifest.json', (req, res) => {
       // three catalog rows live under Anime Today; nyaa keeps streams/meta only.
       { type: 'series', id: 'nimetodex-today', name: 'NimeToDex — Added today', extra: [{ name: 'skip', isRequired: false }] },
       { type: 'movie', id: 'nimetodex-today', name: 'NimeToDex — Added today', extra: [{ name: 'skip', isRequired: false }] },
-      { type: 'series', id: 'subs-added', name: 'Nově otitulkované', extra: [{ name: 'skip', isRequired: false }] }
+      { type: 'series', id: 'subs-added', name: 'Nově otitulkované', extra: [{ name: 'skip', isRequired: false }] },
+      // Search-only (isRequired: true) → no row in Discover, appears only in results
+      ...(manifestUser?.subs_search_enabled
+        ? [{ type: 'series', id: 'subs-search', name: 'CZ/SK titulky', extra: [{ name: 'search', isRequired: true }] }]
+        : [])
     ],
     idPrefixes: ['tt'],
     behaviorHints: { configurable: true, configurationRequired: false }
@@ -1634,6 +1654,13 @@ app.get('/:token/today/manifest.json', (req, res) => {
 
 app.get('/:token/today/catalog/:type/:id.json', async (req, res) => {
   console.log(`=== TODAY CATALOG === type=${req.params.type} id=${req.params.id}`);
+  if (req.params.id === 'subs-search') {
+    const q = req.query.search || (req.params.extra || '').match(/search=([^&]+)/)?.[1];
+    const query = q ? decodeURIComponent(q) : '';
+    const hits = subsIndex.search(query);
+    console.log(`  🔎 subs-search "${query}" → ${hits.length} hits`);
+    return res.json({ metas: hits.map(e => subsIndex.buildMeta(e, BASE_URL)), cacheMaxAge: 300 });
+  }
   if (req.params.id === 'nimetodex-today') {
     const user = config.getUser(req.params.token);
     if (!user?.indexer_catalog) return res.json({ metas: [] });
