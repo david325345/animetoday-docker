@@ -234,6 +234,13 @@ app.use((req, res, next) => {
   next();
 });
 app.use(express.static(path.join(__dirname, 'public')));
+// Subtitle-index posters live on the persistent data volume, not in public/,
+// because public/ ships with the image and is wiped on every deploy (a full
+// rebuild of all ~1150 posters takes about 15 minutes).
+app.use('/subs-posters', express.static(path.join(__dirname, 'data', 'subs-posters'), {
+  maxAge: '24h',
+  fallthrough: true
+}));
 
 // ===== User middleware =====
 function getUserFromToken(token) {
