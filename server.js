@@ -102,6 +102,15 @@ cron.schedule('0 4 * * *', () => { clearRssIndex(); updateCache(); });
 // on user traffic (matches the airing cache's background-only refresh model).
 cron.schedule('0 * * * *', () => { todayAdded.refreshTodayAdded(); });
 cron.schedule('5 * * * *', () => { subsAdded.refreshSubsAdded(); });
+// Subtitle search index: once a night. A full pass is ~16 min and only new or
+// previously incomplete titles do any work, so the nightly run is usually a
+// couple of items. Set SUBS_INDEX_CRON=off to disable.
+if (process.env.SUBS_INDEX_CRON !== 'off') {
+  cron.schedule('30 3 * * *', () => {
+    console.log('📚 subs-index: nightly build');
+    subsIndex.buildIndex({}).catch(e => console.log('📚 nightly:', e.message));
+  });
+}
 
 // ===== Magnet store (for clean RD stream URLs) =====
 // Stores magnet URI + optional indexer hint (matchedFile name/size) under a hash
