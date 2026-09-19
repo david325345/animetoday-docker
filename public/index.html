@@ -281,6 +281,14 @@
                 <div class="row-label"><span data-i18n="nimetodex.subs">Titulky</span> <small data-i18n="nimetodex.subsHint">Vyžaduje reinstalaci addonu</small></div>
                 <button class="toggle off" id="indexer-subs-toggle" onclick="toggleSubtitles()"></button>
             </div>
+            <div class="row">
+                <div class="row-label"><span data-i18n="subsinfo.row">Info o titulcích ve streamech</span> <small data-i18n="subsinfo.rowHint">První položka „📝 CZ/SK titulky" když jsou k dispozici</small></div>
+                <button class="toggle off" id="subsinfo-toggle" onclick="toggleStreamSetting('subs_info_enabled', 'subsinfo-toggle')"></button>
+            </div>
+            <div class="row">
+                <div class="row-label"><span data-i18n="subsflags.row">Vlaječky u streamů</span> <small data-i18n="subsflags.rowHint">🇨🇿💿⭐ u streamů, ke kterým máme titulky</small></div>
+                <button class="toggle off" id="subsflags-toggle" onclick="toggleStreamSetting('subs_flags_enabled', 'subsflags-toggle')"></button>
+            </div>
         </div>
 
         <!-- P2P (Direct Stremio playback) -->
@@ -293,10 +301,6 @@
             <div class="row">
                 <div class="row-label"><span data-i18n="ondemand.row">On-demand vyhledávání</span> <small data-i18n="ondemand.rowHint">Položka „🔍 Search" na konci seznamu</small></div>
                 <button class="toggle on" id="ondemand-toggle" onclick="toggleStreamSetting('ondemand_enabled', 'ondemand-toggle')"></button>
-            </div>
-            <div class="row">
-                <div class="row-label"><span data-i18n="subsinfo.row">Info o titulcích ve streamech</span> <small data-i18n="subsinfo.rowHint">První položka „📝 CZ/SK titulky" když jsou k dispozici</small></div>
-                <button class="toggle off" id="subsinfo-toggle" onclick="toggleStreamSetting('subs_info_enabled', 'subsinfo-toggle')"></button>
             </div>
             <div style="font-size:11px;color:var(--hint);margin-top:6px;">
                 <span data-i18n="p2p.help">Když je zapnuto, torrenty se přehrávají přímo přes Stremio peer-to-peer (bez debrid služeb). NZB a debrid streamy budou skryty.</span><br>
@@ -665,6 +669,8 @@ const I18N = {
         'ondemand.rowHint': '"🔍 Search" item at the end of the list',
         'subsinfo.row': 'Subtitle info in streams',
         'subsinfo.rowHint': 'First item "📝 CZ/SK subtitles" when available',
+        'subsflags.row': 'Subtitle flags on streams',
+        'subsflags.rowHint': '🇨🇿💿⭐ next to streams we have subtitles for',
         'p2p.rowHint': 'Disables RealDebrid, TorBox and NZB',
         'p2p.help': 'When enabled, torrents are played peer-to-peer directly via Stremio (no debrid services). NZB and debrid streams will be hidden.',
         'p2p.warn': '⚠️ <strong>Requires Stremio streaming server:</strong> works on Stremio Desktop and Android. P2P does not work on iOS / Apple TV / Stremio Lite (Stremio limitation). In a web browser, Stremio Service must be running.',
@@ -844,6 +850,8 @@ const I18N = {
         'ondemand.rowHint': 'Položka „🔍 Search" na konci seznamu',
         'subsinfo.row': 'Info o titulcích ve streamech',
         'subsinfo.rowHint': 'První položka „📝 CZ/SK titulky" když jsou k dispozici',
+        'subsflags.row': 'Vlaječky u streamů',
+        'subsflags.rowHint': '🇨🇿💿⭐ u streamů, ke kterým máme titulky',
         'p2p.rowHint': 'Vypne RealDebrid, TorBox a NZB',
         'p2p.help': 'Když je zapnuto, torrenty se přehrávají přímo přes Stremio peer-to-peer (bez debrid služeb). NZB a debrid streamy budou skryty.',
         'p2p.warn': '⚠️ <strong>Vyžaduje Stremio streaming server:</strong> funguje na Stremio Desktop a Android. Na iOS / Apple TV / Stremio Lite P2P nefunguje (limitace Stremia). Ve webovém prohlížeči je nutný spuštěný Stremio Service.',
@@ -1363,6 +1371,7 @@ async function checkIndexer() {
         document.getElementById('indexer-subs-toggle').className = d.subtitles_enabled ? 'toggle on' : 'toggle off';
         document.getElementById('ondemand-toggle').className = d.ondemand_enabled === false ? 'toggle off' : 'toggle on';
         document.getElementById('subsinfo-toggle').className = d.subs_info_enabled ? 'toggle on' : 'toggle off';
+        document.getElementById('subsflags-toggle').className = d.subs_flags_enabled ? 'toggle on' : 'toggle off';
         loadNntp();
         loadNewznab();
     } catch {}
