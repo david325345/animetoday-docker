@@ -1685,9 +1685,18 @@ async function todayCatalogHandler(req, res) {
     let query = '';
     try { query = decodeURIComponent(raw); } catch { query = raw; }
     const wantType = req.params.type === 'movie' ? 'movie' : 'series';
-    const hits = subsIndex.search(query).filter(e => (e.type || 'series') === wantType);
-    console.log(`  🔎 subs-search "${query}" (${wantType}) → ${hits.length} hits`);
-    return res.json({ metas: hits.map(e => subsIndex.buildMeta(e, BASE_URL)), cacheMaxAge: 300 });
+    // Wrapped on purpose: an exception inside an async Express handler is not
+    // caught by the default error handler — the promise just rejects and the
+    // request hangs forever instead of failing. An empty result is a far better
+    // outcome than a client waiting on a socket that will never answer.
+    try {
+      const hits = subsIndex.search(query).filter(e => (e.type || 'series') === wantType);
+      console.log(`  🔎 subs-search "${query}" (${wantType}) → ${hits.length} hits`);
+      return res.json({ metas: hits.map(e => subsIndex.buildMeta(e, BASE_URL)), cacheMaxAge: 300 });
+    } catch (e) {
+      console.log(`  🔎 subs-search "${query}" FAILED: ${e.message}`);
+      return res.json({ metas: [], cacheMaxAge: 60 });
+    }
   }
   if (req.params.id === 'nimetodex-today') {
     const user = config.getUser(req.params.token);
