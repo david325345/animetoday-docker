@@ -24,7 +24,7 @@ function rawIndexerId(fullId) {
 }
 const { detectQuality, sortByGroupPriority, canonicalResTier, DEFAULT_GROUPS, DEFAULT_RESOLUTIONS } = require('./lib/search');
 const { getRDStream, rdInProgress, getCacheKey, serveLoadingVideo, DOWNLOADING_VIDEO_URL, checkInstantAvailability } = require('./lib/realdebrid');
-const { generateAllPosters } = require('./lib/posters');
+const { generateAllPosters, generateOlderSeparator } = require('./lib/posters');
 const todayAdded = require('./lib/today-added');
 const subsAdded = require('./lib/subs-added');
 const subsIndex = require('./lib/subs-index');
@@ -93,6 +93,9 @@ async function updateCache() {
     // (each gets generatedPoster assigned), so the cache benefits without rewriting.
     await generateAllPosters(schedules);
     console.log(`✅ Posters generated for ${schedules.length} anime`);
+    // Static card, drawn once and then reused (the function returns early if the
+    // file exists); kept next to the schedule posters so one refresh warms both.
+    await generateOlderSeparator();
   } catch (err) { console.error('❌ Cache failed:', err.message); }
 }
 
@@ -1723,11 +1726,42 @@ async function todayCatalogHandler(req, res) {
   }
   if (req.params.id === 'subs-added') {
     try {
+      // Today's additions first (enriched, with the "CZ · E6" pill poster),
+      // then a separator tile, then the back catalogue. One row, two halves.
       const items = await subsAdded.getSubsAdded();
       const metas = items.map(i => subsAdded.buildMeta(i, BASE_URL)).filter(Boolean);
-      console.log(`  📤 subs-added catalog: ${metas.length} metas`);
-      if (!metas.length) return res.json({ metas: [subsAdded.buildPlaceholderMeta(BASE_URL)], cacheMaxAge: 300 });
-      return res.json({ metas, cacheMaxAge: 3600 });
+      const todayIds = new Set(metas.map(m => m.id));
+
+      const olderMetas = [];
+      try {
+        const older = await subsAdded.fetchOlder();
+        // resolve-ids in parallel: this runs per catalogue request, and doing
+        // ~200 of them one after another would take minutes.
+        const resolved = await Promise.all(older.map(async (it) => {
+          const ids = await subsAdded.resolveIds(it);
+          return ids?.imdb ? { ...it, imdb_id: ids.imdb } : null;
+        }));
+        const seen = new Set(todayIds);
+        for (const it of resolved) {
+          if (!it || seen.has(it.imdb_id)) continue;   // skip dupes + today's
+          seen.add(it.imdb_id);
+          const m = subsAdded.buildOlderMeta(it, BASE_URL);
+          if (m) olderMetas.push(m);
+        }
+      } catch (e) {
+        console.log(`  ⚠️ subs-added older: ${e.message}`);
+      }
+
+      console.log(`  📤 subs-added catalog: ${metas.length} today + ${olderMetas.length} older`);
+
+      if (!metas.length && !olderMetas.length) {
+        return res.json({ metas: [subsAdded.buildPlaceholderMeta(BASE_URL)], cacheMaxAge: 300 });
+      }
+      // The separator only makes sense when there is something above it.
+      const out = metas.length && olderMetas.length
+        ? [...metas, subsAdded.buildSeparatorMeta(BASE_URL), ...olderMetas]
+        : [...metas, ...olderMetas];
+      return res.json({ metas: out, cacheMaxAge: 3600 });
     } catch (e) {
       console.log(`  ❌ subs-added catalog: ${e.message}`);
       return res.json({ metas: [] });
