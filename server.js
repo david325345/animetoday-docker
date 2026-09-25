@@ -1667,7 +1667,11 @@ app.get('/:token/today/manifest.json', (req, res) => {
       ...(manifestUser?.subs_search_enabled
         ? [
             { type: 'series', id: 'subs-search', name: 'CZ/SK titulky', extra: [{ name: 'search', isRequired: true }] },
-            { type: 'movie', id: 'subs-search', name: 'CZ/SK titulky', extra: [{ name: 'search', isRequired: true }] }
+            // Distinct id on purpose: Stremio queries per type and would be fine
+            // with the same one, but Nuvio merges every addon catalogue into a
+            // single result list — two catalogues sharing an id meant it asked
+            // twice and showed each hit twice.
+            { type: 'movie', id: 'subs-search-movie', name: 'CZ/SK titulky', extra: [{ name: 'search', isRequired: true }] }
           ]
         : [])
     ],
@@ -1682,7 +1686,7 @@ app.get('/:token/today/manifest.json', (req, res) => {
 // every search request 404s.
 async function todayCatalogHandler(req, res) {
   console.log(`=== TODAY CATALOG === type=${req.params.type} id=${req.params.id}`);
-  if (req.params.id === 'subs-search') {
+  if (req.params.id === 'subs-search' || req.params.id === 'subs-search-movie') {
     // "search=frieren" arrives either as a query param or inside the extra segment
     const raw = req.query.search || (req.params.extra || '').match(/search=([^&]*)/)?.[1] || '';
     let query = '';
