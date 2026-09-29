@@ -49,6 +49,39 @@ const ONDEMAND_VIDEO_URL = process.env.ONDEMAND_VIDEO_URL || 'https://raw.github
 const R2_NZB_BASE = process.env.R2_NZB_BASE || 'https://pub-4a78ba5831734d77a4c5c6762c14d4a2.r2.dev';
 const NZB_REFRESH_TOKEN = process.env.NZB_REFRESH_TOKEN || '';
 
+// ===== Sdílené /search dotazy na indexer =====
+// STREAM a NZB STREAM (a další handlery) posílají při otevření epizody stejný
+// /search souběžně — indexer by ho jinak počítal dvakrát. Stejný query string
+// do 10 s (běžící nebo hotový) vrátí stejný promise; každý volající dostane
+// vlastní kopii dat (structuredClone), protože handlery s výsledkem pracují na
+// místě. Chyby se neukládají — další pokus jde znovu do indexeru.
+const INDEXER_SEARCH_TTL_MS = 10000;
+const INDEXER_SEARCH_MAX = 200;
+const indexerSearchCache = new Map(); // query → { promise, cas }
+
+async function hledejVIndexeru(query) {
+  const now = Date.now();
+  for (const [k, v] of indexerSearchCache) {
+    if (now - v.cas > INDEXER_SEARCH_TTL_MS) indexerSearchCache.delete(k);
+  }
+  let entry = indexerSearchCache.get(query);
+  const shared = !!entry;
+  if (!entry) {
+    entry = { cas: now, promise: null };
+    entry.promise = axios.get(`${INDEXER_URL}/search?${query}`, { timeout: 8000 })
+      .then((resp) => { entry.cas = Date.now(); return resp.data; });
+    entry.promise.catch(() => {
+      if (indexerSearchCache.get(query) === entry) indexerSearchCache.delete(query);
+    });
+    indexerSearchCache.set(query, entry);
+    while (indexerSearchCache.size > INDEXER_SEARCH_MAX) {
+      indexerSearchCache.delete(indexerSearchCache.keys().next().value);
+    }
+  }
+  const data = await entry.promise;
+  return { data: data == null ? data : structuredClone(data), shared };
+}
+
 // Public trackers for P2P (direct Stremio playback) — appended to torrent's own trackers
 const P2P_TRACKERS = [
   'http://nyaa.tracker.wf:7777/announce',
@@ -1083,7 +1116,7 @@ app.get('/api', async (req, res) => {
   const offset = parseInt(req.query.offset) || 0;
 
   try {
-    const resp = await axios.get(`${INDEXER_URL}/search?${params.toString()}`, { timeout: 8000 });
+    const { data } = await hledejVIndexeru(params.toString());
     // Everything with an NZB on R2 — both the nzb_results rows and tosho dump
     // entries that carry an r2_key.
     // season/episode are taken PER ROW, not from the request: a season-wide or
@@ -1118,8 +1151,8 @@ app.get('/api', async (req, res) => {
       imdbIdRow: x.imdb_id || null,
     });
     const rows = [
-      ...(resp.data?.nzb_results || []).map(n => mapRow(n, '')),
-      ...(resp.data?.tosho_results || []).filter(x => x.r2_key).map(x => mapRow(x, 'tosho-')),
+      ...(data?.nzb_results || []).map(n => mapRow(n, '')),
+      ...(data?.tosho_results || []).filter(x => x.r2_key).map(x => mapRow(x, 'tosho-')),
     ].filter(r => r.url);
 
     // Stable de-dup by NZB url (the same release can arrive from both lists)
@@ -1610,8 +1643,8 @@ app.get('/:token/nzb-refresh/:imdb/:season/:episode/video.mp4', async (req, res)
     try {
       // First: get tosho_results infohashes from search
       const searchParams = new URLSearchParams(params);
-      const searchResp = await axios.get(`${INDEXER_URL}/search?${searchParams.toString()}`, { timeout: 8000 });
-      const toshoResults = searchResp.data?.tosho_results || [];
+      const { data: searchData } = await hledejVIndexeru(searchParams.toString());
+      const toshoResults = searchData?.tosho_results || [];
       const infohashes = toshoResults.map(t => t.infohash).filter(h => h && h.length === 40);
 
       const authHeaders = { Authorization: `Bearer ${NZB_REFRESH_TOKEN}`, 'Content-Type': 'application/json' };
@@ -3058,11 +3091,11 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
     try {
       const t0 = Date.now();
       console.log(`  📦 Indexer: searching ${params.toString()}`);
-      const resp = await axios.get(`${INDEXER_URL}/search?${params.toString()}`, { timeout: 8000 });
-      const results = resp.data?.results || [];
-      const toshoResults = resp.data?.tosho_results || [];
+      const { data, shared } = await hledejVIndexeru(params.toString());
+      const results = data?.results || [];
+      const toshoResults = data?.tosho_results || [];
       const ms = Date.now() - t0;
-      console.log(`  📦 Indexer: ${results.length} results + ${toshoResults.length} tosho (${ms}ms, searchedBy: ${resp.data?.searchedBy || '?'})`);
+      console.log(`  📦 Indexer: ${results.length} results + ${toshoResults.length} tosho (${ms}ms, searchedBy: ${data?.searchedBy || '?'})${shared ? ' (sdíleno)' : ''}`);
 
       indexerResults = [...mapResults(results), ...mapToshoResults(toshoResults)];
 
@@ -3091,9 +3124,9 @@ app.get('/:token/nyaa/stream/:type/:id.json', async (req, res) => {
           if (season != null && !isMovie) fbParams.set('season', season);
           if (episode && !isMovie) fbParams.set('episode', episode);
           console.log(`  📦 Indexer fallback: q="${searchName}"`);
-          const fbResp = await axios.get(`${INDEXER_URL}/search?${fbParams.toString()}`, { timeout: 8000 });
-          const qResults = fbResp.data?.results || [];
-          const qTosho = fbResp.data?.tosho_results || [];
+          const { data: fbData } = await hledejVIndexeru(fbParams.toString());
+          const qResults = fbData?.results || [];
+          const qTosho = fbData?.tosho_results || [];
           console.log(`  📦 Indexer fallback: ${qResults.length} results + ${qTosho.length} tosho (${Date.now() - ft0}ms)`);
           indexerResults = [...mapResults(qResults), ...mapToshoResults(qTosho)];
         }
@@ -3822,8 +3855,8 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
       : `/api/stream/imdb/${imdbId}/${season || 0}/${episode || 0}`;
 
     // Call /search + new endpoint in parallel — failure on new endpoint is silent (current /search still works)
-    const [searchResp, newResp] = await Promise.all([
-      axios.get(`${INDEXER_URL}/search?${params.toString()}`, { timeout: 8000 }),
+    const [search, newResp] = await Promise.all([
+      hledejVIndexeru(params.toString()),
       imdbId
         ? axios.get(`${INDEXER_URL}${newEndpointPath}`, { timeout: 8000 }).catch(err => {
             console.log(`  📰 NZB new endpoint error: ${err.message}`);
@@ -3832,13 +3865,14 @@ app.get('/:token/nzb/stream/:type/:id.json', async (req, res) => {
         : Promise.resolve(null),
     ]);
 
-    nzbResults = searchResp.data?.nzb_results || [];
+    const searchData = search.data;
+    nzbResults = searchData?.nzb_results || [];
     // Tosho results that have r2_key = NZB available on R2
-    toshoNzbResults = (searchResp.data?.tosho_results || []).filter(t => t.r2_key);
+    toshoNzbResults = (searchData?.tosho_results || []).filter(t => t.r2_key);
     newEndpointResults = newResp?.data?.streams || [];
     const nzbGeekCount = nzbResults.filter(n => (n.source || 'nzbgeek') === 'nzbgeek').length;
     const nzbAtCount = nzbResults.filter(n => n.source === 'animetosho').length;
-    console.log(`  📰 NZB: ${nzbGeekCount} geek + ${nzbAtCount} AT-nzb + ${toshoNzbResults.length} tosho-dump + ${newEndpointResults.length} new from indexer (${searchResp.data?.searchedBy || '?'})`);
+    console.log(`  📰 NZB: ${nzbGeekCount} geek + ${nzbAtCount} AT-nzb + ${toshoNzbResults.length} tosho-dump + ${newEndpointResults.length} new from indexer (${searchData?.searchedBy || '?'})${search.shared ? ' (sdíleno)' : ''}`);
   } catch (err) {
     console.log(`  📰 NZB indexer error: ${err.message}`);
   }
