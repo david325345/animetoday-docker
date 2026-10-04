@@ -1776,7 +1776,7 @@ async function todayCatalogHandler(req, res) {
         // ~200 of them one after another would take minutes.
         const resolved = await Promise.all(older.map(async (it) => {
           const ids = await subsAdded.resolveIds(it);
-          return ids?.imdb ? { ...it, imdb_id: ids.imdb } : null;
+          return ids?.imdb ? { ...it, imdb_id: ids.imdb, type: ids.type } : null;
         }));
         const seen = new Set(todayIds);
         for (const it of resolved) {
