@@ -6,7 +6,12 @@ const axios = require('axios');
 const zlib = require('zlib');
 
 const config = require('./lib/config');
-const { fetchAnimeSchedule, formatTimeCET: simklFormatTime, getDayLabel } = require('./lib/simkl');
+const { formatTimeCET: simklFormatTime, getDayLabel } = require('./lib/simkl');
+// Anime Today schedule source: AniList (default since 2026-10) or the old SIMKL
+// calendar (SCHEDULE_SOURCE=simkl) as a rollback. Both return the same shape.
+const SCHEDULE_SOURCE = (process.env.SCHEDULE_SOURCE || 'anilist').toLowerCase() === 'simkl' ? 'simkl' : 'anilist';
+const { fetchAnimeSchedule } = SCHEDULE_SOURCE === 'simkl' ? require('./lib/simkl') : require('./lib/anilist-schedule');
+const indexerEpisodes = require('./lib/indexer-episodes');
 const { loadOfflineDB, loadAnimeLists, loadMappingCache, resolveToAniDB, resolveEpisode, resolveViaTVDB, parseEpisodeAndSeason, weeklyUpdate, offlineDB, getTVDBFromAniDB, getTVDBInfoFromAniDB } = require('./lib/idmap');
 
 // ===== Raw indexer id from Stremio stream id (2026-07-05) =====
@@ -98,6 +103,7 @@ console.log('══════════════════════�
 console.log(`  PORT: ${PORT}`);
 console.log(`  URL:  ${BASE_URL}`);
 console.log(`  IDX:  ${INDEXER_URL}`);
+console.log(`  SCHEDULE: ${SCHEDULE_SOURCE}`);
 
 // ===== State =====
 let todayAnimeCache = [];
@@ -112,7 +118,7 @@ async function updateCache() {
     // Don't overwrite cache with empty result — preserves last known good schedule
     // when SIMKL has a transient failure (DNS, 5xx, timeout).
     if (!schedules.length) {
-      console.warn(`⚠️ SIMKL returned 0 schedules — keeping previous cache (${todayAnimeCache.length} entries)`);
+      console.warn(`⚠️ ${SCHEDULE_SOURCE} returned 0 schedules — keeping previous cache (${todayAnimeCache.length} entries)`);
       return;
     }
 
@@ -126,6 +132,10 @@ async function updateCache() {
     // (each gets generatedPoster assigned), so the cache benefits without rewriting.
     await generateAllPosters(schedules);
     console.log(`✅ Posters generated for ${schedules.length} anime`);
+    // Which of today's episodes are already on the indexer (green poster)
+    await indexerEpisodes.syncFromIndexer();
+    const onIdx = schedules.filter(isScheduleOnIndexer).length;
+    if (onIdx) console.log(`  🟢 ${onIdx} scheduled episodes already on the indexer`);
     // Static card, drawn once and then reused (the function returns early if the
     // file exists); kept next to the schedule posters so one refresh warms both.
     await generateOlderSeparator();
@@ -133,6 +143,24 @@ async function updateCache() {
 }
 
 cron.schedule('0 4 * * *', () => { clearRssIndex(); updateCache(); });
+// Fallback for indexer notices lost while the addon was down/restarting.
+cron.schedule('20 * * * *', () => { indexerEpisodes.syncFromIndexer(); });
+
+// ===== "Episode already on the indexer" (green poster variant B) =====
+// Matched by AniList id + episode in AniList numbering (alEpisode; the SIMKL
+// source only has its per-cour number, which is the closest equivalent).
+function isScheduleOnIndexer(s) {
+  return indexerEpisodes.isOnIndexer(s.anilistId, s.alEpisode ?? s.simklEpisode);
+}
+function schedulePosterPath(s) {
+  if (s.generatedPosterOk && isScheduleOnIndexer(s)) return s.generatedPosterOk;
+  return s.generatedPoster || null;
+}
+function scheduleLinks(s) {
+  return s.source === 'anilist'
+    ? [{ name: 'AniList', category: 'anilist', url: `https://anilist.co/anime/${s.anilistId}` }]
+    : [{ name: 'SIMKL', category: 'simkl', url: `https://simkl.com/anime/${s.simklId}` }];
+}
 
 // today-added: proactive hourly refresh so overlays stay warm without relying
 // on user traffic (matches the airing cache's background-only refresh model).
@@ -381,6 +409,32 @@ app.post('/api/subs-added/refresh', express.json(), (req, res) => {
   const count = Number(req.body?.count) || 0;
   console.log(`📨 subs-added: zpráva od titulků (${count} změn)`);
   subsAdded.requestSubsAddedRefresh();
+  res.status(202).json({ accepted: true });
+});
+
+// ===== Notice from the indexer: new episodes =====
+// The indexer POSTs here (X-Notify-Token) on the first sighting of an
+// (anime, episode) pair today, batched on its side:
+//   { event: 'new-episodes', count, items: [{ anilist_id, imdb_id, title,
+//     episodes: [{ episode, imdb_season, imdb_episode, first_seen }] }] }
+// We mark the episodes (Anime Today switches those posters to the green,
+// pre-rendered variant — no rendering here) and refresh "Dnes přidané".
+// Answer 202 at once; protected by the shared token only.
+app.post('/api/indexer/new-episodes', express.json({ limit: '1mb' }), (req, res) => {
+  const expected = process.env.INDEXER_NOTIFY_TOKEN || '';
+  const got = req.get('X-Notify-Token') || '';
+  if (!expected || got !== expected) return res.status(401).json({ error: 'Unauthorized' });
+  try {
+    const items = Array.isArray(req.body?.items) ? req.body.items : [];
+    const added = indexerEpisodes.addItems(items);
+    const lit = todayAnimeCache.filter(s => s.generatedPosterOk && isScheduleOnIndexer(s)
+      && items.some(it => Number(it.anilist_id) === s.anilistId));
+    console.log(`📨 indexer: ${Number(req.body?.count) || 0} dílů / ${items.length} anime (nových ${added})`
+      + (lit.length ? ` → 🟢 ${lit.map(s => `${s.title} E${s.alEpisode ?? s.simklEpisode}`).join(', ')}` : ''));
+    todayAdded.requestTodayAddedRefresh();
+  } catch (e) {
+    console.log(`📨 indexer notice error: ${e.message}`);
+  }
   res.status(202).json({ accepted: true });
 });
 
@@ -1852,7 +1906,8 @@ async function todayCatalogHandler(req, res) {
     lastDay = s.dayOffset;
 
     // Anime entry
-    const poster = s.generatedPoster ? `${BASE_URL}${s.generatedPoster}` : s.posterUrl;
+    const posterPath = schedulePosterPath(s);
+    const poster = posterPath ? `${BASE_URL}${posterPath}` : s.posterUrl;
     const bg = s.fanartUrl || poster;
     const time = formatTimeCET(s.airingAt);
     // Stremio doesn't deeplink to specific episode on detail page (architectural limitation),
@@ -1868,7 +1923,7 @@ async function todayCatalogHandler(req, res) {
       genres: s.genres || [],
       releaseInfo: `${time} · Ep ${s.episode}`,
       imdbRating: s.anilistScore || (s.malScore ? parseFloat(s.malScore).toFixed(1) : undefined),
-      links: [{ name: 'SIMKL', category: 'simkl', url: `https://simkl.com/anime/${s.simklId}` }]
+      links: scheduleLinks(s)
     });
   }
 
@@ -2040,7 +2095,8 @@ app.get('/:token/today/meta/:type/:id.json', async (req, res) => {
     });
   }
 
-  const poster = schedule?.generatedPoster ? `${BASE_URL}${schedule.generatedPoster}` : (schedule?.posterUrl || 'https://via.placeholder.com/230x345/1a1a2e/ffffff?text=No+Image');
+  const schedPoster = schedule ? schedulePosterPath(schedule) : null;
+  const poster = schedPoster ? `${BASE_URL}${schedPoster}` : (schedule?.posterUrl || 'https://via.placeholder.com/230x345/1a1a2e/ffffff?text=No+Image');
   const bg = schedule?.fanartUrl || poster;
   const time = schedule ? formatTimeCET(schedule.airingAt) : '';
 
@@ -2055,7 +2111,7 @@ app.get('/:token/today/meta/:type/:id.json', async (req, res) => {
     releaseInfo: schedule ? `${time} · Ep ${schedule.episode}` : '',
     imdbRating: schedule?.anilistScore || (schedule?.malScore ? parseFloat(schedule.malScore).toFixed(1) : undefined),
     videos,
-    links: schedule ? [{ name: 'SIMKL', category: 'simkl', url: `https://simkl.com/anime/${schedule.simklId}` }] : []
+    links: schedule ? scheduleLinks(schedule) : []
   };
 
   console.log(`  📤 Meta (fallback): ${meta.name} — ${videos.length} videos with at: IDs`);
