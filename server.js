@@ -192,8 +192,13 @@ cron.schedule('20 * * * *', () => { indexerEpisodes.syncFromIndexer(); });
 // ===== "Episode already on the indexer" (green poster variant B) =====
 // Matched by AniList id + episode in AniList numbering (alEpisode; the SIMKL
 // source only has its per-cour number, which is the closest equivalent).
+// Fallback: IMDb + season + episode, when AniList and the indexer file the
+// series under different AniList entries — only for entries whose season is
+// known (not "Ep N"), so nothing is matched on a guessed season.
 function isScheduleOnIndexer(s) {
-  return indexerEpisodes.isOnIndexer(s.anilistId, s.alEpisode ?? s.simklEpisode);
+  if (indexerEpisodes.isOnIndexer(s.anilistId, s.alEpisode ?? s.simklEpisode)) return true;
+  return !!(s.imdbId && !s.seasonUnknown && s.season != null
+    && indexerEpisodes.isOnIndexerImdb(s.imdbId, s.season, s.episode));
 }
 function schedulePosterPath(s) {
   if (s.generatedPosterOk && isScheduleOnIndexer(s)) return s.generatedPosterOk;
@@ -486,7 +491,7 @@ app.post('/api/indexer/new-episodes', express.json({ limit: '1mb' }), (req, res)
     const items = Array.isArray(req.body?.items) ? req.body.items : [];
     const added = indexerEpisodes.addItems(items);
     const lit = todayAnimeCache.filter(s => s.generatedPosterOk && isScheduleOnIndexer(s)
-      && items.some(it => Number(it.anilist_id) === s.anilistId));
+      && items.some(it => Number(it.anilist_id) === s.anilistId || (it.imdb_id && it.imdb_id === s.imdbId)));
     console.log(`📨 indexer: ${Number(req.body?.count) || 0} dílů / ${items.length} anime (nových ${added})`
       + (lit.length ? ` → 🟢 ${lit.map(s => `${s.title} E${s.alEpisode ?? s.simklEpisode}`).join(', ')}` : ''));
     todayAdded.requestTodayAddedRefresh();
