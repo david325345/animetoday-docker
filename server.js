@@ -368,6 +368,22 @@ app.post('/api/subs-index/build', express.json(), requireAdmin, async (req, res)
 
 app.get('/api/subs-index/status', (req, res) => res.json(subsIndex.status()));
 
+// ===== Notice from the subtitle service: subtitles added/removed =====
+// anime-titulky POSTs here (X-Notify-Token) after a real change, batched on its
+// side. Answer 202 at once — the refresh with posters takes tens of seconds and
+// the sender waits only 5 s. Protected by the shared token only (no login);
+// without SUBS_NOTIFY_TOKEN set the endpoint is closed. The hourly cron stays
+// as a fallback for notices that never arrive.
+app.post('/api/subs-added/refresh', express.json(), (req, res) => {
+  const expected = process.env.SUBS_NOTIFY_TOKEN || '';
+  const got = req.get('X-Notify-Token') || '';
+  if (!expected || got !== expected) return res.status(401).json({ error: 'Unauthorized' });
+  const count = Number(req.body?.count) || 0;
+  console.log(`📨 subs-added: zpráva od titulků (${count} změn)`);
+  subsAdded.requestSubsAddedRefresh();
+  res.status(202).json({ accepted: true });
+});
+
 app.get('/api/admin/accounts', (req, res) => {
   const token = req.headers['x-admin-token'];
   if (!token) return res.status(401).json({ error: 'Unauthorized' });
