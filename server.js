@@ -108,11 +108,53 @@ console.log(`  SCHEDULE: ${SCHEDULE_SOURCE}`);
 // ===== State =====
 let todayAnimeCache = [];
 
+// ===== Schedule cache on the persistent volume =====
+// A restart/redeploy within the same day re-uses the last schedule (and its
+// posters, see lib/posters.js) instead of fetching and rendering it again.
+// The daily 4:00 refresh, /api/refresh and a saved TMDB key always force a
+// fresh fetch.
+const SCHEDULE_CACHE_PATH = path.join(__dirname, 'data', 'schedule-cache.json');
+const SCHEDULE_CACHE_MAX_AGE = 6 * 3600 * 1000;
+const pragueYmd = (d = new Date()) => d.toLocaleDateString('en-CA', { timeZone: 'Europe/Prague' });
+function pragueDayOffset(iso) {
+  const day = d => new Date(d.toLocaleDateString('en-CA', { timeZone: 'Europe/Prague' }));
+  return Math.round((day(new Date(iso)) - day(new Date())) / (24 * 3600 * 1000));
+}
+function saveScheduleCache(schedules) {
+  try {
+    require('fs').mkdirSync(path.dirname(SCHEDULE_CACHE_PATH), { recursive: true });
+    require('fs').writeFileSync(SCHEDULE_CACHE_PATH, JSON.stringify({
+      savedAt: Date.now(), day: pragueYmd(), source: SCHEDULE_SOURCE, schedules,
+    }));
+  } catch (e) { console.log(`⚠️ schedule cache write: ${e.message}`); }
+}
+function loadScheduleCache() {
+  try {
+    const c = JSON.parse(require('fs').readFileSync(SCHEDULE_CACHE_PATH, 'utf8'));
+    if (c.source !== SCHEDULE_SOURCE || c.day !== pragueYmd() || Date.now() - c.savedAt > SCHEDULE_CACHE_MAX_AGE) return null;
+    if (!Array.isArray(c.schedules) || !c.schedules.length) return null;
+    for (const s of c.schedules) s.dayOffset = pragueDayOffset(s.airingAt);
+    return c;
+  } catch { return null; }
+}
+
 // ===== Cache update =====
-async function updateCache() {
-  console.log('🔄 Updating anime cache...');
+async function updateCache({ force = false } = {}) {
+  console.log(`🔄 Updating anime cache${force ? ' (forced)' : ''}...`);
   const t0 = Date.now();
   try {
+    if (!force) {
+      const cached = loadScheduleCache();
+      if (cached) {
+        todayAnimeCache = cached.schedules;
+        console.log(`✅ Cache: ${todayAnimeCache.length} anime from saved schedule (${Math.round((Date.now() - cached.savedAt) / 60000)} min old) — no ${SCHEDULE_SOURCE} fetch`);
+        // Only re-attaches the saved posters; renders the ones that are missing.
+        await generateAllPosters(todayAnimeCache);
+        await generateOlderSeparator();
+        await indexerEpisodes.syncFromIndexer();
+        return;
+      }
+    }
     const schedules = await fetchAnimeSchedule();
 
     // Don't overwrite cache with empty result — preserves last known good schedule
@@ -132,6 +174,7 @@ async function updateCache() {
     // (each gets generatedPoster assigned), so the cache benefits without rewriting.
     await generateAllPosters(schedules);
     console.log(`✅ Posters generated for ${schedules.length} anime`);
+    saveScheduleCache(schedules);
     // Which of today's episodes are already on the indexer (green poster)
     await indexerEpisodes.syncFromIndexer();
     const onIdx = schedules.filter(isScheduleOnIndexer).length;
@@ -142,7 +185,7 @@ async function updateCache() {
   } catch (err) { console.error('❌ Cache failed:', err.message); }
 }
 
-cron.schedule('0 4 * * *', () => { clearRssIndex(); updateCache(); });
+cron.schedule('0 4 * * *', () => { clearRssIndex(); updateCache({ force: true }); });
 // Fallback for indexer notices lost while the addon was down/restarting.
 cron.schedule('20 * * * *', () => { indexerEpisodes.syncFromIndexer(); });
 
@@ -311,6 +354,12 @@ app.use(express.static(path.join(__dirname, 'public')));
 // because public/ ships with the image and is wiped on every deploy (a full
 // rebuild of all ~1150 posters takes about 15 minutes).
 app.use('/subs-posters', express.static(path.join(__dirname, 'data', 'subs-posters'), {
+  maxAge: '24h',
+  fallthrough: true
+}));
+// Anime Today schedule posters — same reason (persistent volume). File names
+// carry a fingerprint of the drawn content, so a long cache is safe.
+app.use('/schedule-posters', express.static(path.join(__dirname, 'data', 'schedule-posters'), {
   maxAge: '24h',
   fallthrough: true
 }));
@@ -725,7 +774,7 @@ app.post('/api/tmdb/save', async (req, res) => {
     await axios.get('https://api.themoviedb.org/3/configuration', { params: { api_key: key }, timeout: 5000 });
     config.setTMDBKey(key);
     console.log('✅ TMDB key saved');
-    updateCache();
+    updateCache({ force: true });
     res.json({ valid: true, saved: true });
   } catch { res.json({ valid: false }); }
 });
@@ -768,7 +817,7 @@ app.post('/api/anime/show', (req, res) => {
 });
 
 app.post('/api/refresh', async (req, res) => {
-  await updateCache();
+  await updateCache({ force: true });
   res.json({ success: true, count: todayAnimeCache.length });
 });
 
