@@ -363,6 +363,15 @@ app.use('/schedule-posters', express.static(path.join(__dirname, 'data', 'schedu
   maxAge: '24h',
   fallthrough: true
 }));
+// "Dnes přidané" and "Nově otitulkované" overlay posters — same model.
+app.use('/today-added-posters', express.static(path.join(__dirname, 'data', 'today-added-posters'), {
+  maxAge: '24h',
+  fallthrough: true
+}));
+app.use('/subs-added-posters', express.static(path.join(__dirname, 'data', 'subs-added-posters'), {
+  maxAge: '24h',
+  fallthrough: true
+}));
 
 // ===== User middleware =====
 function getUserFromToken(token) {
