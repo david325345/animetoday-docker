@@ -1814,7 +1814,7 @@ app.get('/:token/today/manifest.json', (req, res) => {
   const manifestUser = config.getUser(req.params.token);
   res.json({
     id: 'cz.nyaa.anime.today.v9',
-    version: '9.3.0',
+    version: '9.4.0',
     name: 'Anime Today',
     description: 'Anime schedule from SIMKL — today + 2 days ahead with posters and ratings.',
     logo: `${BASE_URL}/logo.png`,
@@ -1824,8 +1824,10 @@ app.get('/:token/today/manifest.json', (req, res) => {
       { type: 'series', id: 'anime-today', name: 'Anime Schedule', extra: [{ name: 'skip', isRequired: false }] },
       // Torrents catalog moved here from the nyaa addon (9.3.0, 2026-07-12) so all
       // three catalog rows live under Anime Today; nyaa keeps streams/meta only.
+      // One row for series AND films (9.4.0): every meta carries its own type
+      // (MOVIE → movie), which is what Stremio/Nuvio use to open the detail —
+      // the same mixed-row approach as subs-added.
       { type: 'series', id: 'nimetodex-today', name: 'NimeToDex — Added today', extra: [{ name: 'skip', isRequired: false }] },
-      { type: 'movie', id: 'nimetodex-today', name: 'NimeToDex — Added today', extra: [{ name: 'skip', isRequired: false }] },
       { type: 'series', id: 'subs-added', name: 'Nově otitulkované', extra: [{ name: 'skip', isRequired: false }] },
       // Search-only (isRequired: true) → no row in Discover, appears only in results
       // Search catalogues are declared per type, so movies need their own entry —
@@ -1874,18 +1876,20 @@ async function todayCatalogHandler(req, res) {
   if (req.params.id === 'nimetodex-today') {
     const user = config.getUser(req.params.token);
     if (!user?.indexer_catalog) return res.json({ metas: [] });
+    // Films live in the series row now (one mixed row). A client still holding
+    // the pre-9.4.0 manifest asks for the old movie row too — answer it empty
+    // (no placeholder), otherwise every film would show up twice.
+    if (req.params.type === 'movie') return res.json({ metas: [], cacheMaxAge: 300 });
     try {
       const items = await todayAdded.getTodayAdded();
-      const typeMap = { TV: 'series', OVA: 'series', SPECIAL: 'series', ONA: 'series', MUSIC: 'series', MOVIE: 'movie' };
       const metas = items
-        .filter(item => (typeMap[item.type] || 'series') === req.params.type && item.imdb_id)
+        .filter(item => item.imdb_id)
         .map(item => todayAdded.buildMeta(item, BASE_URL))
         .filter(Boolean);
-      console.log(`  📋 Today catalog via today addon (${req.params.type}): ${metas.length} items`);
+      const films = metas.filter(m => m.type === 'movie').length;
+      console.log(`  📋 Today catalog via today addon: ${metas.length} items (${films} films)`);
       if (!metas.length) {
-        const ph = req.params.type === 'movie'
-          ? { id: 'ntx-ph-movie', type: 'movie', name: 'No movie yet today', poster: `${BASE_URL}/posters/ph_movie.png`, description: 'New movies will show up here as they are added today.' }
-          : { id: 'ntx-ph-series', type: 'series', name: 'Nothing added yet today', poster: `${BASE_URL}/posters/ph_series.png`, description: 'New torrents will show up here as they are added today.' };
+        const ph = { id: 'ntx-ph-series', type: 'series', name: 'Nothing added yet today', poster: `${BASE_URL}/posters/ph_series.png`, description: 'New torrents will show up here as they are added today.' };
         return res.json({ metas: [ph], cacheMaxAge: 300 });
       }
       return res.json({ metas, cacheMaxAge: 3600 });
